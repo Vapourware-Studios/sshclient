@@ -10,18 +10,18 @@
 // pre-styled, accessible components that live IN OUR CODEBASE under
 // src/renderer/components/ui/ — open them, read them, change them.
 // ============================================================================
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Terminal, Zap } from 'lucide-react';
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Terminal, Folder, Pencil, Zap } from "lucide-react";
 
 export default function App() {
   // useState gives a component memory that survives re-renders.
@@ -35,8 +35,8 @@ export default function App() {
   // we put the reply into state and let React re-render.
   async function handlePing() {
     setWaiting(true);
-    console.log('[renderer] button clicked, calling window.api.ping(...)');
-    const reply = await window.api.ping('hello from the UI!');
+    console.log("[renderer] button clicked, calling window.api.ping(...)");
+    const reply = await window.api.ping("Pong!");
     setAnswer(reply);
     setWaiting(false);
   }
@@ -47,7 +47,7 @@ export default function App() {
           since main.js hides the native title bar (titleBarStyle). */}
       <div
         className="fixed inset-x-0 top-0 z-50 h-9"
-        style={{ WebkitAppRegion: 'drag' }}
+        style={{ WebkitAppRegion: "drag" }}
       />
 
       {/* ============ LEFT: SIDEBAR (host list lives here later) ========= */}
@@ -66,12 +66,68 @@ export default function App() {
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Hosts
           </h2>
-          <Badge variant="secondary">0</Badge>
+          <Badge variant="secondary">1</Badge>
         </div>
+
+        <div className="px-2 pt-2">
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              className="flex-1 min-w-0 justify-start rounded-md transition-colors hover:bg-sidebar-accent"
+            >
+              <span className="truncate">
+                2001:0db8:85a3:0000:0000:8a2e:0370:7334
+              </span>
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 hover:bg-sidebar-accent"
+            >
+              <Folder className="size-4" />
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 hover:bg-sidebar-accent"
+            >
+              <Pencil className="size-4" />
+            </Button>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              className="flex-1 min-w-0 justify-start rounded-md transition-colors hover:bg-sidebar-accent"
+            >
+              <span className="truncate">
+                192.168.1.156
+              </span>
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 hover:bg-sidebar-accent"
+            >
+              <Folder className="size-4" />
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 hover:bg-sidebar-accent"
+            >
+              <Pencil className="size-4" />
+            </Button>
+          </div>
+        </div>
+
 
         {/* In Phase 1 mission 1.2, this becomes a list rendered from an
             array — in React that's hosts.map(host => <li>...</li>). */}
-        <p className="px-4 text-sm text-muted-foreground">No saved hosts yet</p>
+        {/* <p className="px-4 text-sm text-muted-foreground">No saved hosts yet</p> */}
       </aside>
 
       {/* ============ RIGHT: MAIN AREA (future terminal) ================= */}
@@ -81,13 +137,13 @@ export default function App() {
             <CardTitle>Phase 0 — The Backbone</CardTitle>
             <CardDescription>
               This window is the <strong>renderer process</strong>. The button
-              below sends a message across the bridge to the{' '}
+              below sends a message across the bridge to the{" "}
               <strong>main process</strong> and prints the reply.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Button onClick={handlePing} disabled={waiting}>
-              <Zap /> {waiting ? 'Pinging…' : 'Test the bridge (ping)'}
+              <Zap /> {waiting ? "Pinging…" : "Test the bridge (ping)"}
             </Button>
 
             {/* && = "render this only if answer exists" (null renders nothing) */}
