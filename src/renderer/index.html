@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- ==========================================================================
+  index.html — THE UI's ENTRY POINT (now just a shell)
+  ===========================================================================
+  With React, this file no longer holds the app's structure. It provides one
+  empty <div id="root"> and loads main.jsx — React builds everything else
+  inside that div at runtime. Structure now lives in App.jsx.
+
+  class="dark" on <html> switches the shadcn/ui theme to its dark palette
+  (see index.css) — fitting for a terminal app.
+=========================================================================== -->
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SSH Client</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- type="module" lets this script use import/export.
+         Vite compiles main.jsx (and everything it imports) on the fly. -->
+    <script type="module" src="/main.jsx"></script>
+  </body>
+</html>

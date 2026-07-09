@@ -1,0 +1,12 @@
+# node_modules is huge and regenerable with `npm install` — never commit it
+node_modules/
+
+# macOS folder-metadata files
+.DS_Store
+
+# Build output (Phase 8, electron-builder)
+dist/
+out/
+
+# Claude Code local settings (machine-specific, not project code)
+.claude/
