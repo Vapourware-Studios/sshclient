@@ -21,12 +21,15 @@
 //   const electron = require('electron');
 //   const app = electron.app;
 //   const BrowserWindow = electron.BrowserWindow;  ...etc
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 
 // `path` is a built-in Node module for building file paths safely.
 // We use it instead of gluing strings together with '/' because it handles
 // differences between operating systems (macOS/Linux use '/', Windows uses '\').
 const path = require('path');
+
+const ssh = require('./ssh');
+const vault = require('./vault');
 
 // ---------------------------------------------------------------------------
 // WINDOW CREATION
@@ -71,6 +74,7 @@ function createWindow() {
       // has a bug), it can't touch the disk. All power flows through the
       // preload bridge, on OUR terms.
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
@@ -120,6 +124,117 @@ ipcMain.handle('ping', async (event, message) => {
   };
 });
 
+const pendingHostKeyDecisions = new Map();
+
+ipcMain.handle('ssh:connect', (event, config) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+
+  try {
+    let fullConfig = config;
+    if (config?.hostId) {
+      const saved = vault.getHostSecret(config.hostId);
+      if (!saved) return { error: 'Saved host not found' };
+      fullConfig = { ...saved, cols: config.cols, rows: config.rows };
+    }
+
+    const sessionId = ssh.connect(fullConfig, {
+      onProgress: (sessionId, stage) => win?.webContents.send('ssh:progress', { sessionId, stage }),
+      onReady: (sessionId) => win?.webContents.send('ssh:ready', { sessionId }),
+      onData: (sessionId, data) => win?.webContents.send('ssh:data', { sessionId, data }),
+      onClose: (sessionId) => win?.webContents.send('ssh:closed', { sessionId }),
+      onError: (sessionId, err) =>
+        win?.webContents.send('ssh:error', { sessionId, message: err.message }),
+      onHostKey: (sessionId, info) =>
+        new Promise((resolve) => {
+          pendingHostKeyDecisions.set(sessionId, resolve);
+          win?.webContents.send('ssh:hostkey', { sessionId, ...info });
+        }),
+    });
+    return { sessionId };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('ssh:hostKeyResponse', (event, { sessionId, trust }) => {
+  const resolve = pendingHostKeyDecisions.get(sessionId);
+  if (resolve) {
+    pendingHostKeyDecisions.delete(sessionId);
+    resolve(Boolean(trust));
+  }
+});
+
+ipcMain.handle('ssh:write', (event, { sessionId, data }) => {
+  ssh.write(sessionId, data);
+});
+
+ipcMain.handle('ssh:resize', (event, { sessionId, cols, rows }) => {
+  ssh.resize(sessionId, cols, rows);
+});
+
+ipcMain.handle('ssh:disconnect', (event, sessionId) => {
+  ssh.disconnect(sessionId);
+});
+
+ipcMain.handle('vault:status', () => ({
+  exists: vault.exists(),
+  unlocked: vault.isUnlocked(),
+}));
+
+ipcMain.handle('vault:setup', (event, password) => {
+  try {
+    vault.setup(password);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('vault:unlock', (event, password) => {
+  try {
+    vault.unlock(password);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('vault:lock', () => {
+  vault.lock();
+  return { ok: true };
+});
+
+ipcMain.handle('hosts:list', () => {
+  try {
+    return { hosts: vault.listHosts() };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('hosts:save', (event, host) => {
+  try {
+    return { hosts: vault.saveHost(host) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('hosts:delete', (event, id) => {
+  try {
+    return { hosts: vault.deleteHost(id) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('dialog:selectPrivateKey', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, { properties: ['openFile'] });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+  return { path: result.filePaths[0] };
+});
+
 // ---------------------------------------------------------------------------
 // APP LIFECYCLE — reacting to the app starting and quitting
 // ---------------------------------------------------------------------------
@@ -127,6 +242,7 @@ ipcMain.handle('ping', async (event, message) => {
 // `app.whenReady()` returns a Promise that resolves when boot-up is done.
 // `.then(createWindow)` says: "when that happens, run createWindow."
 app.whenReady().then(() => {
+  vault.init(app.getPath('userData'));
   createWindow();
 
   // macOS-specific behavior: clicking the dock icon when the app is running
@@ -148,4 +264,8 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  vault.shutdown();
 });
