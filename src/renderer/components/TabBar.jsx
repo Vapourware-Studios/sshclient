@@ -1,11 +1,12 @@
-import { Terminal as TerminalIcon, X, Loader2, Folder } from 'lucide-react';
+import { Terminal as TerminalIcon, Lock, X, Loader2, Folder } from 'lucide-react';
+import { Separator } from './ui/separator';
 
-export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onViewChange }) {
+export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onViewChange, onLockVault }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
   return (
     <div className="flex items-center gap-1 border-b bg-muted/40 px-2">
-      {tabs.map((tab) => (
+      {tabs.filter((t) => t.constant).map((tab) => (
         <div
           key={tab.id}
           onClick={() => onSelectTab(tab.id)}
@@ -15,23 +16,37 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onV
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
-          {!tab.constant && (
-              tab.status === 'connecting' ? (
-                <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-              ) : tab.status === 'error' ? (
-                <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-              ) : (
-                <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
-              )
+          <span className="max-w-32 truncate">{tab.title}</span>
+        </div>
+      ))}
+
+      {tabs.some((t) => t.constant) && tabs.some((t) => !t.constant) && (
+        <Separator orientation="vertical" className="mx-1 h-5" />
+      )}
+
+      {tabs.filter((t) => !t.constant).map((tab) => (
+        <div
+          key={tab.id}
+          onClick={() => onSelectTab(tab.id)}
+          className={`flex cursor-pointer items-center gap-2 rounded-t-md border-x border-t px-3 py-1.5 text-sm ${
+            tab.id === activeTabId
+              ? 'border-border bg-background'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          {tab.status === 'connecting' ? (
+            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+          ) : tab.status === 'error' ? (
+            <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
+          ) : (
+            <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
           )}
 
           <span className="max-w-32 truncate">{tab.title}</span>
-          {!tab.constant && (
-            <X
-              className="size-3.5 hover:text-destructive"
-              onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
-            />
-          )}
+          <X
+            className="size-3.5 hover:text-destructive"
+            onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
+          />
         </div>
       ))}
 
@@ -55,6 +70,20 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onV
           ))}
         </div>
       )}
+
+      <div className="flex ml-auto items-center gap-2">
+
+            <button
+              onClick={onLockVault}
+              title="Lock vault"
+              className="rounded p-1 text-muted-foreground hover:text-foreground"
+            >
+              <Lock className="size-3.5" />
+            </button>
+
+          <TerminalIcon className="size-4" />
+          <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
+      </div>
     </div>
   );
 }

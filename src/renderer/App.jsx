@@ -215,14 +215,7 @@ export default function App() {
         style={{ WebkitAppRegion: 'drag' }}
       />
 
-      <Sidebar
-        hosts={hosts}
-        onConnect={connectToHost}
-        onEdit={openEditHostDialog}
-        onDelete={deleteHost}
-        onNewConnection={openNewConnectionDialog}
-        onLockVault={lockVault}
-      />
+
 
       <main className="flex flex-1 flex-col">
         <div className="h-9 shrink-0" style={{ WebkitAppRegion: 'drag' }} />
@@ -234,6 +227,7 @@ export default function App() {
             onSelectTab={setActiveTabId}
             onCloseTab={closeTab}
             onViewChange={setTabView}
+            onLockVault={lockVault}
           />
         )}
 
@@ -247,9 +241,15 @@ export default function App() {
           tabs={tabs}
           activeTabId={activeTabId}
           sessionLogs={sessionLogs}
+          hosts={hosts}
           onCloseTab={closeTab}
           onRetryTab={retryTab}
           onRespondToHostKey={respondToHostKey}
+          onConnect={connectToHost}
+          onEdit={openEditHostDialog}
+          onDelete={deleteHost}
+          onNewConnection={openNewConnectionDialog}
+          onLockVault={lockVault}
         />
       </main>
 
