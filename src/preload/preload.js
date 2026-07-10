@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   ping: (message) => ipcRenderer.invoke('ping', message),
@@ -13,9 +13,24 @@ contextBridge.exposeInMainWorld('api', {
   onSshData: (callback) => subscribe('ssh:data', callback),
   onSshClosed: (callback) => subscribe('ssh:closed', callback),
   onSshError: (callback) => subscribe('ssh:error', callback),
+  onSshLog: (callback) => subscribe('ssh:log', callback),
   onSshHostKey: (callback) => subscribe('ssh:hostkey', callback),
   sshHostKeyResponse: (sessionId, trust) =>
     ipcRenderer.invoke('ssh:hostKeyResponse', { sessionId, trust }),
+
+  sftpHome: (sessionId) => ipcRenderer.invoke('sftp:home', sessionId),
+  sftpList: (sessionId, path) => ipcRenderer.invoke('sftp:list', { sessionId, path }),
+  sftpDownload: (sessionId, remotePath, name) =>
+    ipcRenderer.invoke('sftp:download', { sessionId, remotePath, name }),
+  sftpUpload: (sessionId, remoteDir) =>
+    ipcRenderer.invoke('sftp:upload', { sessionId, remoteDir }),
+  sftpUploadPaths: (sessionId, remoteDir, localPaths) =>
+    ipcRenderer.invoke('sftp:uploadPaths', { sessionId, remoteDir, localPaths }),
+  onSftpTransfer: (callback) => subscribe('sftp:transfer', callback),
+
+  // Turns a File object from a drag-and-drop event into its local path.
+  // Only the preload can do this (webUtils is not available to the page).
+  pathForFile: (file) => webUtils.getPathForFile(file),
 
   vaultStatus: () => ipcRenderer.invoke('vault:status'),
   vaultSetup: (masterPassword) => ipcRenderer.invoke('vault:setup', masterPassword),
