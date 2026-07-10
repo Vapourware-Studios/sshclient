@@ -1,7 +1,6 @@
-import { Fragment } from 'react';
 import TerminalView from '@/components/TerminalView';
 import VaultView from '@/components/VaultView';
-import SftpView from '@/components/SftpView';
+import SftpHub from '@/components/SftpHub';
 import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
 
 export default function ContentArea({
@@ -33,27 +32,12 @@ export default function ContentArea({
         />
       )}
 
-      {tabs.length === 0 && (
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-          No active sessions — connect to a host to get started.
-        </div>
-      )}
+      <SftpHub hosts={hosts} visible={activeTab?.id === 'sftp'} />
 
       {tabs
         .filter((t) => t.status === 'connected')
         .map((tab) => (
-          <Fragment key={tab.id}>
-            <TerminalView
-              sessionId={tab.id}
-              active={tab.id === activeTabId && (tab.view ?? 'terminal') === 'terminal'}
-            />
-            {tab.sftpOpened && (
-              <SftpView
-                sessionId={tab.id}
-                visible={tab.id === activeTabId && tab.view === 'files'}
-              />
-            )}
-          </Fragment>
+          <TerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
         ))}
 
       {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (

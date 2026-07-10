@@ -42,6 +42,13 @@ function init(userDataDir) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS keys (
+      id TEXT PRIMARY KEY,
+      data_iv TEXT NOT NULL,
+      data_auth_tag TEXT NOT NULL,
+      data_ciphertext TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
 }
 
@@ -201,6 +208,7 @@ function listHosts() {
       port: data.port,
       username: data.username,
       privateKeyPath: data.privateKeyPath || undefined,
+      keyId: data.keyId || undefined,
       hasPassword: Boolean(data.password),
       hasPassphrase: Boolean(data.passphrase),
       hasPrivateKey: Boolean(data.privateKeyPath),
@@ -238,8 +246,8 @@ function validateHost(host) {
     errors.push('Private key file does not exist');
   }
 
-  if (!host.password && !host.privateKeyPath) {
-    errors.push('Either a password or a private key is required');
+  if (!host.password && !host.privateKeyPath && !host.keyId) {
+    errors.push('A password, a private key, or a Keychain key is required');
   }
 
   return errors;
@@ -269,6 +277,7 @@ function saveHost(host) {
     port: Number(merged.port) || 22,
     username: merged.username,
     privateKeyPath: merged.privateKeyPath || undefined,
+    keyId: merged.keyId || undefined,
   };
   if (merged.password) payload.password = merged.password;
   if (merged.passphrase) payload.passphrase = merged.passphrase;
@@ -292,6 +301,70 @@ function deleteHost(id) {
   requireUnlocked();
   db.prepare('DELETE FROM hosts WHERE id = ?').run(id);
   return listHosts();
+}
+
+function decryptKeyData(row) {
+  return decryptJSON(derivedKey, {
+    iv: row.data_iv,
+    authTag: row.data_auth_tag,
+    ciphertext: row.data_ciphertext,
+  });
+}
+
+// SSH keys generated in-app. The private key never leaves the vault
+// unencrypted except when handed to ssh2 for a connection.
+function listKeys() {
+  requireUnlocked();
+  const rows = db.prepare('SELECT * FROM keys ORDER BY created_at ASC').all();
+  return rows.map((row) => {
+    const data = decryptKeyData(row);
+    return {
+      id: row.id,
+      name: data.name,
+      type: data.type,
+      bits: data.bits,
+      public: data.public,
+      fingerprint: data.fingerprint,
+      createdAt: row.created_at,
+    };
+  });
+}
+
+function saveKey(key) {
+  requireUnlocked();
+  if (!key?.name || !key?.private || !key?.public) {
+    throw new Error('Key name and material are required');
+  }
+
+  const enc = encryptJSON(derivedKey, {
+    name: key.name,
+    type: key.type,
+    bits: key.bits,
+    private: key.private,
+    public: key.public,
+    passphrase: key.passphrase || undefined,
+    fingerprint: key.fingerprint,
+  });
+
+  db.prepare(
+    `INSERT INTO keys (id, data_iv, data_auth_tag, data_ciphertext, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(crypto.randomUUID(), enc.iv, enc.authTag, enc.ciphertext, Date.now());
+
+  return listKeys();
+}
+
+function getKeySecret(id) {
+  requireUnlocked();
+  const row = db.prepare('SELECT * FROM keys WHERE id = ?').get(id);
+  if (!row) return null;
+  return { id: row.id, ...decryptKeyData(row) };
+}
+
+function deleteKey(id) {
+  requireUnlocked();
+  db.prepare('DELETE FROM keys WHERE id = ?').run(id);
+  return listKeys();
 }
 
 function getKnownHostKey(host, port) {
@@ -320,6 +393,10 @@ module.exports = {
   saveHost,
   deleteHost,
   getHostSecret,
+  listKeys,
+  saveKey,
+  getKeySecret,
+  deleteKey,
   getKnownHostKey,
   trustHostKey,
 };

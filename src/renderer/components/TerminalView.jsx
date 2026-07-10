@@ -35,6 +35,14 @@ export default function TerminalView({ sessionId, active }) {
       if (payload.sessionId === sessionId) term.write(payload.data);
     });
 
+    // Everything printed before this terminal mounted (MOTD, first prompt)
+    // was buffered in the main process — fetch and replay it. Live data only
+    // starts flowing after the attach, so nothing is duplicated.
+    let disposed = false;
+    window.api.sshAttach(sessionId).then((result) => {
+      if (!disposed && result?.backlog) term.write(result.backlog);
+    });
+
     const unsubClosed = window.api.onSshClosed((payload) => {
       if (payload.sessionId === sessionId) {
         term.write('\r\n\x1b[31m[connection closed]\x1b[0m\r\n');
@@ -53,6 +61,7 @@ export default function TerminalView({ sessionId, active }) {
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      disposed = true;
       dataSub.dispose();
       resizeSub.dispose();
       unsubData();

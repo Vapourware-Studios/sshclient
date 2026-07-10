@@ -47,11 +47,45 @@ function buildConnectConfig(config) {
   } else if (config.privateKey) {
     connectConfig.privateKey = config.privateKey;
     if (config.passphrase) connectConfig.passphrase = config.passphrase;
-  } else {
-    connectConfig.password = config.password;
   }
 
+  // Key and password can coexist: ssh2 tries every method the server
+  // allows, so a saved password still works while the public key is not
+  // yet installed on the host.
+  if (config.password) connectConfig.password = config.password;
+
   return connectConfig;
+}
+
+// Appends the public key to the remote ~/.ssh/authorized_keys unless it
+// is already there, so key auth works on the next connection.
+function installPublicKey(conn, publicKey, log) {
+  const line = publicKey.trim();
+  if (line.includes("'") || line.includes('\n')) {
+    log('Public key has unexpected characters — skipped authorized_keys install', 'error');
+    return;
+  }
+
+  const cmd =
+    `mkdir -p ~/.ssh && chmod 700 ~/.ssh && ` +
+    `touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && ` +
+    `{ grep -qF '${line}' ~/.ssh/authorized_keys || echo '${line}' >> ~/.ssh/authorized_keys; }`;
+
+  conn.exec(cmd, (err, stream) => {
+    if (err) {
+      log(`Could not update authorized_keys: ${err.message}`, 'error');
+      return;
+    }
+    stream.on('data', () => {});
+    stream.stderr.on('data', () => {});
+    stream.on('close', (code) => {
+      if (code === 0) {
+        log('Public key is set up in ~/.ssh/authorized_keys');
+      } else {
+        log(`authorized_keys install exited with code ${code}`, 'error');
+      }
+    });
+  });
 }
 
 function connect(config, handlers = {}) {
@@ -93,8 +127,40 @@ function connect(config, handlers = {}) {
   });
 
   conn.on('ready', () => {
+    if (config.publicKey) installPublicKey(conn, config.publicKey, log);
+
+    // SFTP-only sessions skip the shell entirely: they are their own
+    // connection to the host, independent of any terminal session.
+    if (config.mode === 'sftp') {
+      onProgress?.(sessionId, 'sftp');
+      log('Authenticated. Opening SFTP channel…');
+      conn.sftp((err, sftp) => {
+        pending.delete(sessionId);
+
+        if (err) {
+          conn.end();
+          log(`Failed to open SFTP channel: ${err.message}`, 'error');
+          onError?.(sessionId, err);
+          return;
+        }
+
+        sessions.set(sessionId, { conn, stream: null, sftp, backlog: null, attached: true });
+        sftp.on('close', () => {
+          sessions.delete(sessionId);
+          conn.end();
+          onClose?.(sessionId);
+        });
+
+        log('SFTP channel open — session ready');
+        forwardDebug = false;
+        onReady?.(sessionId);
+      });
+      return;
+    }
+
     onProgress?.(sessionId, 'shell');
     log('Authenticated. Opening terminal channel…');
+
     conn.shell(
       { term: 'xterm-256color', cols: config.cols || 80, rows: config.rows || 24 },
       (err, stream) => {
@@ -107,10 +173,21 @@ function connect(config, handlers = {}) {
           return;
         }
 
-        sessions.set(sessionId, { conn, stream, sftp: null });
+        // Output that arrives before the renderer's terminal mounts (the
+        // MOTD, the first prompt) is buffered here and flushed on attach —
+        // otherwise it is emitted into the void and the terminal starts blank.
+        const session = { conn, stream, sftp: null, backlog: [], attached: false };
+        sessions.set(sessionId, session);
 
         stream.on('data', (chunk) => {
-          onData?.(sessionId, chunk.toString('utf8'));
+          const text = chunk.toString('utf8');
+          if (session.attached) {
+            onData?.(sessionId, text);
+          } else {
+            session.backlog.push(text);
+            // Drop the oldest chunks if the renderer never attaches.
+            if (session.backlog.length > 2000) session.backlog.shift();
+          }
         });
 
         stream.on('close', () => {
@@ -143,11 +220,22 @@ function connect(config, handlers = {}) {
 }
 
 function write(sessionId, data) {
-  sessions.get(sessionId)?.stream.write(data);
+  sessions.get(sessionId)?.stream?.write(data);
 }
 
 function resize(sessionId, cols, rows) {
-  sessions.get(sessionId)?.stream.setWindow(rows, cols, rows, cols);
+  sessions.get(sessionId)?.stream?.setWindow(rows, cols, rows, cols);
+}
+
+// Called by the renderer once its terminal is mounted and listening.
+// Returns everything the shell printed so far and switches to live streaming.
+function attach(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) return { backlog: '' };
+  const backlog = (session.backlog ?? []).join('');
+  session.backlog = null;
+  session.attached = true;
+  return { backlog };
 }
 
 // SFTP is not a separate connection — it's another channel type on the
@@ -244,6 +332,7 @@ module.exports = {
   connect,
   write,
   resize,
+  attach,
   disconnect,
   sftpHome,
   sftpList,

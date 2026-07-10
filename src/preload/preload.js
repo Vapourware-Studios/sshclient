@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   sshWrite: (sessionId, data) => ipcRenderer.invoke('ssh:write', { sessionId, data }),
   sshResize: (sessionId, cols, rows) => ipcRenderer.invoke('ssh:resize', { sessionId, cols, rows }),
   sshDisconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
+  sshAttach: (sessionId) => ipcRenderer.invoke('ssh:attach', sessionId),
 
   onSshProgress: (callback) => subscribe('ssh:progress', callback),
   onSshReady: (callback) => subscribe('ssh:ready', callback),
@@ -26,7 +27,12 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('sftp:upload', { sessionId, remoteDir }),
   sftpUploadPaths: (sessionId, remoteDir, localPaths) =>
     ipcRenderer.invoke('sftp:uploadPaths', { sessionId, remoteDir, localPaths }),
+  sftpDownloadTo: (sessionId, remotePath, localDir, name) =>
+    ipcRenderer.invoke('sftp:downloadTo', { sessionId, remotePath, localDir, name }),
   onSftpTransfer: (callback) => subscribe('sftp:transfer', callback),
+
+  fsHome: () => ipcRenderer.invoke('fs:home'),
+  fsList: (path) => ipcRenderer.invoke('fs:list', path),
 
   // Turns a File object from a drag-and-drop event into its local path.
   // Only the preload can do this (webUtils is not available to the page).
@@ -40,6 +46,11 @@ contextBridge.exposeInMainWorld('api', {
   hostsList: () => ipcRenderer.invoke('hosts:list'),
   hostsSave: (host) => ipcRenderer.invoke('hosts:save', host),
   hostsDelete: (id) => ipcRenderer.invoke('hosts:delete', id),
+
+  keysList: () => ipcRenderer.invoke('keys:list'),
+  keysGenerate: (spec) => ipcRenderer.invoke('keys:generate', spec),
+  keysImport: (spec) => ipcRenderer.invoke('keys:import', spec),
+  keysDelete: (id) => ipcRenderer.invoke('keys:delete', id),
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
 });
