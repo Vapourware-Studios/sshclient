@@ -1,12 +1,3 @@
-/* ===========================================================================
-   index.css — TAILWIND + THE shadcn/ui THEME
-   ===========================================================================
-   With Tailwind v4 there is no tailwind.config.js — this CSS file IS the
-   configuration. The @import line pulls in all of Tailwind; the variables
-   below are shadcn/ui's "zinc" color theme (light in :root, dark in
-   .dark). Components refer to colors by NAME (bg-background, text-primary),
-   and these variables decide what those names mean.
-   =========================================================================== */
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -81,7 +72,6 @@
   --sidebar-ring: oklch(0.552 0.016 285.938);
 }
 
-/* Map the variables above onto Tailwind utility names (bg-background, etc.) */
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
