@@ -22,6 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Terminal, Folder, Pencil, Zap } from "lucide-react";
+import { log } from "@/lib/logger";
 
 export default function App() {
   // useState gives a component memory that survives re-renders.
@@ -35,10 +36,18 @@ export default function App() {
   // we put the reply into state and let React re-render.
   async function handlePing() {
     setWaiting(true);
-    console.log("[renderer] button clicked, calling window.api.ping(...)");
-    const reply = await window.api.ping("Pong!");
-    setAnswer(reply);
-    setWaiting(false);
+
+    log("info", "ping button clicked")
+
+    try {
+      const reply = await window.api.ping("Pong!");
+      log("success", "responded");
+      setAnswer(reply);
+    } catch (err) {
+      log("error", "ping failed", err);
+    } finally {
+      setWaiting(false);
+    }
   }
 
   return (
