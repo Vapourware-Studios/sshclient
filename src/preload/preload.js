@@ -35,5 +35,8 @@ contextBridge.exposeInMainWorld('api', {
   //
   // So from the UI's point of view: `await window.api.ping('hi')` just...
   // returns main's answer. All the plumbing is hidden behind this one line.
+
   ping: (message) => ipcRenderer.invoke('ping', message),
+
+  log: (entry) => ipcRenderer.send("log", entry),
 });
