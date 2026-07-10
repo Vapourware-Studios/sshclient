@@ -48,3 +48,15 @@ internet, forever. These rules are absolute. When in doubt, don't commit.
   unique work, then remove it.
 - Never force-push, rewrite history, or change repo visibility unless the
   user explicitly asks for it in the current conversation.
+
+## 5. Styling: ONE stylesheet
+
+- **All hand-written CSS lives in `src/renderer/index.css`** — theme
+  tokens, `@keyframes`, animation utilities, everything. Never create
+  another `.css` file, never write `<style>` blocks, and never import CSS
+  from a `.js`/`.jsx` file. Third-party CSS (e.g. xterm's) is `@import`-ed
+  from `index.css` too.
+- Components are styled with Tailwind utility classes in JSX. Reach for
+  custom CSS in `index.css` only for things utilities can't express
+  (keyframes, gradients-as-text, etc.), and add it under the marked
+  "Custom animations" section at the bottom of the file.
