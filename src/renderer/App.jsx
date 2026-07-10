@@ -1,72 +1,206 @@
-// ============================================================================
-// App.jsx — THE UI, AS A REACT COMPONENT
-// ============================================================================
-// This replaces the old index.html structure + renderer.js behavior, merged
-// into one place. A React component is a function that returns JSX — HTML-ish
-// syntax that describes what should be on screen. When state changes, React
-// re-runs the function and updates only what differs.
-//
-// The building blocks (Button, Card, Badge...) come from shadcn/ui:
-// pre-styled, accessible components that live IN OUR CODEBASE under
-// src/renderer/components/ui/ — open them, read them, change them.
-// ============================================================================
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Terminal, Folder, Pencil, Zap } from "lucide-react";
-import { log } from "@/lib/logger";
+import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Terminal as TerminalIcon, Plus, X, Server, Pencil, Trash2, Loader2, Lock } from 'lucide-react';
+import Unlock from '@/components/Unlock';
+import NewConnectionDialog from '@/components/NewConnectionDialog';
+import TerminalView from '@/components/TerminalView';
+import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
+
+const MIN_CONNECTING_MS = 2000;
 
 export default function App() {
-  // useState gives a component memory that survives re-renders.
-  //   answer  — main process's reply to our ping (null until we ask)
-  //   waiting — true while the ping is in flight, so the button can react
-  const [answer, setAnswer] = useState(null);
-  const [waiting, setWaiting] = useState(false);
+  const [vaultStatus, setVaultStatus] = useState(null);
+  const [hosts, setHosts] = useState([]);
+  const [tabs, setTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingHost, setEditingHost] = useState(null);
+  const [connectError, setConnectError] = useState(null);
 
-  // Same bridge call as before: renderer → preload → main and back.
-  // Only the surroundings changed — instead of poking the DOM by hand,
-  // we put the reply into state and let React re-render.
-  async function handlePing() {
-    setWaiting(true);
+  const startedAtRef = useRef(new Map());
+  const pendingTimeoutsRef = useRef(new Map());
 
-    log("info", "ping button clicked")
+  function afterMinDelay(sessionId, apply) {
+    const startedAt = startedAtRef.current.get(sessionId) ?? Date.now();
+    const remaining = Math.max(0, MIN_CONNECTING_MS - (Date.now() - startedAt));
 
-    try {
-      const reply = await window.api.ping("Pong!");
-      log("success", "responded");
-      setAnswer(reply);
-    } catch (err) {
-      log("error", "ping failed", err);
-    } finally {
-      setWaiting(false);
-    }
+    const timeoutId = setTimeout(() => {
+      pendingTimeoutsRef.current.delete(sessionId);
+      startedAtRef.current.delete(sessionId);
+      apply();
+    }, remaining);
+
+    pendingTimeoutsRef.current.set(sessionId, timeoutId);
   }
+
+  useEffect(() => {
+    refreshVaultStatus();
+  }, []);
+
+  useEffect(() => {
+    if (vaultStatus?.unlocked) refreshHosts();
+  }, [vaultStatus?.unlocked]);
+
+  useEffect(() => {
+    function patchTab(sessionId, patch) {
+      setTabs((prev) => prev.map((t) => (t.id === sessionId ? { ...t, ...patch } : t)));
+    }
+
+    const unsubProgress = window.api.onSshProgress(({ sessionId, stage }) => {
+      patchTab(sessionId, { stage });
+    });
+
+    const unsubReady = window.api.onSshReady(({ sessionId }) => {
+      afterMinDelay(sessionId, () => patchTab(sessionId, { status: 'connected' }));
+    });
+
+    const unsubError = window.api.onSshError(({ sessionId, message }) => {
+      afterMinDelay(sessionId, () => {
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === sessionId && t.status === 'connecting'
+              ? { ...t, status: 'error', error: message, hostKeyInfo: null }
+              : t
+          )
+        );
+      });
+    });
+
+    const unsubHostKey = window.api.onSshHostKey(({ sessionId, ...info }) => {
+      patchTab(sessionId, { hostKeyInfo: info });
+    });
+
+    return () => {
+      unsubProgress();
+      unsubReady();
+      unsubError();
+      unsubHostKey();
+    };
+  }, []);
+
+  async function refreshVaultStatus() {
+    setVaultStatus(await window.api.vaultStatus());
+  }
+
+  async function refreshHosts() {
+    const result = await window.api.hostsList();
+    if (!result.error) setHosts(result.hosts);
+  }
+
+  async function openSession(connectConfig, title) {
+    setConnectError(null);
+    const result = await window.api.sshConnect(connectConfig);
+    if (result.error) {
+      setConnectError(result.error);
+      throw new Error(result.error);
+    }
+    const tab = {
+      id: result.sessionId,
+      title,
+      status: 'connecting',
+      stage: 'connecting',
+      connectConfig,
+    };
+    startedAtRef.current.set(tab.id, Date.now());
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+  }
+
+  async function closeTab(tabId) {
+    const pendingTimeout = pendingTimeoutsRef.current.get(tabId);
+    if (pendingTimeout) {
+      clearTimeout(pendingTimeout);
+      pendingTimeoutsRef.current.delete(tabId);
+    }
+    startedAtRef.current.delete(tabId);
+
+    await window.api.sshDisconnect(tabId);
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.id !== tabId);
+      if (activeTabId === tabId) {
+        setActiveTabId(next.length ? next[next.length - 1].id : null);
+      }
+      return next;
+    });
+  }
+
+  async function retryTab(tab) {
+    setTabs((prev) => prev.filter((t) => t.id !== tab.id));
+    try {
+      await openSession(tab.connectConfig, tab.title);
+    } catch {}
+  }
+
+  async function connectToHost(host) {
+    try {
+      await openSession({ hostId: host.id }, host.label || host.host);
+    } catch {}
+  }
+
+  function openNewConnectionDialog() {
+    setEditingHost(null);
+    setDialogOpen(true);
+  }
+
+  function openEditHostDialog(host) {
+    setEditingHost(host);
+    setDialogOpen(true);
+  }
+
+  async function deleteHost(host) {
+    const confirmed = window.confirm(
+      `Delete saved host "${host.label || host.host}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    const result = await window.api.hostsDelete(host.id);
+    if (!result.error) setHosts(result.hosts);
+  }
+
+  async function respondToHostKey(tabId, trust) {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, hostKeyInfo: null } : t)));
+    await window.api.sshHostKeyResponse(tabId, trust);
+  }
+
+  async function lockVault() {
+    await window.api.vaultLock();
+    await refreshVaultStatus();
+  }
+
+  if (!vaultStatus) return null;
+
+  if (!vaultStatus.unlocked) {
+    return (
+      <Unlock vaultExists={vaultStatus.exists} onUnlocked={refreshVaultStatus} />
+    );
+  }
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
   return (
     <div className="flex h-screen">
-      {/* Invisible strip along the top edge: lets you drag the window,
-          since main.js hides the native title bar (titleBarStyle). */}
       <div
         className="fixed inset-x-0 top-0 z-50 h-9"
-        style={{ WebkitAppRegion: "drag" }}
+        style={{ WebkitAppRegion: 'drag' }}
       />
 
-      {/* ============ LEFT: SIDEBAR (host list lives here later) ========= */}
       <aside className="flex w-60 flex-col border-r bg-sidebar text-sidebar-foreground">
-        {/* Spacer so content clears the macOS traffic-light buttons */}
         <div className="h-9 shrink-0" />
 
-        <div className="flex items-center gap-2 px-4 py-2">
-          <Terminal className="size-4" />
-          <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
+        <div className="flex items-center justify-between px-4 py-2">
+          <div className="flex items-center gap-2">
+            <TerminalIcon className="size-4" />
+            <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
+          </div>
+          <button
+            onClick={lockVault}
+            title="Lock vault"
+            className="rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <Lock className="size-3.5" />
+          </button>
         </div>
 
         <Separator />
@@ -75,98 +209,144 @@ export default function App() {
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Hosts
           </h2>
-          <Badge variant="secondary">2</Badge>
+          <Badge variant="secondary">{hosts.length}</Badge>
         </div>
 
-        <div className="px-2 pt-2">
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              className="flex-1 min-w-0 justify-start rounded-md transition-colors hover:bg-sidebar-accent"
+        <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-2">
+          {hosts.length === 0 && (
+            <p className="px-2 text-sm text-muted-foreground">No saved hosts yet</p>
+          )}
+          {hosts.map((host) => (
+            <div
+              key={host.id}
+              className="group flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-accent"
             >
-              <span className="truncate">
-                2001:0db8:85a3:0000:0000:8a2e:0370:7334
-              </span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0 hover:bg-sidebar-accent"
-            >
-              <Folder className="size-4" />
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0 hover:bg-sidebar-accent"
-            >
-              <Pencil className="size-4" />
-            </Button>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              className="flex-1 min-w-0 justify-start rounded-md transition-colors hover:bg-sidebar-accent"
-            >
-              <span className="truncate">
-                192.0.2.1
-              </span>
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0 hover:bg-sidebar-accent"
-            >
-              <Folder className="size-4" />
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              className="shrink-0 hover:bg-sidebar-accent"
-            >
-              <Pencil className="size-4" />
-            </Button>
-          </div>
+              <button
+                onClick={() => connectToHost(host)}
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
+              >
+                <Server className="size-3.5 shrink-0" />
+                <span className="truncate">{host.label || host.host}</span>
+              </button>
+              <button
+                onClick={() => openEditHostDialog(host)}
+                title="Edit host"
+                className="hidden shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:block"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+              <button
+                onClick={() => deleteHost(host)}
+                title="Delete host"
+                className="hidden shrink-0 rounded p-1 text-muted-foreground hover:text-destructive group-hover:block"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
+          ))}
         </div>
 
-
-        {/* In Phase 1 mission 1.2, this becomes a list rendered from an
-            array — in React that's hosts.map(host => <li>...</li>). */}
-        {/* <p className="px-4 text-sm text-muted-foreground">No saved hosts yet</p> */}
+        <div className="p-2">
+          <Button className="w-full" size="sm" onClick={openNewConnectionDialog}>
+            <Plus className="size-4" /> New connection
+          </Button>
+        </div>
       </aside>
 
-      {/* ============ RIGHT: MAIN AREA (future terminal) ================= */}
-      <main className="flex flex-1 items-center justify-center p-8">
-        <Card className="w-full max-w-lg">
-          <CardHeader>
-            <CardTitle>Phase 0 — The Backbone</CardTitle>
-            <CardDescription>
-              This window is the <strong>renderer process</strong>. The button
-              below sends a message across the bridge to the{" "}
-              <strong>main process</strong> and prints the reply.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <Button onClick={handlePing} disabled={waiting}>
-              <Zap /> {waiting ? "Pinging…" : "Test the bridge (ping)"}
-            </Button>
+      <main className="flex flex-1 flex-col">
+        <div className="h-9 shrink-0" style={{ WebkitAppRegion: 'drag' }} />
 
-            {/* && = "render this only if answer exists" (null renders nothing) */}
-            {answer && (
-              <pre className="overflow-x-auto rounded-md bg-muted p-4 font-mono text-xs leading-relaxed">
-                {`reply from main:  ${answer.reply}\n` +
-                  `electron:         v${answer.electronVersion}\n` +
-                  `node (main proc): v${answer.nodeVersion}\n` +
-                  `chrome (this UI): v${answer.chromeVersion}`}
-              </pre>
-            )}
-          </CardContent>
-        </Card>
+        {tabs.length > 0 && (
+          <div className="flex items-center gap-1 border-b bg-muted/40 px-2">
+            {tabs.map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveTabId(tab.id)}
+                className={`flex cursor-pointer items-center gap-2 rounded-t-md border-x border-t px-3 py-1.5 text-sm ${
+                  tab.id === activeTabId
+                    ? 'border-border bg-background'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {tab.status === 'connecting' ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                ) : tab.status === 'error' ? (
+                  <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
+                ) : (
+                  <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+                )}
+                <span className="max-w-32 truncate">{tab.title}</span>
+                <X
+                  className="size-3.5 hover:text-destructive"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {connectError && (
+          <p className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            {connectError}
+          </p>
+        )}
+
+        <div className="relative flex-1 bg-[#0d1117]">
+          {tabs.length === 0 && (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              No active sessions — connect to a host to get started.
+            </div>
+          )}
+
+          {tabs
+            .filter((t) => t.status === 'connected')
+            .map((tab) => (
+              <TerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
+            ))}
+
+          {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (
+            <HostKeyPromptView
+              title={activeTab.title}
+              info={activeTab.hostKeyInfo}
+              onTrust={() => respondToHostKey(activeTab.id, true)}
+              onReject={() => respondToHostKey(activeTab.id, false)}
+            />
+          )}
+
+          {activeTab?.status === 'connecting' && !activeTab.hostKeyInfo && (
+            <ConnectingView
+              title={activeTab.title}
+              stage={activeTab.stage}
+              onCancel={() => closeTab(activeTab.id)}
+            />
+          )}
+
+          {activeTab?.status === 'error' && (
+            <ConnectErrorView
+              title={activeTab.title}
+              message={activeTab.error}
+              onRetry={() => retryTab(activeTab)}
+              onClose={() => closeTab(activeTab.id)}
+            />
+          )}
+        </div>
       </main>
+
+      <NewConnectionDialog
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          setDialogOpen(next);
+          if (!next) setEditingHost(null);
+        }}
+        editingHost={editingHost}
+        onSaved={setHosts}
+        onConnect={async (config, title) => {
+          await openSession(config, title);
+        }}
+      />
     </div>
   );
 }

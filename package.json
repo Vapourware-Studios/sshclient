@@ -21,12 +21,15 @@
     "wait-on": "^9.0.10"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.23.0",
     "radix-ui": "^1.6.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "ssh2": "^1.17.0",
     "tailwind-merge": "^3.6.0"
   }
 }
