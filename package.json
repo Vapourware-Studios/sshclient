@@ -4,9 +4,11 @@
   "description": "A Termius-like SSH + SFTP client, built from scratch as a learning project",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "vite build && electron .",
-    "dev": "concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && electron . --dev\"",
-    "build": "vite build"
+      "dev:renderer": "vite",
+      "dev:electron": "wait-on tcp:5173 && electron . --dev",
+      "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+      "build": "vite build",
+      "start": "electron ."
   },
   "author": "Vapourware-Studios",
   "license": "GPL-3.0-only",
