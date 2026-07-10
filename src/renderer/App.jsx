@@ -102,7 +102,7 @@ export default function App() {
               className="flex-1 min-w-0 justify-start rounded-md transition-colors hover:bg-sidebar-accent"
             >
               <span className="truncate">
-                192.168.1.156
+                192.0.2.1
               </span>
             </Button>
 
