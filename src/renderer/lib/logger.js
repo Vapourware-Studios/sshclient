@@ -16,7 +16,8 @@ export function log(level, message, data = null) {
   }
 
   // DevTools
-  console[level === "error" ? "error" : "log"](
+  const consoleFn = level === "error" ? "error" : level === "warn" ? "warn" : "log";
+  console[consoleFn](
     `[${entry.time}] [${level.toUpperCase()}] ${message}`,
     data ?? ""
   );
