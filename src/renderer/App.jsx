@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Unlock from '@/components/Unlock';
 import NewConnectionDialog from '@/components/NewConnectionDialog';
-import Sidebar from '@/components/Sidebar';
 import TabBar from '@/components/TabBar';
 import ContentArea from '@/components/ContentArea';
 
@@ -11,10 +10,10 @@ export default function App() {
   const [vaultStatus, setVaultStatus] = useState(null);
   const [hosts, setHosts] = useState([]);
   const [tabs, setTabs] = useState([
-    { id: 'vault', title: 'Vault', constant: true},
+    { id: 'vault', title: 'Hosts', constant: true },
     { id: 'sftp', title: 'SFTP', constant: true },
   ]);
-  const [activeTabId, setActiveTabId] = useState(null);
+  const [activeTabId, setActiveTabId] = useState('vault');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
   const [connectError, setConnectError] = useState(null);
@@ -182,14 +181,6 @@ export default function App() {
     if (!result.error) setHosts(result.hosts);
   }
 
-  function setTabView(tabId, view) {
-    setTabs((prev) =>
-      prev.map((t) =>
-        t.id === tabId ? { ...t, view, sftpOpened: t.sftpOpened || view === 'files' } : t
-      )
-    );
-  }
-
   async function respondToHostKey(tabId, trust) {
     setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, hostKeyInfo: null } : t)));
     await window.api.sshHostKeyResponse(tabId, trust);
@@ -210,26 +201,15 @@ export default function App() {
 
   return (
     <div className="flex h-screen">
-      <div
-        className="fixed inset-x-0 top-0 z-50 h-9"
-        style={{ WebkitAppRegion: 'drag' }}
-      />
-
-
-
       <main className="flex flex-1 flex-col">
-        <div className="h-9 shrink-0" style={{ WebkitAppRegion: 'drag' }} />
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelectTab={setActiveTabId}
+          onCloseTab={closeTab}
+          onNewConnection={openNewConnectionDialog}
+        />
 
-        {tabs.length > 0 && (
-          <TabBar
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onSelectTab={setActiveTabId}
-            onCloseTab={closeTab}
-            onViewChange={setTabView}
-            onLockVault={lockVault}
-          />
-        )}
 
         {connectError && (
           <p className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">

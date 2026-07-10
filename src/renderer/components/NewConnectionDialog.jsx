@@ -4,14 +4,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { FolderOpen } from 'lucide-react';
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { FolderOpen, KeyRound } from 'lucide-react';
+import { keyTypeLabel } from '@/lib/keys';
 
 const EMPTY_FORM = {
   label: '',
@@ -21,16 +21,26 @@ const EMPTY_FORM = {
   password: '',
   privateKeyPath: '',
   passphrase: '',
+  keyId: '',
   saveToVault: false,
 };
 
+// Empty strings are sent on purpose: saving a host merges into the stored
+// record, so '' clears the auth methods the user switched away from.
 function buildCredential(authType, form) {
   if (authType === 'key') {
-    const cred = { privateKeyPath: form.privateKeyPath };
+    const cred = { privateKeyPath: form.privateKeyPath, keyId: '' };
     if (form.passphrase) cred.passphrase = form.passphrase;
     return cred;
   }
-  const cred = {};
+  if (authType === 'keychain') {
+    // Password is optional here: it lets the first connection in, and the
+    // public key is auto-installed on the host during that session.
+    const cred = { keyId: form.keyId, privateKeyPath: '' };
+    if (form.password) cred.password = form.password;
+    return cred;
+  }
+  const cred = { privateKeyPath: '', keyId: '' };
   if (form.password) cred.password = form.password;
   return cred;
 }
@@ -39,12 +49,18 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
   const mode = editingHost ? 'edit' : 'add';
   const [form, setForm] = useState(EMPTY_FORM);
   const [authType, setAuthType] = useState('password');
+  const [keys, setKeys] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+
+    (async () => {
+      const result = await window.api.keysList();
+      if (!result.error) setKeys(result.keys);
+    })();
 
     if (editingHost) {
       setForm({
@@ -54,9 +70,12 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
         port: String(editingHost.port || 22),
         username: editingHost.username || '',
         privateKeyPath: editingHost.privateKeyPath || '',
+        keyId: editingHost.keyId || '',
         saveToVault: true,
       });
-      setAuthType(editingHost.hasPrivateKey ? 'key' : 'password');
+      setAuthType(
+        editingHost.keyId ? 'keychain' : editingHost.hasPrivateKey ? 'key' : 'password'
+      );
     } else {
       setForm(EMPTY_FORM);
       setAuthType('password');
@@ -78,6 +97,10 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
 
     if (!form.host || !form.username) {
       setError('Host and username are required');
+      return;
+    }
+    if (authType === 'keychain' && !form.keyId) {
+      setError('Select a key from the Keychain');
       return;
     }
 
@@ -132,18 +155,21 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{mode === 'edit' ? 'Edit connection' : 'New connection'}</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-96 gap-0 sm:max-w-md">
+        <SheetHeader className="border-b">
+          <SheetTitle>{mode === 'edit' ? 'Edit connection' : 'New connection'}</SheetTitle>
+          <SheetDescription>
             {mode === 'edit'
               ? 'Update this saved host. Leave password/passphrase blank to keep the current value.'
               : 'Connect to a remote server over SSH.'}
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-1 flex-col gap-4 overflow-y-auto p-4"
+        >
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 flex flex-col gap-2">
               <Label htmlFor="host">Host</Label>
@@ -172,7 +198,8 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
           <Tabs value={authType} onValueChange={setAuthType}>
             <TabsList className="w-full">
               <TabsTrigger value="password">Password</TabsTrigger>
-              <TabsTrigger value="key">Private key</TabsTrigger>
+              <TabsTrigger value="key">Key file</TabsTrigger>
+              <TabsTrigger value="keychain">Keychain</TabsTrigger>
             </TabsList>
 
             <TabsContent value="password" className="flex flex-col gap-2 pt-2">
@@ -218,6 +245,54 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
                 />
               </div>
             </TabsContent>
+
+            <TabsContent value="keychain" className="flex flex-col gap-3 pt-2">
+              {keys.length === 0 ? (
+                <p className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
+                  No keys in the Keychain yet — generate one under Hosts → Keychain.
+                </p>
+              ) : (
+                <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+                  {keys.map((keyItem) => (
+                    <button
+                      key={keyItem.id}
+                      type="button"
+                      onClick={() => update('keyId', keyItem.id)}
+                      className={`flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left text-sm ${
+                        form.keyId === keyItem.id
+                          ? 'border-primary bg-accent'
+                          : 'border-transparent hover:bg-accent/50'
+                      }`}
+                    >
+                      <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">{keyItem.name}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {keyTypeLabel(keyItem)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="keychain-password">Password (optional)</Label>
+                <Input
+                  id="keychain-password"
+                  type="password"
+                  placeholder={
+                    mode === 'edit' && editingHost?.hasPassword
+                      ? 'Leave blank to keep current password'
+                      : ''
+                  }
+                  value={form.password}
+                  onChange={(e) => update('password', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used for the first connection; the public key is then installed on the host
+                  automatically so future logins use the key.
+                </p>
+              </div>
+            </TabsContent>
           </Tabs>
 
           {mode === 'add' && (
@@ -255,13 +330,13 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <DialogFooter>
-            <Button type="submit" disabled={busy}>
+          <div className="mt-auto pt-2">
+            <Button type="submit" disabled={busy} className="w-full">
               {busy ? 'Please wait…' : mode === 'edit' ? 'Save changes' : 'Connect'}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

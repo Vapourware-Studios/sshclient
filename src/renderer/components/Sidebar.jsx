@@ -1,63 +1,78 @@
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Terminal as Plus, Server, Pencil, Trash2, Lock } from 'lucide-react';
+import {
+  Server,
+  KeyRound,
+  ArrowRightLeft,
+  ShieldCheck,
+  Code2,
+  History,
+  Settings,
+  Lock,
+  Vault,
+} from 'lucide-react';
 
-export default function Sidebar({
-  hosts,
-  onConnect,
-  onEdit,
-  onDelete,
-  onNewConnection,
-  onLockVault,
-}) {
+const NAV_ITEMS = [
+  { id: 'hosts', label: 'Hosts', Icon: Server },
+  { id: 'keychain', label: 'Keychain', Icon: KeyRound },
+  { id: 'port-forwarding', label: 'Port Forwarding', Icon: ArrowRightLeft },
+  { id: 'known-hosts', label: 'Known Hosts', Icon: ShieldCheck },
+  { id: 'snippets', label: 'Snippets', Icon: Code2 },
+  { id: 'history', label: 'History', Icon: History },
+];
+
+function NavButton({ active, onClick, Icon, label }) {
   return (
-    <aside className="flex h-full w-60 flex-col border-r bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Hosts
-        </h2>
-        <Badge variant="secondary">{hosts.length}</Badge>
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm ${
+        active
+          ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+          : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+      }`}
+    >
+      <Icon className="size-4 shrink-0" />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+export default function Sidebar({ section, onSectionChange, onLockVault }) {
+  return (
+    <aside className="flex h-full w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
+        <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+          <Vault className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium leading-tight">Personal Vault</p>
+          <p className="text-xs text-muted-foreground">Local</p>
+        </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-2">
-        {hosts.length === 0 && (
-          <p className="px-2 text-sm text-muted-foreground">No saved hosts yet</p>
-        )}
-        {hosts.map((host) => (
-          <div
-            key={host.id}
-            className="group flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-accent"
-          >
-            <button
-              onClick={() => onConnect(host)}
-              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
-            >
-              <Server className="size-3.5 shrink-0" />
-              <span className="truncate">{host.label || host.host}</span>
-            </button>
-            <button
-              onClick={() => onEdit(host)}
-              title="Edit host"
-              className="hidden shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:block"
-            >
-              <Pencil className="size-3.5" />
-            </button>
-            <button
-              onClick={() => onDelete(host)}
-              title="Delete host"
-              className="hidden shrink-0 rounded p-1 text-muted-foreground hover:text-destructive group-hover:block"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          </div>
+      <Separator />
+
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        {NAV_ITEMS.map(({ id, label, Icon }) => (
+          <NavButton
+            key={id}
+            active={section === id}
+            onClick={() => onSectionChange(id)}
+            Icon={Icon}
+            label={label}
+          />
         ))}
-      </div>
+      </nav>
 
-      <div className="p-2">
-        <Button className="w-full" size="sm" onClick={onNewConnection}>
-          <Plus className="size-4" /> New connection
-        </Button>
+      <Separator />
+
+      <div className="flex flex-col gap-0.5 p-2">
+        <NavButton
+          active={section === 'settings'}
+          onClick={() => onSectionChange('settings')}
+          Icon={Settings}
+          label="Settings"
+        />
+        <NavButton active={false} onClick={onLockVault} Icon={Lock} label="Lock Vault" />
       </div>
     </aside>
   );

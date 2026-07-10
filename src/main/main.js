@@ -1,6 +1,9 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const os = require('os');
+const fsp = require('fs/promises');
 const crypto = require('crypto');
+const { utils: sshUtils } = require('ssh2');
 const ssh = require('./ssh');
 const vault = require('./vault');
 
@@ -46,7 +49,15 @@ ipcMain.handle('ssh:connect', (event, config) => {
     if (config?.hostId) {
       const saved = vault.getHostSecret(config.hostId);
       if (!saved) return { error: 'Saved host not found' };
-      fullConfig = { ...saved, cols: config.cols, rows: config.rows };
+      fullConfig = { ...saved, cols: config.cols, rows: config.rows, mode: config.mode };
+    }
+    // A host can reference a Keychain key; swap the reference for the
+    // actual key material before connecting.
+    if (fullConfig.keyId) {
+      const key = vault.getKeySecret(fullConfig.keyId);
+      if (!key) return { error: 'Key not found in Keychain' };
+      fullConfig = { ...fullConfig, privateKey: key.private, publicKey: key.public };
+      if (key.passphrase) fullConfig.passphrase = key.passphrase;
     }
     const sessionId = ssh.connect(fullConfig, {
       onProgress: (sessionId, stage) => win?.webContents.send('ssh:progress', { sessionId, stage }),
@@ -87,6 +98,42 @@ ipcMain.handle('ssh:resize', (event, { sessionId, cols, rows }) => {
 
 ipcMain.handle('ssh:disconnect', (event, sessionId) => {
   ssh.disconnect(sessionId);
+});
+
+ipcMain.handle('ssh:attach', (event, sessionId) => ssh.attach(sessionId));
+
+// Local filesystem browsing for the SFTP dual-pane view.
+ipcMain.handle('fs:home', () => ({ path: os.homedir() }));
+
+ipcMain.handle('fs:list', async (event, dirPath) => {
+  try {
+    const dirents = await fsp.readdir(dirPath, { withFileTypes: true });
+    const entries = await Promise.all(
+      dirents.map(async (d) => {
+        let type = d.isDirectory() ? 'dir' : d.isSymbolicLink() ? 'link' : 'file';
+        let size = 0;
+        let mtime = 0;
+        try {
+          const st = await fsp.stat(path.join(dirPath, d.name));
+          if (st.isDirectory()) type = 'dir';
+          size = st.size;
+          mtime = st.mtimeMs;
+        } catch {
+          // Unreadable entry (permissions, broken link) — list it anyway.
+        }
+        return { name: d.name, type, size, mtime };
+      })
+    );
+
+    entries.sort((a, b) => {
+      if ((a.type === 'dir') !== (b.type === 'dir')) return a.type === 'dir' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return { entries };
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
 // Runs one SFTP transfer in the background and streams progress to the
@@ -160,6 +207,16 @@ ipcMain.handle('sftp:upload', async (event, { sessionId, remoteDir }) => {
   return { started: result.filePaths.length };
 });
 
+// Download straight into a known local folder (dual-pane transfers) —
+// no save dialog involved.
+ipcMain.handle('sftp:downloadTo', (event, { sessionId, remotePath, localDir, name }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const transferId = runTransfer(win, { sessionId, kind: 'download', name }, (onStep) =>
+    ssh.sftpDownload(sessionId, remotePath, path.join(localDir, name), onStep)
+  );
+  return { transferId };
+});
+
 // Same as sftp:upload but for drag-and-drop, where the renderer already
 // knows the local paths (via webUtils.getPathForFile in the preload).
 ipcMain.handle('sftp:uploadPaths', (event, { sessionId, remoteDir, localPaths }) => {
@@ -220,6 +277,138 @@ ipcMain.handle('hosts:save', (event, host) => {
 ipcMain.handle('hosts:delete', (event, id) => {
   try {
     return { hosts: vault.deleteHost(id) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Key generation runs in the main process so private keys are created and
+// vaulted without ever touching the renderer.
+const KEY_TYPES = {
+  ed25519: [],
+  ecdsa: [256, 384, 521],
+  rsa: [2048, 3072, 4096],
+};
+
+ipcMain.handle('keys:generate', async (event, { name, type, bits }) => {
+  try {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) throw new Error('Key name is required');
+    if (!(type in KEY_TYPES)) throw new Error(`Unsupported key type: ${type}`);
+
+    const opts = { comment: trimmed.replace(/[^\w.@-]/g, '_') };
+    if (KEY_TYPES[type].length > 0) {
+      const size = Number(bits);
+      if (!KEY_TYPES[type].includes(size)) {
+        throw new Error(`Unsupported ${type} key size: ${bits}`);
+      }
+      opts.bits = size;
+    }
+
+    const pair = await new Promise((resolve, reject) => {
+      sshUtils.generateKeyPair(type, opts, (err, keys) => (err ? reject(err) : resolve(keys)));
+    });
+
+    const parsed = sshUtils.parseKey(pair.private);
+
+    return {
+      keys: vault.saveKey({
+        name: trimmed,
+        type,
+        bits: opts.bits,
+        private: pair.private,
+        public: pair.public.trim(),
+        fingerprint: keyFingerprint(parsed),
+      }),
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+function keyFingerprint(parsed) {
+  return (
+    'SHA256:' +
+    crypto.createHash('sha256').update(parsed.getPublicSSH()).digest('base64').replace(/=+$/, '')
+  );
+}
+
+// Import a key the user pasted in. The public half is derived from the
+// private key, so pasting just the private key is enough.
+ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase }) => {
+  try {
+    const trimmedName = String(name || '').trim();
+    if (!trimmedName) throw new Error('Key name is required');
+
+    const material = String(privateKey || '').trim();
+    if (!material) throw new Error('Paste the private key');
+
+    let parsed = sshUtils.parseKey(material, passphrase || undefined);
+    if (Array.isArray(parsed)) parsed = parsed[0];
+    if (parsed instanceof Error) {
+      throw new Error(`Could not read key: ${parsed.message}`);
+    }
+    if (!parsed.isPrivateKey()) {
+      throw new Error('This looks like a public key — paste the private key');
+    }
+
+    // If the user pasted the public key too, check it actually belongs to
+    // this private key and keep their line (comment included).
+    let pastedPublicLine;
+    if (String(publicKey || '').trim()) {
+      const normalized = String(publicKey).trim().split(/\s+/).join(' ');
+      let pastedParsed = sshUtils.parseKey(normalized);
+      if (Array.isArray(pastedParsed)) pastedParsed = pastedParsed[0];
+      if (pastedParsed instanceof Error) {
+        throw new Error(`Could not read public key: ${pastedParsed.message}`);
+      }
+      if (!pastedParsed.getPublicSSH().equals(parsed.getPublicSSH())) {
+        throw new Error('The public key does not match the private key');
+      }
+      pastedPublicLine = normalized;
+    }
+
+    // 'ecdsa-sha2-nistp256' -> type 'ecdsa', bits 256, etc.
+    let type = parsed.type;
+    let bits;
+    if (type === 'ssh-ed25519') type = 'ed25519';
+    else if (type === 'ssh-rsa') type = 'rsa';
+    else if (type.startsWith('ecdsa-sha2-nistp')) {
+      bits = Number(type.slice('ecdsa-sha2-nistp'.length)) || undefined;
+      type = 'ecdsa';
+    }
+
+    const comment = trimmedName.replace(/[^\w.@-]/g, '_');
+    const publicLine =
+      pastedPublicLine ?? `${parsed.type} ${parsed.getPublicSSH().toString('base64')} ${comment}`;
+
+    return {
+      keys: vault.saveKey({
+        name: trimmedName,
+        type,
+        bits,
+        private: material,
+        public: publicLine,
+        passphrase: passphrase || undefined,
+        fingerprint: keyFingerprint(parsed),
+      }),
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('keys:list', () => {
+  try {
+    return { keys: vault.listKeys() };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('keys:delete', (event, id) => {
+  try {
+    return { keys: vault.deleteKey(id) };
   } catch (err) {
     return { error: err.message };
   }

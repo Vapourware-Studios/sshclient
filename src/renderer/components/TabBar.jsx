@@ -1,39 +1,43 @@
-import { Terminal as TerminalIcon, Lock, X, Loader2, Folder } from 'lucide-react';
-import { Separator } from './ui/separator';
+import { Terminal as TerminalIcon, X, Loader2, Home, Plus, Folder } from 'lucide-react';
 
-export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onViewChange, onLockVault }) {
-  const activeTab = tabs.find((t) => t.id === activeTabId) || null;
+const NO_DRAG = { WebkitAppRegion: 'no-drag' };
 
+const CONSTANT_TAB_ICONS = { vault: Home, sftp: Folder };
+
+function Tab({ active, onClick, children }) {
   return (
-    <div className="flex items-center gap-1 border-b bg-muted/40 px-2">
-      {tabs.filter((t) => t.constant).map((tab) => (
-        <div
-          key={tab.id}
-          onClick={() => onSelectTab(tab.id)}
-          className={`flex cursor-pointer items-center gap-2 rounded-t-md border-x border-t px-3 py-1.5 text-sm ${
-            tab.id === activeTabId
-              ? 'border-border bg-background'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <span className="max-w-32 truncate">{tab.title}</span>
-        </div>
-      ))}
+    <div
+      onClick={onClick}
+      style={NO_DRAG}
+      className={`flex h-8 cursor-pointer items-center gap-2 rounded-md px-3 text-sm ${
+        active
+          ? 'border bg-background text-foreground'
+          : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
 
-      {tabs.some((t) => t.constant) && tabs.some((t) => !t.constant) && (
-        <Separator orientation="vertical" className="mx-1 h-5" />
-      )}
+export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewConnection }) {
+  return (
+    <div
+      className="flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pl-20 pr-3"
+      style={{ WebkitAppRegion: 'drag' }}
+    >
+      {tabs.filter((t) => t.constant).map((tab) => {
+        const Icon = CONSTANT_TAB_ICONS[tab.id] ?? Home;
+        return (
+          <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
+            <Icon className="size-3.5 shrink-0" />
+            <span className="max-w-32 truncate">{tab.title}</span>
+          </Tab>
+        );
+      })}
 
       {tabs.filter((t) => !t.constant).map((tab) => (
-        <div
-          key={tab.id}
-          onClick={() => onSelectTab(tab.id)}
-          className={`flex cursor-pointer items-center gap-2 rounded-t-md border-x border-t px-3 py-1.5 text-sm ${
-            tab.id === activeTabId
-              ? 'border-border bg-background'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
+        <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
           {tab.status === 'connecting' ? (
             <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
           ) : tab.status === 'error' ? (
@@ -45,44 +49,26 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onV
           <span className="max-w-32 truncate">{tab.title}</span>
           <X
             className="size-3.5 hover:text-destructive"
-            onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCloseTab(tab.id);
+            }}
           />
-        </div>
+        </Tab>
       ))}
 
-      {activeTab?.status === 'connected' && (
-        <div className="ml-auto flex items-center gap-0.5 py-1">
-          {[
-            { id: 'terminal', label: 'Terminal', Icon: TerminalIcon },
-            { id: 'files', label: 'Files', Icon: Folder },
-          ].map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              onClick={() => onViewChange(activeTab.id, id)}
-              className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs ${
-                (activeTab.view ?? 'terminal') === id
-                  ? 'border bg-background text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Icon className="size-3.5" /> {label}
-            </button>
-          ))}
-        </div>
-      )}
+      <button
+        onClick={onNewConnection}
+        title="New connection"
+        style={NO_DRAG}
+        className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background/50 hover:text-foreground"
+      >
+        <Plus className="size-4" />
+      </button>
 
-      <div className="flex ml-auto items-center gap-2">
-
-            <button
-              onClick={onLockVault}
-              title="Lock vault"
-              className="rounded p-1 text-muted-foreground hover:text-foreground"
-            >
-              <Lock className="size-3.5" />
-            </button>
-
-          <TerminalIcon className="size-4" />
-          <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
+      <div className="ml-auto flex items-center gap-2" style={NO_DRAG}>
+        <TerminalIcon className="size-4" />
+        <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
       </div>
     </div>
   );
