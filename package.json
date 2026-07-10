@@ -8,7 +8,7 @@
       "dev:electron": "wait-on tcp:5173 && electron . --dev",
       "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
       "build": "vite build",
-      "start": "electron ."
+      "start": "vite build && electron ."
   },
   "author": "Vapourware-Studios",
   "license": "GPL-3.0-only",
