@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const crypto = require('crypto');
 const ssh = require('./ssh');
 const vault = require('./vault');
 
@@ -54,6 +55,8 @@ ipcMain.handle('ssh:connect', (event, config) => {
       onClose: (sessionId) => win?.webContents.send('ssh:closed', { sessionId }),
       onError: (sessionId, err) =>
         win?.webContents.send('ssh:error', { sessionId, message: err.message }),
+      onLog: (sessionId, line, level) =>
+        win?.webContents.send('ssh:log', { sessionId, line, level }),
       onHostKey: (sessionId, info) =>
         new Promise((resolve) => {
           pendingHostKeyDecisions.set(sessionId, resolve);
@@ -84,6 +87,90 @@ ipcMain.handle('ssh:resize', (event, { sessionId, cols, rows }) => {
 
 ipcMain.handle('ssh:disconnect', (event, sessionId) => {
   ssh.disconnect(sessionId);
+});
+
+// Runs one SFTP transfer in the background and streams progress to the
+// renderer as 'sftp:transfer' events. Progress is throttled so a fast
+// transfer doesn't flood IPC with thousands of tiny updates.
+function runTransfer(win, { sessionId, kind, name }, startFn) {
+  const transferId = crypto.randomUUID();
+  const send = (payload) =>
+    win?.webContents.send('sftp:transfer', { sessionId, transferId, kind, name, ...payload });
+
+  let lastSent = 0;
+  const onStep = (transferred, total) => {
+    const now = Date.now();
+    if (now - lastSent < 100 && transferred < total) return;
+    lastSent = now;
+    send({ transferred, total });
+  };
+
+  send({ transferred: 0, total: 0 });
+  startFn(onStep)
+    .then(() => send({ done: true }))
+    .catch((err) => send({ error: err.message }));
+
+  return transferId;
+}
+
+function joinRemote(dir, name) {
+  return (dir === '/' ? '' : dir) + '/' + name;
+}
+
+ipcMain.handle('sftp:home', async (event, sessionId) => {
+  try {
+    return { path: await ssh.sftpHome(sessionId) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('sftp:list', async (event, { sessionId, path: dirPath }) => {
+  try {
+    return { entries: await ssh.sftpList(sessionId, dirPath) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('sftp:download', async (event, { sessionId, remotePath, name }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showSaveDialog(win, { defaultPath: name });
+  if (result.canceled || !result.filePath) return { canceled: true };
+
+  const transferId = runTransfer(win, { sessionId, kind: 'download', name }, (onStep) =>
+    ssh.sftpDownload(sessionId, remotePath, result.filePath, onStep)
+  );
+  return { transferId };
+});
+
+ipcMain.handle('sftp:upload', async (event, { sessionId, remoteDir }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+
+  for (const localPath of result.filePaths) {
+    const name = path.basename(localPath);
+    runTransfer(win, { sessionId, kind: 'upload', name }, (onStep) =>
+      ssh.sftpUpload(sessionId, localPath, joinRemote(remoteDir, name), onStep)
+    );
+  }
+  return { started: result.filePaths.length };
+});
+
+// Same as sftp:upload but for drag-and-drop, where the renderer already
+// knows the local paths (via webUtils.getPathForFile in the preload).
+ipcMain.handle('sftp:uploadPaths', (event, { sessionId, remoteDir, localPaths }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  for (const localPath of localPaths) {
+    const name = path.basename(localPath);
+    runTransfer(win, { sessionId, kind: 'upload', name }, (onStep) =>
+      ssh.sftpUpload(sessionId, localPath, joinRemote(remoteDir, name), onStep)
+    );
+  }
+  return { started: localPaths.length };
 });
 
 ipcMain.handle('vault:status', () => ({
