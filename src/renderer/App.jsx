@@ -10,7 +10,10 @@ const MIN_CONNECTING_MS = 2000;
 export default function App() {
   const [vaultStatus, setVaultStatus] = useState(null);
   const [hosts, setHosts] = useState([]);
-  const [tabs, setTabs] = useState([]);
+  const [tabs, setTabs] = useState([
+    { id: 'vault', title: 'Vault', constant: true},
+    { id: 'sftp', title: 'SFTP', constant: true },
+  ]);
   const [activeTabId, setActiveTabId] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
@@ -117,6 +120,9 @@ export default function App() {
   }
 
   async function closeTab(tabId) {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (tab?.constant) return;
+
     const pendingTimeout = pendingTimeoutsRef.current.get(tabId);
     if (pendingTimeout) {
       clearTimeout(pendingTimeout);
