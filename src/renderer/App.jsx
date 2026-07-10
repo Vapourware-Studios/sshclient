@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Terminal as TerminalIcon, Plus, X, Server, Pencil, Trash2, Loader2, Lock } from 'lucide-react';
+import { Terminal as TerminalIcon, Plus, X, Server, Pencil, Trash2, Loader2, Lock, Folder } from 'lucide-react';
 import Unlock from '@/components/Unlock';
 import NewConnectionDialog from '@/components/NewConnectionDialog';
 import TerminalView from '@/components/TerminalView';
+import SftpView from '@/components/SftpView';
 import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
 
 const MIN_CONNECTING_MS = 2000;
@@ -18,6 +19,7 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
   const [connectError, setConnectError] = useState(null);
+  const [sessionLogs, setSessionLogs] = useState({});
 
   const startedAtRef = useRef(new Map());
   const pendingTimeoutsRef = useRef(new Map());
@@ -72,11 +74,23 @@ export default function App() {
       patchTab(sessionId, { hostKeyInfo: info });
     });
 
+    // Every log line the main process emits while connecting (including
+    // ssh2's raw protocol trace) is kept per session, capped at 400 lines.
+    const unsubLog = window.api.onSshLog(({ sessionId, line, level }) => {
+      setSessionLogs((prev) => {
+        const entry = { id: crypto.randomUUID(), time: Date.now(), line, level };
+        const list = [...(prev[sessionId] ?? []), entry];
+        if (list.length > 400) list.splice(0, list.length - 400);
+        return { ...prev, [sessionId]: list };
+      });
+    });
+
     return () => {
       unsubProgress();
       unsubReady();
       unsubError();
       unsubHostKey();
+      unsubLog();
     };
   }, []);
 
@@ -116,6 +130,11 @@ export default function App() {
     }
     startedAtRef.current.delete(tabId);
 
+    setSessionLogs((prev) => {
+      const { [tabId]: _removed, ...rest } = prev;
+      return rest;
+    });
+
     await window.api.sshDisconnect(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
@@ -128,6 +147,10 @@ export default function App() {
 
   async function retryTab(tab) {
     setTabs((prev) => prev.filter((t) => t.id !== tab.id));
+    setSessionLogs((prev) => {
+      const { [tab.id]: _removed, ...rest } = prev;
+      return rest;
+    });
     try {
       await openSession(tab.connectConfig, tab.title);
     } catch {}
@@ -157,6 +180,17 @@ export default function App() {
 
     const result = await window.api.hostsDelete(host.id);
     if (!result.error) setHosts(result.hosts);
+  }
+
+  // Switches a connected tab between the terminal and the file browser.
+  // The SFTP view mounts the first time it's opened and then stays alive
+  // (just hidden), so navigation state survives switching back and forth.
+  function setTabView(tabId, view) {
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.id === tabId ? { ...t, view, sftpOpened: t.sftpOpened || view === 'files' } : t
+      )
+    );
   }
 
   async function respondToHostKey(tabId, trust) {
@@ -285,6 +319,27 @@ export default function App() {
                 />
               </div>
             ))}
+
+            {activeTab?.status === 'connected' && (
+              <div className="ml-auto flex items-center gap-0.5 py-1">
+                {[
+                  { id: 'terminal', label: 'Terminal', Icon: TerminalIcon },
+                  { id: 'files', label: 'Files', Icon: Folder },
+                ].map(({ id, label, Icon }) => (
+                  <button
+                    key={id}
+                    onClick={() => setTabView(activeTab.id, id)}
+                    className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs ${
+                      (activeTab.view ?? 'terminal') === id
+                        ? 'border bg-background text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Icon className="size-3.5" /> {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -304,7 +359,18 @@ export default function App() {
           {tabs
             .filter((t) => t.status === 'connected')
             .map((tab) => (
-              <TerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
+              <Fragment key={tab.id}>
+                <TerminalView
+                  sessionId={tab.id}
+                  active={tab.id === activeTabId && (tab.view ?? 'terminal') === 'terminal'}
+                />
+                {tab.sftpOpened && (
+                  <SftpView
+                    sessionId={tab.id}
+                    visible={tab.id === activeTabId && tab.view === 'files'}
+                  />
+                )}
+              </Fragment>
             ))}
 
           {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (
@@ -320,6 +386,7 @@ export default function App() {
             <ConnectingView
               title={activeTab.title}
               stage={activeTab.stage}
+              logs={sessionLogs[activeTab.id] ?? []}
               onCancel={() => closeTab(activeTab.id)}
             />
           )}
@@ -328,6 +395,7 @@ export default function App() {
             <ConnectErrorView
               title={activeTab.title}
               message={activeTab.error}
+              logs={sessionLogs[activeTab.id] ?? []}
               onRetry={() => retryTab(activeTab)}
               onClose={() => closeTab(activeTab.id)}
             />
