@@ -66,7 +66,7 @@ export default function App() {
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Hosts
           </h2>
-          <Badge variant="secondary">1</Badge>
+          <Badge variant="secondary">2</Badge>
         </div>
 
         <div className="px-2 pt-2">
