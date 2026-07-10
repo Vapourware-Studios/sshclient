@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import TerminalView from '@/components/TerminalView';
+import VaultView from '@/components/VaultView';
 import SftpView from '@/components/SftpView';
 import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
 
@@ -7,14 +8,31 @@ export default function ContentArea({
   tabs,
   activeTabId,
   sessionLogs,
+  hosts,
   onCloseTab,
   onRetryTab,
   onRespondToHostKey,
+  onConnect,
+  onEdit,
+  onDelete,
+  onNewConnection,
+  onLockVault,
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
   return (
     <div className="relative flex-1 bg-[#0d1117]">
+      {activeTab?.id === 'vault' && (
+        <VaultView
+          hosts={hosts}
+          onConnect={onConnect}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onNewConnection={onNewConnection}
+          onLockVault={onLockVault}
+        />
+      )}
+
       {tabs.length === 0 && (
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
           No active sessions — connect to a host to get started.

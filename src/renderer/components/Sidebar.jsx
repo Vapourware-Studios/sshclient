@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Terminal as TerminalIcon, Plus, Server, Pencil, Trash2, Lock } from 'lucide-react';
+import { Terminal as Plus, Server, Pencil, Trash2, Lock } from 'lucide-react';
 
 export default function Sidebar({
   hosts,
@@ -12,25 +12,7 @@ export default function Sidebar({
   onLockVault,
 }) {
   return (
-    <aside className="flex w-60 flex-col border-r bg-sidebar text-sidebar-foreground">
-      <div className="h-9 shrink-0" />
-
-      <div className="flex items-center justify-between px-4 py-2">
-        <div className="flex items-center gap-2">
-          <TerminalIcon className="size-4" />
-          <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
-        </div>
-        <button
-          onClick={onLockVault}
-          title="Lock vault"
-          className="rounded p-1 text-muted-foreground hover:text-foreground"
-        >
-          <Lock className="size-3.5" />
-        </button>
-      </div>
-
-      <Separator />
-
+    <aside className="flex h-full w-60 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Hosts
