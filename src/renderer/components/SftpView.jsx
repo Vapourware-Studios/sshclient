@@ -156,6 +156,11 @@ export default function SftpView({ sessionId, visible }) {
   const pathRef = useRef(null);
   pathRef.current = path;
 
+  // dragenter/dragleave fire for every child element the cursor crosses,
+  // so a plain boolean flickers. Counting enters minus leaves only hits
+  // zero when the cursor truly exits the drop zone.
+  const dragDepthRef = useRef(0);
+
   async function loadDir(nextPath) {
     setListing(true);
     setListError(null);
@@ -209,6 +214,8 @@ export default function SftpView({ sessionId, visible }) {
 
   // Track transfer progress events for this session.
   useEffect(() => {
+    const dismissTimers = new Set();
+
     const unsub = window.api.onSftpTransfer((t) => {
       if (t.sessionId !== sessionId) return;
 
@@ -231,12 +238,18 @@ export default function SftpView({ sessionId, visible }) {
           loadDir(pathRef.current);
         }
         // Tidy up finished rows after a moment.
-        setTimeout(() => {
+        const timer = setTimeout(() => {
+          dismissTimers.delete(timer);
           setTransfers((prev) => prev.filter((x) => x.id !== t.transferId));
         }, 4000);
+        dismissTimers.add(timer);
       }
     });
-    return unsub;
+
+    return () => {
+      unsub();
+      for (const timer of dismissTimers) clearTimeout(timer);
+    };
   }, [sessionId]);
 
   function openEntry(entry) {
@@ -253,8 +266,20 @@ export default function SftpView({ sessionId, visible }) {
     window.api.sftpUpload(sessionId, path);
   }
 
+  function onDragEnter(event) {
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDragOver(true);
+  }
+
+  function onDragLeave() {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  }
+
   function onDrop(event) {
     event.preventDefault();
+    dragDepthRef.current = 0;
     setDragOver(false);
     const localPaths = [...event.dataTransfer.files]
       .map((file) => window.api.pathForFile(file))
@@ -300,11 +325,9 @@ export default function SftpView({ sessionId, visible }) {
   return (
     <div
       className={`absolute inset-0 flex flex-col text-sm ${hidden}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragOver(true);
-      }}
-      onDragLeave={() => setDragOver(false)}
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
       <div className="flex items-center gap-1 border-b border-white/10 px-3 py-2">
@@ -320,7 +343,7 @@ export default function SftpView({ sessionId, visible }) {
         <div className="flex min-w-0 flex-1 items-center overflow-x-auto text-xs">
           {crumbsOf(path).map((crumb, i) => (
             <span key={crumb.path} className="flex shrink-0 items-center">
-              {i > 1 && <ChevronRight className="size-3 text-muted-foreground/50" />}
+              {i > 0 && <ChevronRight className="size-3 text-muted-foreground/50" />}
               <button
                 onClick={() => loadDir(crumb.path)}
                 className={`rounded px-1 py-0.5 hover:bg-white/10 ${
