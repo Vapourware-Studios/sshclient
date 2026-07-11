@@ -15,6 +15,7 @@ function createWindow() {
     minHeight: 500,
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#0d1117',
+    icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -422,6 +423,9 @@ ipcMain.handle('dialog:selectPrivateKey', async (event) => {
 });
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'));
+  }
   vault.init(app.getPath('userData'));
   createWindow();
   app.on('activate', () => {
