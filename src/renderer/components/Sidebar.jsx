@@ -1,4 +1,5 @@
 import { Separator } from '@/components/ui/separator';
+import logo from '../assets/logo.png';
 import {
   Server,
   KeyRound,
@@ -40,12 +41,12 @@ export default function Sidebar({ section, onSectionChange, onLockVault }) {
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-        <span className="flex size-7 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-          <Vault className="size-4" />
+        <span className="flex size-11 items-center justify-center rounded-md text-sidebar-primary-foreground">
+          <img src={logo} alt="logo" className="rounded-md object-cover" />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium leading-tight">Personal Vault</p>
-          <p className="text-xs text-muted-foreground">Local</p>
+          <p className="truncate text-lg font-medium leading-tight">Personal Vault</p>
+          <p className="text-xs text-muted-foreground">Connect to your servers</p>
         </div>
       </div>
 
