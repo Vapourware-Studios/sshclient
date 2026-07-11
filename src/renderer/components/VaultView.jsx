@@ -13,9 +13,9 @@ function HostRow({ host, onConnect, onEdit, onDelete }) {
   return (
     <div
       onClick={() => onConnect(host)}
-      className="group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent"
+      className="group flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted/50"
     >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
         <Server className="size-4" />
       </span>
 
@@ -101,7 +101,7 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onNewConnection }) {
             <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Hosts — {filtered.length}
             </p>
-            <div className="flex flex-col gap-0.5">
+            <div className="overflow-hidden rounded-lg border bg-card">
               {filtered.map((host) => (
                 <HostRow
                   key={host.id}

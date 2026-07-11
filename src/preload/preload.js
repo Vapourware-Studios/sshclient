@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  platform: process.platform,
+
   ping: (message) => ipcRenderer.invoke('ping', message),
 
   sshConnect: (config) => ipcRenderer.invoke('ssh:connect', config),

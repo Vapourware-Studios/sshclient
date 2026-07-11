@@ -5,6 +5,8 @@ const NO_DRAG = { WebkitAppRegion: 'no-drag' };
 
 const CONSTANT_TAB_ICONS = { vault: Home, sftp: Folder };
 
+const IS_MAC = window.api?.platform === 'darwin';
+
 function Tab({ active, onClick, children }) {
   return (
     <div
@@ -24,7 +26,7 @@ function Tab({ active, onClick, children }) {
 export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewConnection }) {
   return (
     <div
-      className="flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pl-20 pr-3"
+      className={`flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pr-3 ${IS_MAC ? 'pl-20' : 'pl-3'}`}
       style={{ WebkitAppRegion: 'drag' }}
     >
       {tabs.filter((t) => t.constant).map((tab) => {
