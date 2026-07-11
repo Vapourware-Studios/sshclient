@@ -20,7 +20,7 @@ export default function ContentArea({
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
   return (
-    <div className="relative flex-1 bg-[#0d1117]">
+    <div className="relative min-w-0 flex-1 bg-[#0d1117]">
       {activeTab?.id === 'vault' && (
         <VaultView
           hosts={hosts}

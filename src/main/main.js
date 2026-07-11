@@ -415,6 +415,18 @@ ipcMain.handle('keys:delete', (event, id) => {
   }
 });
 
+// Hand the private half to the UI on explicit request (the Keychain's
+// "reveal" button), so the user can copy or back up their own key.
+ipcMain.handle('keys:reveal', (event, id) => {
+  try {
+    const key = vault.getKeySecret(id);
+    if (!key) return { error: 'Key not found' };
+    return { private: key.private, hasPassphrase: Boolean(key.passphrase) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('dialog:selectPrivateKey', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'] });

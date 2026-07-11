@@ -201,7 +201,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen">
-      <main className="flex flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col">
         <TabBar
           tabs={tabs}
           activeTabId={activeTabId}
@@ -217,34 +217,36 @@ export default function App() {
           </p>
         )}
 
-        <ContentArea
-          tabs={tabs}
-          activeTabId={activeTabId}
-          sessionLogs={sessionLogs}
-          hosts={hosts}
-          onCloseTab={closeTab}
-          onRetryTab={retryTab}
-          onRespondToHostKey={respondToHostKey}
-          onConnect={connectToHost}
-          onEdit={openEditHostDialog}
-          onDelete={deleteHost}
-          onNewConnection={openNewConnectionDialog}
-          onLockVault={lockVault}
-        />
-      </main>
+        <div className="flex min-w-0 flex-1 overflow-hidden">
+          <ContentArea
+            tabs={tabs}
+            activeTabId={activeTabId}
+            sessionLogs={sessionLogs}
+            hosts={hosts}
+            onCloseTab={closeTab}
+            onRetryTab={retryTab}
+            onRespondToHostKey={respondToHostKey}
+            onConnect={connectToHost}
+            onEdit={openEditHostDialog}
+            onDelete={deleteHost}
+            onNewConnection={openNewConnectionDialog}
+            onLockVault={lockVault}
+          />
 
-      <NewConnectionDialog
-        open={dialogOpen}
-        onOpenChange={(next) => {
-          setDialogOpen(next);
-          if (!next) setEditingHost(null);
-        }}
-        editingHost={editingHost}
-        onSaved={setHosts}
-        onConnect={async (config, title) => {
-          await openSession(config, title);
-        }}
-      />
+          <NewConnectionDialog
+            open={dialogOpen}
+            onOpenChange={(next) => {
+              setDialogOpen(next);
+              if (!next) setEditingHost(null);
+            }}
+            editingHost={editingHost}
+            onSaved={setHosts}
+            onConnect={async (config, title) => {
+              await openSession(config, title);
+            }}
+          />
+        </div>
+      </main>
     </div>
   );
 }

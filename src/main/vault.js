@@ -325,6 +325,7 @@ function listKeys() {
       bits: data.bits,
       public: data.public,
       fingerprint: data.fingerprint,
+      hasPassphrase: Boolean(data.passphrase),
       createdAt: row.created_at,
     };
   });
