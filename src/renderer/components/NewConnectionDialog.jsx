@@ -3,13 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
 import { FolderOpen, KeyRound } from 'lucide-react';
 import { keyTypeLabel } from '@/lib/keys';
 
@@ -155,16 +149,17 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-96 gap-0 sm:max-w-md">
-        <SheetHeader className="border-b">
-          <SheetTitle>{mode === 'edit' ? 'Edit connection' : 'New connection'}</SheetTitle>
-          <SheetDescription>
-            {mode === 'edit'
+    <SlidePanel open={open} onClose={() => onOpenChange(false)}>
+      <div className="flex h-full flex-col">
+        <PanelHeader
+          title={mode === 'edit' ? 'Edit connection' : 'New connection'}
+          description={
+            mode === 'edit'
               ? 'Update this saved host. Leave password/passphrase blank to keep the current value.'
-              : 'Connect to a remote server over SSH.'}
-          </SheetDescription>
-        </SheetHeader>
+              : 'Connect to a remote server over SSH.'
+          }
+          onClose={() => onOpenChange(false)}
+        />
 
         <form
           onSubmit={handleSubmit}
@@ -336,7 +331,7 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
             </Button>
           </div>
         </form>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </SlidePanel>
   );
 }

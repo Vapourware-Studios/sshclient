@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   keysGenerate: (spec) => ipcRenderer.invoke('keys:generate', spec),
   keysImport: (spec) => ipcRenderer.invoke('keys:import', spec),
   keysDelete: (id) => ipcRenderer.invoke('keys:delete', id),
+  keysReveal: (id) => ipcRenderer.invoke('keys:reveal', id),
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
 });

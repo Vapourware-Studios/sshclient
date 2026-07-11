@@ -2,33 +2,170 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
 import { KEY_TYPE_OPTIONS, keyTypeLabel } from '@/lib/keys';
-import { KeyRound, Plus, Trash2, Copy, Check, Loader2, ClipboardPaste } from 'lucide-react';
+import {
+  KeyRound,
+  Plus,
+  Trash2,
+  Copy,
+  Check,
+  Loader2,
+  ClipboardPaste,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 
 const TEXTAREA_CLASS =
   'w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50';
 
-function GenerateKeySheet({ open, onOpenChange, onGenerated }) {
+function CopyButton({ value, label = 'Copy' }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={async () => {
+        await navigator.clipboard.writeText(value);
+        setCopied(true);
+      }}
+    >
+      {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+      {copied ? 'Copied' : label}
+    </Button>
+  );
+}
+
+// Detail view for one key — the content that swaps in place when you
+// click a different key in the list, Termius-style. Kept lean: the two
+// halves of the pair, ready to copy wherever they're needed.
+function KeyDetailPanel({ keyItem, onDelete, onClose }) {
+  // Private key stays in the vault until the user asks to see it.
+  const [privateKey, setPrivateKey] = useState(null);
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState(null);
+
+  useEffect(() => {
+    setPrivateKey(null);
+    setRevealBusy(false);
+    setRevealError(null);
+  }, [keyItem.id]);
+
+  async function revealPrivateKey() {
+    setRevealError(null);
+    setRevealBusy(true);
+    const result = await window.api.keysReveal(keyItem.id);
+    setRevealBusy(false);
+    if (result.error) {
+      setRevealError(result.error);
+      return;
+    }
+    setPrivateKey(result.private);
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <PanelHeader title={keyItem.name} description={keyTypeLabel(keyItem)} onClose={onClose} />
+
+      <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="detail-public">Public key</Label>
+          <textarea
+            id="detail-public"
+            rows={6}
+            readOnly
+            value={keyItem.public}
+            spellCheck={false}
+            onFocus={(e) => e.target.select()}
+            className={TEXTAREA_CLASS}
+          />
+          <div className="flex justify-end">
+            <CopyButton key={keyItem.id} value={keyItem.public} label="Copy public key" />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="detail-private">Private key</Label>
+          {privateKey ? (
+            <>
+              <textarea
+                id="detail-private"
+                rows={8}
+                readOnly
+                value={privateKey}
+                spellCheck={false}
+                onFocus={(e) => e.target.select()}
+                className={TEXTAREA_CLASS}
+              />
+              <div className="flex justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPrivateKey(null)}
+                >
+                  <EyeOff className="size-3.5" /> Hide
+                </Button>
+                <CopyButton value={privateKey} label="Copy private key" />
+              </div>
+            </>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="self-start"
+                disabled={revealBusy}
+                onClick={revealPrivateKey}
+              >
+                {revealBusy ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Eye className="size-3.5" />
+                )}
+                Reveal private key
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Stored encrypted in the vault. Anyone with this key can log in to your servers.
+              </p>
+            </>
+          )}
+          {revealError && <p className="text-sm text-destructive">{revealError}</p>}
+        </div>
+
+        <div className="mt-auto border-t pt-4">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full text-destructive hover:text-destructive"
+            onClick={() => onDelete(keyItem)}
+          >
+            <Trash2 className="size-4" /> Delete key
+          </Button>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Hosts using this key will no longer authenticate with it.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GenerateKeyPanel({ onGenerated, onClose }) {
   const [name, setName] = useState('');
   const [type, setType] = useState('ed25519');
   const [bits, setBits] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setName('');
-    setType('ed25519');
-    setBits(null);
-    setError(null);
-  }, [open]);
 
   const typeOption = KEY_TYPE_OPTIONS.find((o) => o.type === type);
 
@@ -54,106 +191,93 @@ function GenerateKeySheet({ open, onOpenChange, onGenerated }) {
       return;
     }
     onGenerated(result.keys);
-    onOpenChange(false);
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-96 gap-0 sm:max-w-md">
-        <SheetHeader className="border-b">
-          <SheetTitle>Generate key</SheetTitle>
-          <SheetDescription>
-            The key pair is created locally and stored encrypted in the vault.
-          </SheetDescription>
-        </SheetHeader>
+    <div className="flex h-full flex-col">
+      <PanelHeader
+        title="Generate key"
+        description="The key pair is created locally and stored encrypted in the vault."
+        onClose={onClose}
+      />
 
-        <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="key-name">Name</Label>
-            <Input
-              id="key-name"
-              placeholder="my-server-key"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+      <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="key-name">Name</Label>
+          <Input
+            id="key-name"
+            placeholder="my-server-key"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label>Type</Label>
+          <div className="flex gap-2">
+            {KEY_TYPE_OPTIONS.map((option) => (
+              <Button
+                key={option.type}
+                type="button"
+                size="sm"
+                variant={type === option.type ? 'default' : 'outline'}
+                onClick={() => pickType(option)}
+              >
+                {option.label}
+              </Button>
+            ))}
           </div>
+          {type === 'ed25519' && (
+            <p className="text-xs text-muted-foreground">
+              Recommended: small, fast, and modern.
+            </p>
+          )}
+        </div>
 
+        {typeOption.bits.length > 0 && (
           <div className="flex flex-col gap-2">
-            <Label>Type</Label>
+            <Label>{type === 'ecdsa' ? 'Curve size' : 'Key size'}</Label>
             <div className="flex gap-2">
-              {KEY_TYPE_OPTIONS.map((option) => (
+              {typeOption.bits.map((size) => (
                 <Button
-                  key={option.type}
+                  key={size}
                   type="button"
                   size="sm"
-                  variant={type === option.type ? 'default' : 'outline'}
-                  onClick={() => pickType(option)}
+                  variant={bits === size ? 'default' : 'outline'}
+                  onClick={() => setBits(size)}
                 >
-                  {option.label}
+                  {size}
                 </Button>
               ))}
             </div>
-            {type === 'ed25519' && (
-              <p className="text-xs text-muted-foreground">
-                Recommended: small, fast, and modern.
-              </p>
+          </div>
+        )}
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+
+        <div className="mt-auto pt-2">
+          <Button type="submit" disabled={busy} className="w-full">
+            {busy ? (
+              <>
+                <Loader2 className="size-4 animate-spin" /> Generating…
+              </>
+            ) : (
+              'Generate'
             )}
-          </div>
-
-          {typeOption.bits.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <Label>{type === 'ecdsa' ? 'Curve size' : 'Key size'}</Label>
-              <div className="flex gap-2">
-                {typeOption.bits.map((size) => (
-                  <Button
-                    key={size}
-                    type="button"
-                    size="sm"
-                    variant={bits === size ? 'default' : 'outline'}
-                    onClick={() => setBits(size)}
-                  >
-                    {size}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-
-          <div className="mt-auto pt-2">
-            <Button type="submit" disabled={busy} className="w-full">
-              {busy ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" /> Generating…
-                </>
-              ) : (
-                'Generate'
-              )}
-            </Button>
-          </div>
-        </form>
-      </SheetContent>
-    </Sheet>
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
-function ImportKeySheet({ open, onOpenChange, onImported }) {
+function ImportKeyPanel({ onImported, onClose }) {
   const [name, setName] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [publicKey, setPublicKey] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setName('');
-    setPrivateKey('');
-    setPublicKey('');
-    setPassphrase('');
-    setError(null);
-  }, [open]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -181,85 +305,81 @@ function ImportKeySheet({ open, onOpenChange, onImported }) {
       return;
     }
     onImported(result.keys);
-    onOpenChange(false);
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-96 gap-0 sm:max-w-md">
-        <SheetHeader className="border-b">
-          <SheetTitle>Import key</SheetTitle>
-          <SheetDescription>
-            Paste an existing key pair. Both halves are stored encrypted in the vault.
-          </SheetDescription>
-        </SheetHeader>
+    <div className="flex h-full flex-col">
+      <PanelHeader
+        title="Import key"
+        description="Paste an existing key pair. Both halves are stored encrypted in the vault."
+        onClose={onClose}
+      />
 
-        <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="import-name">Name</Label>
-            <Input
-              id="import-name"
-              placeholder="my-laptop-key"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
+      <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="import-name">Name</Label>
+          <Input
+            id="import-name"
+            placeholder="my-laptop-key"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="import-key">Private key</Label>
-            <textarea
-              id="import-key"
-              rows={7}
-              placeholder={
-                '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----'
-              }
-              value={privateKey}
-              onChange={(e) => setPrivateKey(e.target.value)}
-              spellCheck={false}
-              className={TEXTAREA_CLASS}
-            />
-          </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="import-key">Private key</Label>
+          <textarea
+            id="import-key"
+            rows={7}
+            placeholder={
+              '-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----'
+            }
+            value={privateKey}
+            onChange={(e) => setPrivateKey(e.target.value)}
+            spellCheck={false}
+            className={TEXTAREA_CLASS}
+          />
+        </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="import-public">Public key (optional)</Label>
-            <textarea
-              id="import-public"
-              rows={3}
-              placeholder="ssh-ed25519 AAAA… comment"
-              value={publicKey}
-              onChange={(e) => setPublicKey(e.target.value)}
-              spellCheck={false}
-              className={TEXTAREA_CLASS}
-            />
-            <p className="text-xs text-muted-foreground">
-              Left empty, it is derived from the private key. If pasted, it must match.
-            </p>
-          </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="import-public">Public key (optional)</Label>
+          <textarea
+            id="import-public"
+            rows={3}
+            placeholder="ssh-ed25519 AAAA… comment"
+            value={publicKey}
+            onChange={(e) => setPublicKey(e.target.value)}
+            spellCheck={false}
+            className={TEXTAREA_CLASS}
+          />
+          <p className="text-xs text-muted-foreground">
+            Left empty, it is derived from the private key. If pasted, it must match.
+          </p>
+        </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="import-passphrase">Passphrase (only if the key has one)</Label>
-            <Input
-              id="import-passphrase"
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-            />
-          </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="import-passphrase">Passphrase (only if the key has one)</Label>
+          <Input
+            id="import-passphrase"
+            type="password"
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+          />
+        </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <div className="mt-auto pt-2">
-            <Button type="submit" disabled={busy} className="w-full">
-              {busy ? 'Importing…' : 'Import'}
-            </Button>
-          </div>
-        </form>
-      </SheetContent>
-    </Sheet>
+        <div className="mt-auto pt-2">
+          <Button type="submit" disabled={busy} className="w-full">
+            {busy ? 'Importing…' : 'Import'}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
-function KeyRow({ keyItem, onDelete }) {
+function KeyRow({ keyItem, selected, onSelect, onDelete }) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -268,13 +388,19 @@ function KeyRow({ keyItem, onDelete }) {
     return () => clearTimeout(timer);
   }, [copied]);
 
-  async function copyPublicKey() {
+  async function copyPublicKey(e) {
+    e.stopPropagation();
     await navigator.clipboard.writeText(keyItem.public);
     setCopied(true);
   }
 
   return (
-    <div className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent">
+    <div
+      onClick={() => onSelect(keyItem)}
+      className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
+        selected ? 'bg-accent' : 'hover:bg-accent/60'
+      }`}
+    >
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
         <KeyRound className="size-4" />
       </span>
@@ -295,7 +421,10 @@ function KeyRow({ keyItem, onDelete }) {
           {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
         </button>
         <button
-          onClick={() => onDelete(keyItem)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(keyItem);
+          }}
           title="Delete key"
           className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-destructive"
         >
@@ -308,8 +437,10 @@ function KeyRow({ keyItem, onDelete }) {
 
 export default function KeychainView() {
   const [keys, setKeys] = useState([]);
-  const [generateOpen, setGenerateOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
+  // panel: null | { mode: 'detail', keyId } | { mode: 'generate' } | { mode: 'import' }
+  const [panel, setPanel] = useState(null);
+  // Kept during the slide-out so the panel doesn't blank while closing.
+  const [renderedPanel, setRenderedPanel] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -318,6 +449,34 @@ export default function KeychainView() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (panel) {
+      setRenderedPanel(panel);
+      return;
+    }
+    const timer = setTimeout(() => setRenderedPanel(null), 300);
+    return () => clearTimeout(timer);
+  }, [panel]);
+
+  function closePanel() {
+    setPanel(null);
+  }
+
+  function selectKey(keyItem) {
+    setPanel((prev) =>
+      prev?.mode === 'detail' && prev.keyId === keyItem.id
+        ? null
+        : { mode: 'detail', keyId: keyItem.id }
+    );
+  }
+
+  // After generate/import, open the fresh key's detail panel.
+  function showNewKey(nextKeys) {
+    const fresh = nextKeys.find((k) => !keys.some((o) => o.id === k.id));
+    setKeys(nextKeys);
+    setPanel(fresh ? { mode: 'detail', keyId: fresh.id } : null);
+  }
+
   async function deleteKey(keyItem) {
     const confirmed = window.confirm(
       `Delete key "${keyItem.name}"? Hosts using it will no longer authenticate with it. This cannot be undone.`
@@ -325,60 +484,97 @@ export default function KeychainView() {
     if (!confirmed) return;
 
     const result = await window.api.keysDelete(keyItem.id);
-    if (!result.error) setKeys(result.keys);
+    if (result.error) return;
+    setKeys(result.keys);
+    setPanel((prev) => (prev?.mode === 'detail' && prev.keyId === keyItem.id ? null : prev));
   }
 
+  const detailKey =
+    renderedPanel?.mode === 'detail' ? keys.find((k) => k.id === renderedPanel.keyId) : null;
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-        <p className="text-sm font-medium">Keychain</p>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
-            <ClipboardPaste className="size-4" /> Import Key
-          </Button>
-          <Button onClick={() => setGenerateOpen(true)}>
-            <Plus className="size-4" /> Generate Key
-          </Button>
+    <div className="flex h-full overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+          <p className="text-sm font-medium">Keychain</p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setPanel({ mode: 'import', nonce: Date.now() })}
+            >
+              <ClipboardPaste className="size-4" /> Import Key
+            </Button>
+            <Button onClick={() => setPanel({ mode: 'generate', nonce: Date.now() })}>
+              <Plus className="size-4" /> Generate Key
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {keys.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
+                <KeyRound className="size-6" />
+              </span>
+              <div>
+                <p className="text-sm font-medium">No keys yet</p>
+                <p className="text-sm text-muted-foreground">
+                  Generate an SSH key pair, or import one you already have.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPanel({ mode: 'import', nonce: Date.now() })}
+                >
+                  <ClipboardPaste className="size-4" /> Import Key
+                </Button>
+                <Button size="sm" onClick={() => setPanel({ mode: 'generate', nonce: Date.now() })}>
+                  <Plus className="size-4" /> Generate Key
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Keys — {keys.length}
+              </p>
+              <div className="flex flex-col gap-0.5">
+                {keys.map((keyItem) => (
+                  <KeyRow
+                    key={keyItem.id}
+                    keyItem={keyItem}
+                    selected={panel?.mode === 'detail' && panel.keyId === keyItem.id}
+                    onSelect={selectKey}
+                    onDelete={deleteKey}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        {keys.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
-              <KeyRound className="size-6" />
-            </span>
-            <div>
-              <p className="text-sm font-medium">No keys yet</p>
-              <p className="text-sm text-muted-foreground">
-                Generate an SSH key pair, or import one you already have.
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-                <ClipboardPaste className="size-4" /> Import Key
-              </Button>
-              <Button size="sm" onClick={() => setGenerateOpen(true)}>
-                <Plus className="size-4" /> Generate Key
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Keys — {keys.length}
-            </p>
-            <div className="flex flex-col gap-0.5">
-              {keys.map((keyItem) => (
-                <KeyRow key={keyItem.id} keyItem={keyItem} onDelete={deleteKey} />
-              ))}
-            </div>
-          </>
+      <SlidePanel open={Boolean(panel)} onClose={closePanel}>
+        {renderedPanel?.mode === 'detail' && detailKey && (
+          <KeyDetailPanel keyItem={detailKey} onDelete={deleteKey} onClose={closePanel} />
         )}
-      </div>
-
-      <GenerateKeySheet open={generateOpen} onOpenChange={setGenerateOpen} onGenerated={setKeys} />
-      <ImportKeySheet open={importOpen} onOpenChange={setImportOpen} onImported={setKeys} />
+        {renderedPanel?.mode === 'generate' && (
+          <GenerateKeyPanel
+            key={`generate-${renderedPanel.nonce}`}
+            onGenerated={showNewKey}
+            onClose={closePanel}
+          />
+        )}
+        {renderedPanel?.mode === 'import' && (
+          <ImportKeyPanel
+            key={`import-${renderedPanel.nonce}`}
+            onImported={showNewKey}
+            onClose={closePanel}
+          />
+        )}
+      </SlidePanel>
     </div>
   );
 }
