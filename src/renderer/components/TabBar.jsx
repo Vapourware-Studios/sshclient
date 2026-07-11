@@ -1,4 +1,5 @@
 import { Terminal as TerminalIcon, X, Loader2, Home, Plus, Folder } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
 
 const NO_DRAG = { WebkitAppRegion: 'no-drag' };
 
@@ -35,6 +36,8 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
           </Tab>
         );
       })}
+
+       <Separator orientation="vertical" />
 
       {tabs.filter((t) => !t.constant).map((tab) => (
         <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
