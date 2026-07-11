@@ -37,7 +37,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
         );
       })}
 
-       <Separator orientation="vertical" />
+      <Separator orientation="vertical" />
 
       {tabs.filter((t) => !t.constant).map((tab) => (
         <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
@@ -69,10 +69,10 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
         <Plus className="size-4" />
       </button>
 
-      <div className="ml-auto flex items-center gap-2" style={NO_DRAG}>
+      {/* <div className="ml-auto flex items-center gap-2" style={NO_DRAG}>
         <TerminalIcon className="size-4" />
         <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
-      </div>
+        </div> */}
     </div>
   );
 }
