@@ -130,6 +130,22 @@ export default function App() {
     setActiveTabId(tab.id);
   }
 
+  async function openLocalTerminal() {
+    const result = await window.api.localSpawn(80, 24);
+    if (result.error) {
+      setConnectError(result.error);
+      return;
+    }
+    const tab = {
+      id: result.sessionId,
+      title: 'Local',
+      kind: 'local',
+      status: 'connected',
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+  }
+
   async function closeTab(tabId) {
     const tab = tabs.find((t) => t.id === tabId);
     if (tab?.constant) return;
@@ -146,7 +162,11 @@ export default function App() {
       return rest;
     });
 
-    await window.api.sshDisconnect(tabId);
+    if (tab?.kind === 'local') {
+      await window.api.localClose(tabId);
+    } else {
+      await window.api.sshDisconnect(tabId);
+    }
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (activeTabId === tabId) {
@@ -243,6 +263,7 @@ export default function App() {
             onDelete={deleteHost}
             onNewConnection={openNewConnectionDialog}
             onLockVault={lockVault}
+            onOpenLocalTerminal={openLocalTerminal}
           />
 
           <NewConnectionDialog

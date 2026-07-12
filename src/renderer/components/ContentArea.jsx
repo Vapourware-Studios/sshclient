@@ -1,4 +1,5 @@
 import TerminalView from '@/components/TerminalView';
+import LocalTerminalView from '@/components/LocalTerminalView';
 import VaultView from '@/components/VaultView';
 import SftpHub from '@/components/SftpHub';
 import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
@@ -16,6 +17,7 @@ export default function ContentArea({
   onDelete,
   onNewConnection,
   onLockVault,
+  onOpenLocalTerminal,
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
@@ -29,15 +31,22 @@ export default function ContentArea({
           onDelete={onDelete}
           onNewConnection={onNewConnection}
           onLockVault={onLockVault}
+          onOpenLocalTerminal={onOpenLocalTerminal}
         />
       )}
 
       <SftpHub hosts={hosts} visible={activeTab?.id === 'sftp'} />
 
       {tabs
-        .filter((t) => t.status === 'connected')
+        .filter((t) => t.status === 'connected' && t.kind !== 'local')
         .map((tab) => (
           <TerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
+        ))}
+
+      {tabs
+        .filter((t) => t.status === 'connected' && t.kind === 'local')
+        .map((tab) => (
+          <LocalTerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
         ))}
 
       {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (
