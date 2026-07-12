@@ -40,7 +40,12 @@ export default function ContentArea({
       {tabs
         .filter((t) => t.status === 'connected' && t.kind !== 'local')
         .map((tab) => (
-          <TerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
+          <TerminalView
+            key={tab.id}
+            sessionId={tab.id}
+            kind={tab.type}
+            active={tab.id === activeTabId}
+          />
         ))}
 
       {tabs

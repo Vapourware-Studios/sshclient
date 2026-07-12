@@ -4,12 +4,14 @@
   "description": "A Termius-like SSH + SFTP client, built from scratch as a learning project",
   "main": "src/main/main.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "dev:renderer": "vite",
     "dev:electron": "wait-on tcp:5173 && electron . --dev",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "build": "vite build",
     "start": "vite build && electron .",
-    "dist:mac": "vite build && electron-builder --mac"
+    "dist:mac": "vite build && electron-builder --mac",
+    "postinstall": "electron-builder install-app-deps"
   },
   "author": "Vapourware-Studios",
   "license": "GPL-3.0-only",
@@ -19,6 +21,9 @@
     "directories": {
       "output": "release"
     },
+    "asarUnpack": [
+      "**/*.node"
+    ],
     "mac": {
       "icon": "build/icon.png"
     }
@@ -44,10 +49,16 @@
     "radix-ui": "^1.6.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "serialport": "^13.0.0",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.6.0"
   },
   "optionalDependencies": {
     "electron-liquid-glass": "^1.1.1"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true,
+    "@serialport/bindings-cpp@13.0.0": true,
+    "cpu-features@0.0.10": true
   }
 }

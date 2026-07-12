@@ -5,6 +5,8 @@ const fsp = require('fs/promises');
 const crypto = require('crypto');
 const { utils: sshUtils } = require('ssh2');
 const ssh = require('./ssh');
+const localTerm = require('./localTerm');
+const serial = require('./serial');
 const vault = require('./vault');
 const pty = require('node-pty');
 const isMac = process.platform === 'darwin';
@@ -142,34 +144,15 @@ ipcMain.handle('ssh:disconnect', (event, sessionId) => {
 
 ipcMain.handle('ssh:attach', (event, sessionId) => ssh.attach(sessionId));
 
-// ── Local terminal (node-pty) ──────────────────────────────────────────
-const localShells = new Map();
-
-ipcMain.handle('local:spawn', (event, { cols, rows }) => {
+ipcMain.handle('local:connect', (event, config) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  const sessionId = crypto.randomUUID();
-  const shell = process.env.SHELL || '/bin/zsh';
-
   try {
-    const ptyProc = pty.spawn(shell, [], {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      cwd: os.homedir(),
-      env: process.env,
+    const sessionId = localTerm.connect(config, {
+      onData: (sessionId, data, seq) => win?.webContents.send('local:data', { sessionId, data, seq }),
+      onClose: (sessionId) => win?.webContents.send('local:closed', { sessionId }),
+      onError: (sessionId, err) =>
+        win?.webContents.send('local:error', { sessionId, message: err.message }),
     });
-
-    localShells.set(sessionId, ptyProc);
-
-    ptyProc.onData((data) => {
-      win?.webContents.send('local:data', { sessionId, data });
-    });
-
-    ptyProc.onExit(({ exitCode }) => {
-      win?.webContents.send('local:closed', { sessionId, exitCode });
-      localShells.delete(sessionId);
-    });
-
     return { sessionId };
   } catch (err) {
     return { error: err.message };
@@ -177,21 +160,51 @@ ipcMain.handle('local:spawn', (event, { cols, rows }) => {
 });
 
 ipcMain.handle('local:write', (event, { sessionId, data }) => {
-  localShells.get(sessionId)?.write(data);
+  localTerm.write(sessionId, data);
 });
 
 ipcMain.handle('local:resize', (event, { sessionId, cols, rows }) => {
-  localShells.get(sessionId)?.resize(cols, rows);
+  localTerm.resize(sessionId, cols, rows);
 });
 
-ipcMain.handle('local:close', (event, sessionId) => {
-  const p = localShells.get(sessionId);
-  if (p) {
-    p.kill();
-    localShells.delete(sessionId);
+ipcMain.handle('local:disconnect', (event, sessionId) => {
+  localTerm.disconnect(sessionId);
+});
+
+ipcMain.handle('local:attach', (event, sessionId) => localTerm.attach(sessionId));
+
+ipcMain.handle('serial:list', async () => {
+  try {
+    return { ports: await serial.listPorts() };
+  } catch (err) {
+    return { error: err.message };
   }
 });
 
+ipcMain.handle('serial:connect', async (event, config) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  try {
+    const sessionId = await serial.connect(config, {
+      onData: (sessionId, data, seq) => win?.webContents.send('serial:data', { sessionId, data, seq }),
+      onClose: (sessionId) => win?.webContents.send('serial:closed', { sessionId }),
+      onError: (sessionId, err) =>
+        win?.webContents.send('serial:error', { sessionId, message: err.message }),
+    });
+    return { sessionId };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('serial:write', (event, { sessionId, data }) => {
+  serial.write(sessionId, data);
+});
+
+ipcMain.handle('serial:disconnect', (event, sessionId) => {
+  serial.disconnect(sessionId);
+});
+
+ipcMain.handle('serial:attach', (event, sessionId) => serial.attach(sessionId));
 // Lets the renderer know the starting state (the events above only cover
 // transitions that happen after the page has loaded).
 ipcMain.handle('window:isFullScreen', (event) =>
@@ -235,10 +248,17 @@ ipcMain.handle('fs:list', async (event, dirPath) => {
 // Runs one SFTP transfer in the background and streams progress to the
 // renderer as 'sftp:transfer' events. Progress is throttled so a fast
 // transfer doesn't flood IPC with thousands of tiny updates.
-function runTransfer(win, { sessionId, kind, name }, startFn) {
+function runTransfer(win, { sessionId, kind, name, destSessionId }, startFn) {
   const transferId = crypto.randomUUID();
   const send = (payload) =>
-    win?.webContents.send('sftp:transfer', { sessionId, transferId, kind, name, ...payload });
+    win?.webContents.send('sftp:transfer', {
+      sessionId,
+      transferId,
+      kind,
+      name,
+      destSessionId,
+      ...payload,
+    });
 
   let lastSent = 0;
   const onStep = (transferred, total) => {
@@ -257,7 +277,7 @@ function runTransfer(win, { sessionId, kind, name }, startFn) {
 }
 
 function joinRemote(dir, name) {
-  return (dir === '/' ? '' : dir) + '/' + name;
+  return ssh.joinRemotePath(dir, name);
 }
 
 ipcMain.handle('sftp:home', async (event, sessionId) => {
@@ -305,26 +325,62 @@ ipcMain.handle('sftp:upload', async (event, { sessionId, remoteDir }) => {
 
 // Download straight into a known local folder (dual-pane transfers) —
 // no save dialog involved.
-ipcMain.handle('sftp:downloadTo', (event, { sessionId, remotePath, localDir, name }) => {
+ipcMain.handle('sftp:downloadTo', async (event, { sessionId, remotePath, localDir, name }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
+  ssh.assertSafeSftpName(name);
+  const localPath = ssh.resolveLocalChild(localDir, name);
+  const isDir = await ssh.sftpIsDir(sessionId, remotePath).catch(() => false);
   const transferId = runTransfer(win, { sessionId, kind: 'download', name }, (onStep) =>
-    ssh.sftpDownload(sessionId, remotePath, path.join(localDir, name), onStep)
+    isDir
+      ? ssh.sftpDownloadDir(sessionId, remotePath, localPath, onStep)
+      : ssh.sftpDownload(sessionId, remotePath, localPath, onStep)
   );
   return { transferId };
 });
 
 // Same as sftp:upload but for drag-and-drop, where the renderer already
 // knows the local paths (via webUtils.getPathForFile in the preload).
-ipcMain.handle('sftp:uploadPaths', (event, { sessionId, remoteDir, localPaths }) => {
+ipcMain.handle('sftp:uploadPaths', async (event, { sessionId, remoteDir, localPaths }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   for (const localPath of localPaths) {
     const name = path.basename(localPath);
+    const isDir = await fsp
+      .stat(localPath)
+      .then((stat) => stat.isDirectory())
+      .catch(() => false);
     runTransfer(win, { sessionId, kind: 'upload', name }, (onStep) =>
-      ssh.sftpUpload(sessionId, localPath, joinRemote(remoteDir, name), onStep)
+      isDir
+        ? ssh.sftpUploadDir(sessionId, localPath, joinRemote(remoteDir, name), onStep)
+        : ssh.sftpUpload(sessionId, localPath, joinRemote(remoteDir, name), onStep)
     );
   }
   return { started: localPaths.length };
 });
+
+ipcMain.handle(
+  'sftp:transferRemote',
+  async (event, { sourceSessionId, sourcePath, destSessionId, destDir, name }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    ssh.assertSafeSftpName(name);
+    const destPath = joinRemote(destDir, name);
+    const isDir = await ssh.sftpIsDir(sourceSessionId, sourcePath).catch(() => false);
+    const transferId = runTransfer(
+      win,
+      { sessionId: sourceSessionId, kind: 'remote-transfer', name, destSessionId },
+      (onStep) =>
+        isDir
+          ? ssh.sftpTransferRemoteDir(
+              sourceSessionId,
+              sourcePath,
+              destSessionId,
+              destPath,
+              onStep
+            )
+          : ssh.sftpTransferRemote(sourceSessionId, sourcePath, destSessionId, destPath, onStep)
+    );
+    return { transferId };
+  }
+);
 
 ipcMain.handle('vault:status', () => ({
   exists: vault.exists(),
@@ -525,6 +581,13 @@ ipcMain.handle('keys:reveal', (event, id) => {
 ipcMain.handle('dialog:selectPrivateKey', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(win, { properties: ['openFile'] });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+  return { path: result.filePaths[0] };
+});
+
+ipcMain.handle('dialog:selectFolder', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return { canceled: true };
   return { path: result.filePaths[0] };
 });
