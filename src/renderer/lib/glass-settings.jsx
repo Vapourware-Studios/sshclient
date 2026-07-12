@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'sshclient.glassSettings';
-const DEFAULTS = { enabled: true, intensity: 50 };
+const IS_MAC = window.api?.platform === 'darwin';
+const DEFAULTS = { enabled: IS_MAC, intensity: 50 };
 
 function loadSettings() {
   try {
@@ -9,7 +10,7 @@ function loadSettings() {
     if (!raw) return DEFAULTS;
     const parsed = JSON.parse(raw);
     return {
-      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : DEFAULTS.enabled,
+      enabled: IS_MAC && (typeof parsed.enabled === 'boolean' ? parsed.enabled : DEFAULTS.enabled),
       intensity: typeof parsed.intensity === 'number' ? parsed.intensity : DEFAULTS.intensity,
     };
   } catch {
@@ -31,7 +32,7 @@ export function GlassSettingsProvider({ children }) {
     document.documentElement.style.setProperty('--glass-bg-alpha', `${bgAlpha * 100}%`);
   }, [settings]);
 
-  const setEnabled = (enabled) => setSettings((prev) => ({ ...prev, enabled }));
+  const setEnabled = (enabled) => setSettings((prev) => ({ ...prev, enabled: IS_MAC && enabled }));
   const setIntensity = (intensity) => setSettings((prev) => ({ ...prev, intensity }));
 
   return (
