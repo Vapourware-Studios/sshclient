@@ -4,6 +4,7 @@
   "description": "A Termius-like SSH + SFTP client, built from scratch as a learning project",
   "main": "src/main/main.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "dev:renderer": "vite",
     "dev:electron": "wait-on tcp:5173 && electron . --dev",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
