@@ -26,7 +26,7 @@ function Tab({ active, onClick, children }) {
 export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewConnection }) {
   return (
     <div
-      className={`flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pr-3 ${IS_MAC ? 'pl-20' : 'pl-3'}`}
+      className={`flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pr-3 ${IS_MAC ? 'pl-24' : 'pl-3'}`}
       style={{ WebkitAppRegion: 'drag' }}
     >
       {tabs.filter((t) => t.constant).map((tab) => {
