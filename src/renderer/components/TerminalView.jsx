@@ -31,16 +31,29 @@ export default function TerminalView({ sessionId, active }) {
       window.api.sshResize(sessionId, cols, rows);
     });
 
+    // Live chunks that arrive while the attach below is still in flight are
+    // held back — the attach replays everything printed so far, so writing
+    // live chunks first would show them out of order (or twice).
+    let pendingLive = [];
+
     const unsubData = window.api.onSshData((payload) => {
-      if (payload.sessionId === sessionId) term.write(payload.data);
+      if (payload.sessionId !== sessionId) return;
+      if (pendingLive) pendingLive.push(payload);
+      else term.write(payload.data);
     });
 
     // Everything printed before this terminal mounted (MOTD, first prompt)
-    // was buffered in the main process — fetch and replay it. Live data only
-    // starts flowing after the attach, so nothing is duplicated.
+    // is kept in the main process — fetch and replay it, then flush the
+    // held-back live chunks. `lastSeq` marks where the replayed history
+    // ends: chunks numbered at or below it are already on screen.
     let disposed = false;
     window.api.sshAttach(sessionId).then((result) => {
-      if (!disposed && result?.backlog) term.write(result.backlog);
+      if (disposed) return;
+      if (result?.backlog) term.write(result.backlog);
+      for (const payload of pendingLive) {
+        if (payload.seq > (result?.lastSeq ?? 0)) term.write(payload.data);
+      }
+      pendingLive = null;
     });
 
     const unsubClosed = window.api.onSshClosed((payload) => {

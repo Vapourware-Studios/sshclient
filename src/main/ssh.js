@@ -6,6 +6,20 @@ const vault = require('./vault');
 const sessions = new Map();
 const pending = new Map();
 
+// How much shell output (in characters) we keep per session for replay.
+const MAX_HISTORY_CHARS = 200000;
+
+// Terminal output is full of invisible control sequences (colors, cursor
+// moves, window-title updates). Strip them so a line reads as plain text
+// in the connection log.
+function stripControlSequences(text) {
+  return text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (e.g. set window title)
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '') // CSI (colors, cursor movement)
+    .replace(/\x1b[@-_]/g, '') // other two-byte escapes
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ''); // stray control bytes
+}
+
 async function verifyHostKey(sessionId, host, port, fingerprint, onHostKey) {
   const known = vault.getKnownHostKey(host, port);
 
@@ -144,7 +158,15 @@ function connect(config, handlers = {}) {
           return;
         }
 
-        sessions.set(sessionId, { conn, stream: null, sftp, backlog: null, attached: true });
+        sessions.set(sessionId, {
+          conn,
+          stream: null,
+          sftp,
+          history: [],
+          historyLength: 0,
+          seq: 0,
+          attached: true,
+        });
         sftp.on('close', () => {
           sessions.delete(sessionId);
           conn.end();
@@ -173,20 +195,51 @@ function connect(config, handlers = {}) {
           return;
         }
 
-        // Output that arrives before the renderer's terminal mounts (the
-        // MOTD, the first prompt) is buffered here and flushed on attach —
-        // otherwise it is emitted into the void and the terminal starts blank.
-        const session = { conn, stream, sftp: null, backlog: [], attached: false };
+        // Everything the shell prints is kept (capped) so a terminal can
+        // attach — or re-attach after a React remount — at any moment and
+        // replay the full story from the start. `seq` numbers each chunk so
+        // the renderer can tell which live chunks are already covered by a
+        // replayed history and must not be written twice.
+        const session = {
+          conn,
+          stream,
+          sftp: null,
+          history: [],
+          historyLength: 0,
+          seq: 0,
+          attached: false,
+        };
         sessions.set(sessionId, session);
+
+        // Until a terminal is attached and showing output, forward whole
+        // printed lines (login banner, MOTD) to the connection log so they
+        // are visible behind the "Show logs" button while connecting.
+        let lineBuffer = '';
+        const logShellOutput = (text) => {
+          lineBuffer += text;
+          const lines = lineBuffer.split(/\r?\n/);
+          lineBuffer = lines.pop();
+          for (const line of lines) {
+            const clean = stripControlSequences(line).trim();
+            if (clean) log(clean, 'output');
+          }
+        };
 
         stream.on('data', (chunk) => {
           const text = chunk.toString('utf8');
+          session.seq += 1;
+
+          session.history.push(text);
+          session.historyLength += text.length;
+          while (session.history.length > 1 && session.historyLength > MAX_HISTORY_CHARS) {
+            session.historyLength -= session.history[0].length;
+            session.history.shift();
+          }
+
           if (session.attached) {
-            onData?.(sessionId, text);
+            onData?.(sessionId, text, session.seq);
           } else {
-            session.backlog.push(text);
-            // Drop the oldest chunks if the renderer never attaches.
-            if (session.backlog.length > 2000) session.backlog.shift();
+            logShellOutput(text);
           }
         });
 
@@ -228,14 +281,17 @@ function resize(sessionId, cols, rows) {
 }
 
 // Called by the renderer once its terminal is mounted and listening.
-// Returns everything the shell printed so far and switches to live streaming.
+// Returns everything the shell has printed so far and switches to live
+// streaming. Attaching is repeatable on purpose: React (StrictMode, or any
+// future remount) may tear a terminal down and mount a fresh one, and the
+// fresh one gets the same full history to replay onto its blank screen.
+// `lastSeq` marks where that history ends so the renderer can skip live
+// chunks that are already inside it.
 function attach(sessionId) {
   const session = sessions.get(sessionId);
-  if (!session) return { backlog: '' };
-  const backlog = (session.backlog ?? []).join('');
-  session.backlog = null;
+  if (!session) return { backlog: '', lastSeq: 0 };
   session.attached = true;
-  return { backlog };
+  return { backlog: (session.history ?? []).join(''), lastSeq: session.seq ?? 0 };
 }
 
 // SFTP is not a separate connection — it's another channel type on the

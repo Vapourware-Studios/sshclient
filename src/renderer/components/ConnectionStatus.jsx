@@ -100,7 +100,8 @@ function formatLogTime(time) {
 }
 
 // The raw connection log: timestamps + what ssh2 is actually doing on
-// the wire (debug lines dim, our milestones brighter, errors red).
+// the wire (debug lines dim, our milestones green, what the server
+// prints to the terminal blue, errors red).
 export function ConnectionLog({ logs = [] }) {
   const endRef = useRef(null);
 
@@ -119,7 +120,9 @@ export function ConnectionLog({ logs = [] }) {
               ? 'text-destructive'
               : entry.level === 'debug'
                 ? 'text-muted-foreground/70'
-                : 'text-emerald-400'
+                : entry.level === 'output'
+                  ? 'text-sky-300'
+                  : 'text-emerald-400'
           }`}
         >
           <span className="text-muted-foreground/50">{formatLogTime(entry.time)}</span>{' '}

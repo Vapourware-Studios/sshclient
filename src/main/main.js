@@ -25,6 +25,15 @@ function createWindow() {
     },
   });
 
+  // The traffic lights disappear in macOS full screen; tell the renderer so
+  // the tab bar can reclaim the space it normally reserves for them.
+  win.on('enter-full-screen', () =>
+    win.webContents.send('window:fullscreen', { fullScreen: true })
+  );
+  win.on('leave-full-screen', () =>
+    win.webContents.send('window:fullscreen', { fullScreen: false })
+  );
+
   if (process.argv.includes('--dev')) {
     win.loadURL('http://localhost:5173');
   } else {
@@ -64,7 +73,7 @@ ipcMain.handle('ssh:connect', (event, config) => {
     const sessionId = ssh.connect(fullConfig, {
       onProgress: (sessionId, stage) => win?.webContents.send('ssh:progress', { sessionId, stage }),
       onReady: (sessionId) => win?.webContents.send('ssh:ready', { sessionId }),
-      onData: (sessionId, data) => win?.webContents.send('ssh:data', { sessionId, data }),
+      onData: (sessionId, data, seq) => win?.webContents.send('ssh:data', { sessionId, data, seq }),
       onClose: (sessionId) => win?.webContents.send('ssh:closed', { sessionId }),
       onError: (sessionId, err) =>
         win?.webContents.send('ssh:error', { sessionId, message: err.message }),
@@ -103,6 +112,12 @@ ipcMain.handle('ssh:disconnect', (event, sessionId) => {
 });
 
 ipcMain.handle('ssh:attach', (event, sessionId) => ssh.attach(sessionId));
+
+// Lets the renderer know the starting state (the events above only cover
+// transitions that happen after the page has loaded).
+ipcMain.handle('window:isFullScreen', (event) =>
+  BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
+);
 
 // Local filesystem browsing for the SFTP dual-pane view.
 ipcMain.handle('fs:home', () => ({ path: os.homedir() }));

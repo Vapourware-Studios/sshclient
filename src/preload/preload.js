@@ -56,6 +56,9 @@ contextBridge.exposeInMainWorld('api', {
   keysReveal: (id) => ipcRenderer.invoke('keys:reveal', id),
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
+
+  windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
+  onFullScreenChange: (callback) => subscribe('window:fullscreen', callback),
 });
 
 function subscribe(channel, callback) {
