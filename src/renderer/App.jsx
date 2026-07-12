@@ -111,8 +111,22 @@ export default function App() {
     if (!result.error) setHosts(result.hosts);
   }
 
-  async function openSession(connectConfig, title) {
+  async function openSession(connectConfig, title, type = 'ssh') {
     setConnectError(null);
+
+    if (type !== 'ssh') {
+      const connect = type === 'local' ? window.api.localConnect : window.api.serialConnect;
+      const result = await connect(connectConfig);
+      if (result.error) {
+        setConnectError(result.error);
+        throw new Error(result.error);
+      }
+      const tab = { id: result.sessionId, title, type, status: 'connected', connectConfig };
+      setTabs((prev) => [...prev, tab]);
+      setActiveTabId(tab.id);
+      return;
+    }
+
     const result = await window.api.sshConnect(connectConfig);
     if (result.error) {
       setConnectError(result.error);
@@ -121,6 +135,7 @@ export default function App() {
     const tab = {
       id: result.sessionId,
       title,
+      type,
       status: 'connecting',
       stage: 'connecting',
       connectConfig,
@@ -146,7 +161,13 @@ export default function App() {
       return rest;
     });
 
-    await window.api.sshDisconnect(tabId);
+    const disconnect =
+      tab?.type === 'local'
+        ? window.api.localDisconnect
+        : tab?.type === 'serial'
+          ? window.api.serialDisconnect
+          : window.api.sshDisconnect;
+    await disconnect(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (activeTabId === tabId) {
@@ -163,7 +184,7 @@ export default function App() {
       return rest;
     });
     try {
-      await openSession(tab.connectConfig, tab.title);
+      await openSession(tab.connectConfig, tab.title, tab.type);
     } catch {}
   }
 
@@ -253,8 +274,8 @@ export default function App() {
             }}
             editingHost={editingHost}
             onSaved={setHosts}
-            onConnect={async (config, title) => {
-              await openSession(config, title);
+            onConnect={async (config, title, type) => {
+              await openSession(config, title, type);
             }}
           />
         </div>

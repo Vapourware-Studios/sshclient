@@ -1,6 +1,8 @@
 const { Client } = require('ssh2');
 const crypto = require('crypto');
 const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
 const vault = require('./vault');
 
 const sessions = new Map();
@@ -369,6 +371,178 @@ async function sftpUpload(sessionId, localPath, remotePath, onStep) {
   });
 }
 
+async function sftpTransferRemote(sourceSessionId, sourcePath, destSessionId, destPath, onStep) {
+  const sourceSftp = await getSftp(sourceSessionId);
+  const destSftp = await getSftp(destSessionId);
+
+  const total = await new Promise((resolve, reject) => {
+    sourceSftp.stat(sourcePath, (err, stat) => (err ? reject(err) : resolve(stat.size)));
+  });
+
+  return new Promise((resolve, reject) => {
+    const readStream = sourceSftp.createReadStream(sourcePath);
+    const writeStream = destSftp.createWriteStream(destPath);
+    let transferred = 0;
+
+    readStream.on('data', (chunk) => {
+      transferred += chunk.length;
+      onStep?.(transferred, total);
+    });
+    readStream.on('error', reject);
+    writeStream.on('error', reject);
+    writeStream.on('close', resolve);
+    readStream.pipe(writeStream);
+  });
+}
+
+async function sftpIsDir(sessionId, remotePath) {
+  const sftp = await getSftp(sessionId);
+  return new Promise((resolve, reject) => {
+    sftp.stat(remotePath, (err, stat) => (err ? reject(err) : resolve(stat.isDirectory())));
+  });
+}
+
+function joinRemotePath(base, relPath) {
+  return (base === '/' ? '' : base) + '/' + relPath;
+}
+
+function mkdirRemote(sftp, remoteDir) {
+  return new Promise((resolve) => {
+    sftp.mkdir(remoteDir, () => resolve());
+  });
+}
+
+async function walkLocalDir(rootDir) {
+  const dirs = [];
+  const files = [];
+
+  async function walk(dir, rel) {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name);
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        dirs.push(relPath);
+        await walk(abs, relPath);
+      } else if (entry.isFile()) {
+        const stat = await fsp.stat(abs);
+        files.push({ relPath, abs, size: stat.size });
+      }
+    }
+  }
+
+  await walk(rootDir, '');
+  return { dirs, files };
+}
+
+async function walkRemoteDir(sftp, rootDir) {
+  const dirs = [];
+  const files = [];
+
+  async function walk(dir, rel) {
+    const items = await new Promise((resolve, reject) => {
+      sftp.readdir(dir, (err, list) => (err ? reject(err) : resolve(list)));
+    });
+    for (const item of items) {
+      const relPath = rel ? `${rel}/${item.filename}` : item.filename;
+      const abs = joinRemotePath(dir, item.filename);
+      if (item.attrs.isDirectory()) {
+        dirs.push(relPath);
+        await walk(abs, relPath);
+      } else if (!item.attrs.isSymbolicLink()) {
+        files.push({ relPath, abs, size: item.attrs.size });
+      }
+    }
+  }
+
+  await walk(rootDir, '');
+  return { dirs, files };
+}
+
+async function sftpUploadDir(sessionId, localDir, remoteDir, onStep) {
+  const sftp = await getSftp(sessionId);
+  const { dirs, files } = await walkLocalDir(localDir);
+  const grandTotal = files.reduce((sum, f) => sum + f.size, 0);
+
+  await mkdirRemote(sftp, remoteDir);
+  for (const relDir of dirs) {
+    await mkdirRemote(sftp, joinRemotePath(remoteDir, relDir));
+  }
+
+  let doneBytes = 0;
+  for (const file of files) {
+    const remotePath = joinRemotePath(remoteDir, file.relPath);
+    await new Promise((resolve, reject) => {
+      sftp.fastPut(
+        file.abs,
+        remotePath,
+        { step: (transferred) => onStep?.(doneBytes + transferred, grandTotal) },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    doneBytes += file.size;
+    onStep?.(doneBytes, grandTotal);
+  }
+}
+
+async function sftpDownloadDir(sessionId, remoteDir, localDir, onStep) {
+  const sftp = await getSftp(sessionId);
+  const { dirs, files } = await walkRemoteDir(sftp, remoteDir);
+  const grandTotal = files.reduce((sum, f) => sum + f.size, 0);
+
+  await fsp.mkdir(localDir, { recursive: true });
+  for (const relDir of dirs) {
+    await fsp.mkdir(path.join(localDir, relDir), { recursive: true });
+  }
+
+  let doneBytes = 0;
+  for (const file of files) {
+    const localPath = path.join(localDir, file.relPath);
+    await new Promise((resolve, reject) => {
+      sftp.fastGet(
+        file.abs,
+        localPath,
+        { step: (transferred) => onStep?.(doneBytes + transferred, grandTotal) },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    doneBytes += file.size;
+    onStep?.(doneBytes, grandTotal);
+  }
+}
+
+async function sftpTransferRemoteDir(sourceSessionId, sourceDir, destSessionId, destDir, onStep) {
+  const sourceSftp = await getSftp(sourceSessionId);
+  const destSftp = await getSftp(destSessionId);
+  const { dirs, files } = await walkRemoteDir(sourceSftp, sourceDir);
+  const grandTotal = files.reduce((sum, f) => sum + f.size, 0);
+
+  await mkdirRemote(destSftp, destDir);
+  for (const relDir of dirs) {
+    await mkdirRemote(destSftp, joinRemotePath(destDir, relDir));
+  }
+
+  let doneBytes = 0;
+  for (const file of files) {
+    const destPath = joinRemotePath(destDir, file.relPath);
+    await new Promise((resolve, reject) => {
+      const readStream = sourceSftp.createReadStream(file.abs);
+      const writeStream = destSftp.createWriteStream(destPath);
+      let transferred = 0;
+
+      readStream.on('data', (chunk) => {
+        transferred += chunk.length;
+        onStep?.(doneBytes + transferred, grandTotal);
+      });
+      readStream.on('error', reject);
+      writeStream.on('error', reject);
+      writeStream.on('close', resolve);
+      readStream.pipe(writeStream);
+    });
+    doneBytes += file.size;
+  }
+}
+
 function disconnect(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
@@ -394,4 +568,9 @@ module.exports = {
   sftpList,
   sftpDownload,
   sftpUpload,
+  sftpTransferRemote,
+  sftpIsDir,
+  sftpUploadDir,
+  sftpDownloadDir,
+  sftpTransferRemoteDir,
 };
