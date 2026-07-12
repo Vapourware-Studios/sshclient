@@ -2,12 +2,41 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 
-export default function TerminalView({ sessionId, active }) {
+const ADAPTERS = {
+  ssh: {
+    write: 'sshWrite',
+    resize: 'sshResize',
+    attach: 'sshAttach',
+    onData: 'onSshData',
+    onClosed: 'onSshClosed',
+    onError: 'onSshError',
+  },
+  local: {
+    write: 'localWrite',
+    resize: 'localResize',
+    attach: 'localAttach',
+    onData: 'onLocalData',
+    onClosed: 'onLocalClosed',
+    onError: 'onLocalError',
+  },
+  serial: {
+    write: 'serialWrite',
+    resize: null,
+    attach: 'serialAttach',
+    onData: 'onSerialData',
+    onClosed: 'onSerialClosed',
+    onError: 'onSerialError',
+  },
+};
+
+export default function TerminalView({ sessionId, kind = 'ssh', active }) {
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitAddonRef = useRef(null);
 
   useEffect(() => {
+    const adapter = ADAPTERS[kind] ?? ADAPTERS.ssh;
+
     const term = new Terminal({
       convertEol: true,
       cursorBlink: true,
@@ -24,11 +53,11 @@ export default function TerminalView({ sessionId, active }) {
     fitAddonRef.current = fitAddon;
 
     const dataSub = term.onData((data) => {
-      window.api.sshWrite(sessionId, data);
+      window.api[adapter.write](sessionId, data);
     });
 
     const resizeSub = term.onResize(({ cols, rows }) => {
-      window.api.sshResize(sessionId, cols, rows);
+      if (adapter.resize) window.api[adapter.resize](sessionId, cols, rows);
     });
 
     // Live chunks that arrive while the attach below is still in flight are
@@ -36,7 +65,7 @@ export default function TerminalView({ sessionId, active }) {
     // live chunks first would show them out of order (or twice).
     let pendingLive = [];
 
-    const unsubData = window.api.onSshData((payload) => {
+    const unsubData = window.api[adapter.onData]((payload) => {
       if (payload.sessionId !== sessionId) return;
       if (pendingLive) pendingLive.push(payload);
       else term.write(payload.data);
@@ -47,7 +76,7 @@ export default function TerminalView({ sessionId, active }) {
     // held-back live chunks. `lastSeq` marks where the replayed history
     // ends: chunks numbered at or below it are already on screen.
     let disposed = false;
-    window.api.sshAttach(sessionId).then((result) => {
+    window.api[adapter.attach](sessionId).then((result) => {
       if (disposed) return;
       if (result?.backlog) term.write(result.backlog);
       for (const payload of pendingLive) {
@@ -56,13 +85,13 @@ export default function TerminalView({ sessionId, active }) {
       pendingLive = null;
     });
 
-    const unsubClosed = window.api.onSshClosed((payload) => {
+    const unsubClosed = window.api[adapter.onClosed]((payload) => {
       if (payload.sessionId === sessionId) {
         term.write('\r\n\x1b[31m[connection closed]\x1b[0m\r\n');
       }
     });
 
-    const unsubError = window.api.onSshError((payload) => {
+    const unsubError = window.api[adapter.onError]((payload) => {
       if (payload.sessionId === sessionId) {
         term.write(`\r\n\x1b[31m[error] ${payload.message}\x1b[0m\r\n`);
       }
@@ -83,7 +112,7 @@ export default function TerminalView({ sessionId, active }) {
       resizeObserver.disconnect();
       term.dispose();
     };
-  }, [sessionId]);
+  }, [sessionId, kind]);
 
   useEffect(() => {
     if (active) {
