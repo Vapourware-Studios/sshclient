@@ -6,7 +6,13 @@ const crypto = require('crypto');
 const { utils: sshUtils } = require('ssh2');
 const ssh = require('./ssh');
 const vault = require('./vault');
-const liquidGlass = require('electron-liquid-glass');
+const isMac = process.platform === 'darwin';
+let liquidGlass = null;
+if (isMac) {
+  try {
+    liquidGlass = require('electron-liquid-glass');
+  } catch {}
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -14,9 +20,17 @@ function createWindow() {
     height: 700,
     minWidth: 800,
     minHeight: 500,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 20, y: 16 },
-    transparent: true,
+    ...(isMac
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 20, y: 16 },
+          transparent: true,
+        }
+      : {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: { color: '#09090b', symbolColor: '#a1a1aa', height: 44 },
+          backgroundColor: '#09090b',
+        }),
     icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
@@ -33,16 +47,20 @@ function createWindow() {
     win.webContents.send('window:fullscreen', { fullScreen: false })
   );
 
-  win.setWindowButtonVisibility(true);
+  if (isMac) {
+    win.setWindowButtonVisibility(true);
+  }
 
-  win.webContents.once('did-finish-load', () => {
-    const glassId = liquidGlass.addView(win.getNativeWindowHandle(), {
-      cornerRadius: 20,
-      tintColor: '#ffffff0d',
-      opaque: false,
+  if (liquidGlass) {
+    win.webContents.once('did-finish-load', () => {
+      const glassId = liquidGlass.addView(win.getNativeWindowHandle(), {
+        cornerRadius: 20,
+        tintColor: '#ffffff0d',
+        opaque: false,
+      });
+      liquidGlass.unstable_setVariant?.(glassId, 0);
     });
-    liquidGlass.unstable_setVariant?.(glassId, 0);
-  });
+  }
 
   if (process.argv.includes('--dev')) {
     win.loadURL('http://localhost:5173');

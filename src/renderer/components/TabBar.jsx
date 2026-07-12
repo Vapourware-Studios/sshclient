@@ -45,9 +45,9 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
 
   return (
     <div
-      className={`flex h-11 shrink-0 items-center gap-1 border-b pr-3 transition-[padding] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+      className={`flex h-11 shrink-0 items-center gap-1 border-b transition-[padding] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         IS_MAC && !fullScreen ? 'pl-24' : 'pl-3'
-      }`}
+      } ${IS_MAC ? 'pr-3' : 'pr-36'}`}
       style={{
         WebkitAppRegion: 'drag',
         backgroundColor: `color-mix(in oklch, var(--muted) ${barAlpha * 100}%, transparent)`,
