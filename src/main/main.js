@@ -110,6 +110,9 @@ ipcMain.handle('ssh:connect', (event, config) => {
         win?.webContents.send('ssh:error', { sessionId, message: err.message }),
       onLog: (sessionId, line, level) =>
         win?.webContents.send('ssh:log', { sessionId, line, level }),
+      onRecording: (sessionId, recording) => {
+        try { vault.saveSessionHistory(recording); } catch {}
+      },
       onHostKey: (sessionId, info) =>
         new Promise((resolve) => {
           pendingHostKeyDecisions.set(sessionId, resolve);
@@ -143,6 +146,13 @@ ipcMain.handle('ssh:disconnect', (event, sessionId) => {
 });
 
 ipcMain.handle('ssh:attach', (event, sessionId) => ssh.attach(sessionId));
+ipcMain.handle('ssh:forwardStart', async (event, { sessionId, spec }) => {
+  try { return { forward: await ssh.startForward(sessionId, spec) }; }
+  catch (err) { return { error: err.message }; }
+});
+ipcMain.handle('ssh:forwardStop', (event, { sessionId, forwardId }) => ({
+  ok: ssh.stopForward(sessionId, forwardId),
+}));
 
 ipcMain.handle('local:connect', (event, config) => {
   const win = BrowserWindow.fromWebContents(event.sender);
@@ -433,6 +443,34 @@ ipcMain.handle('hosts:delete', (event, id) => {
     return { error: err.message };
   }
 });
+
+ipcMain.handle('knownHosts:list', () => {
+  try {
+    return { knownHosts: vault.listKnownHosts() };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('knownHosts:delete', (event, { host, port }) => {
+  try {
+    return { knownHosts: vault.deleteKnownHost(host, port) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+for (const [channel, action] of [
+  ['snippets:list', () => ({ snippets: vault.listSnippets() })],
+  ['snippets:save', (value) => ({ snippets: vault.saveSnippet(value) })],
+  ['snippets:delete', (id) => ({ snippets: vault.deleteSnippet(id) })],
+  ['history:list', () => ({ history: vault.listSessionHistory() })],
+  ['history:delete', (id) => ({ history: vault.deleteSessionHistory(id) })],
+]) {
+  ipcMain.handle(channel, (event, value) => {
+    try { return action(value); } catch (err) { return { error: err.message }; }
+  });
+}
 
 // Key generation runs in the main process so private keys are created and
 // vaulted without ever touching the renderer.

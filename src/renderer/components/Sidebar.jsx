@@ -9,7 +9,6 @@ import {
   History,
   Settings,
   Lock,
-  Vault,
 } from 'lucide-react';
 
 const NAV_ITEMS = [

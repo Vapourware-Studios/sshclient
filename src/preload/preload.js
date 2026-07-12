@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('api', {
   sshResize: (sessionId, cols, rows) => ipcRenderer.invoke('ssh:resize', { sessionId, cols, rows }),
   sshDisconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
   sshAttach: (sessionId) => ipcRenderer.invoke('ssh:attach', sessionId),
+  sshForwardStart: (sessionId, spec) => ipcRenderer.invoke('ssh:forwardStart', { sessionId, spec }),
+  sshForwardStop: (sessionId, forwardId) => ipcRenderer.invoke('ssh:forwardStop', { sessionId, forwardId }),
 
   onSshProgress: (callback) => subscribe('ssh:progress', callback),
   onSshReady: (callback) => subscribe('ssh:ready', callback),
@@ -69,6 +71,15 @@ contextBridge.exposeInMainWorld('api', {
   hostsSave: (host) => ipcRenderer.invoke('hosts:save', host),
   hostsDelete: (id) => ipcRenderer.invoke('hosts:delete', id),
 
+  knownHostsList: () => ipcRenderer.invoke('knownHosts:list'),
+  knownHostsDelete: (host, port) => ipcRenderer.invoke('knownHosts:delete', { host, port }),
+
+  snippetsList: () => ipcRenderer.invoke('snippets:list'),
+  snippetsSave: (snippet) => ipcRenderer.invoke('snippets:save', snippet),
+  snippetsDelete: (id) => ipcRenderer.invoke('snippets:delete', id),
+  historyList: () => ipcRenderer.invoke('history:list'),
+  historyDelete: (id) => ipcRenderer.invoke('history:delete', id),
+
   keysList: () => ipcRenderer.invoke('keys:list'),
   keysGenerate: (spec) => ipcRenderer.invoke('keys:generate', spec),
   keysImport: (spec) => ipcRenderer.invoke('keys:import', spec),
@@ -77,13 +88,6 @@ contextBridge.exposeInMainWorld('api', {
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
-
-  localSpawn: (cols, rows) => ipcRenderer.invoke('local:spawn', { cols, rows }),
-  localWrite: (sessionId, data) => ipcRenderer.invoke('local:write', { sessionId, data }),
-  localResize: (sessionId, cols, rows) => ipcRenderer.invoke('local:resize', { sessionId, cols, rows }),
-  localClose: (sessionId) => ipcRenderer.invoke('local:close', sessionId),
-  onLocalData: (callback) => subscribe('local:data', callback),
-  onLocalClosed: (callback) => subscribe('local:closed', callback),
 
   windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
   onFullScreenChange: (callback) => subscribe('window:fullscreen', callback),

@@ -1,5 +1,4 @@
 import TerminalView from '@/components/TerminalView';
-import LocalTerminalView from '@/components/LocalTerminalView';
 import VaultView from '@/components/VaultView';
 import SftpHub from '@/components/SftpHub';
 import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
@@ -18,40 +17,37 @@ export default function ContentArea({
   onNewConnection,
   onLockVault,
   onOpenLocalTerminal,
+  onPlayRecording,
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
   return (
     <div className="relative min-w-0 flex-1">
-      {activeTab?.id === 'vault' && (
-        <VaultView
-          hosts={hosts}
-          onConnect={onConnect}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onNewConnection={onNewConnection}
-          onLockVault={onLockVault}
-          onOpenLocalTerminal={onOpenLocalTerminal}
-        />
-      )}
+      <VaultView
+        hosts={hosts}
+        onConnect={onConnect}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onNewConnection={onNewConnection}
+        onLockVault={onLockVault}
+        onOpenLocalTerminal={onOpenLocalTerminal}
+        onPlayRecording={onPlayRecording}
+        tabs={tabs}
+        visible={activeTab?.id === 'vault'}
+      />
 
       <SftpHub hosts={hosts} visible={activeTab?.id === 'sftp'} />
 
       {tabs
-        .filter((t) => t.status === 'connected' && t.kind !== 'local')
+        .filter((t) => t.status === 'connected')
         .map((tab) => (
           <TerminalView
             key={tab.id}
             sessionId={tab.id}
             kind={tab.type}
             active={tab.id === activeTabId}
+            recording={tab.recording}
           />
-        ))}
-
-      {tabs
-        .filter((t) => t.status === 'connected' && t.kind === 'local')
-        .map((tab) => (
-          <LocalTerminalView key={tab.id} sessionId={tab.id} active={tab.id === activeTabId} />
         ))}
 
       {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (

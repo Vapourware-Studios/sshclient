@@ -146,19 +146,9 @@ export default function App() {
   }
 
   async function openLocalTerminal() {
-    const result = await window.api.localSpawn(80, 24);
-    if (result.error) {
-      setConnectError(result.error);
-      return;
-    }
-    const tab = {
-      id: result.sessionId,
-      title: 'Local',
-      kind: 'local',
-      status: 'connected',
-    };
-    setTabs((prev) => [...prev, tab]);
-    setActiveTabId(tab.id);
+    try {
+      await openSession({}, 'Local', 'local');
+    } catch {}
   }
 
   async function closeTab(tabId) {
@@ -182,8 +172,10 @@ export default function App() {
         ? window.api.localDisconnect
         : tab?.type === 'serial'
           ? window.api.serialDisconnect
-          : window.api.sshDisconnect;
-    await disconnect(tabId);
+          : tab?.type === 'playback'
+            ? null
+            : window.api.sshDisconnect;
+    if (disconnect) await disconnect(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (activeTabId === tabId) {
@@ -208,6 +200,23 @@ export default function App() {
     try {
       await openSession({ hostId: host.id }, host.label || host.host);
     } catch {}
+  }
+
+  function openPlayback(recording) {
+    const existing = tabs.find((t) => t.type === 'playback' && t.recording?.id === recording.id);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const tab = {
+      id: crypto.randomUUID(),
+      title: `${recording.username}@${recording.host} (replay)`,
+      type: 'playback',
+      status: 'connected',
+      recording,
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
   }
 
   function openNewConnectionDialog() {
@@ -281,6 +290,7 @@ export default function App() {
             onNewConnection={openNewConnectionDialog}
             onLockVault={lockVault}
             onOpenLocalTerminal={openLocalTerminal}
+            onPlayRecording={openPlayback}
           />
 
           <NewConnectionDialog

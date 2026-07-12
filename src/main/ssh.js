@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const net = require('net');
 const vault = require('./vault');
 
 const sessions = new Map();
@@ -105,7 +106,7 @@ function installPublicKey(conn, publicKey, log) {
 }
 
 function connect(config, handlers = {}) {
-  const { onProgress, onReady, onData, onClose, onError, onHostKey, onLog } = handlers;
+  const { onProgress, onReady, onData, onClose, onError, onHostKey, onLog, onRecording } = handlers;
 
   const connectConfig = buildConnectConfig(config);
   const conn = new Client();
@@ -210,6 +211,9 @@ function connect(config, handlers = {}) {
           historyLength: 0,
           seq: 0,
           attached: false,
+          recording: [],
+          recordingStartedAt: Date.now(),
+          forwards: new Map(),
         };
         sessions.set(sessionId, session);
 
@@ -229,6 +233,7 @@ function connect(config, handlers = {}) {
 
         stream.on('data', (chunk) => {
           const text = chunk.toString('utf8');
+          session.recording.push({ at: Date.now() - session.recordingStartedAt, data: text });
           session.seq += 1;
 
           session.history.push(text);
@@ -246,6 +251,14 @@ function connect(config, handlers = {}) {
         });
 
         stream.on('close', () => {
+          for (const server of session.forwards.values()) server.close();
+          onRecording?.(sessionId, {
+            host: connectConfig.host,
+            username: connectConfig.username,
+            startedAt: session.recordingStartedAt,
+            duration: Date.now() - session.recordingStartedAt,
+            frames: session.recording,
+          });
           sessions.delete(sessionId);
           onClose?.(sessionId);
         });
@@ -272,6 +285,43 @@ function connect(config, handlers = {}) {
   conn.connect(connectConfig);
 
   return sessionId;
+}
+
+function startForward(sessionId, spec) {
+  const session = sessions.get(sessionId);
+  if (!session) return Promise.reject(new Error('SSH session not found'));
+  const bindHost = String(spec.bindHost || '127.0.0.1');
+  const bindPort = Number(spec.bindPort);
+  const targetHost = String(spec.targetHost || '').trim();
+  const targetPort = Number(spec.targetPort);
+  if (!targetHost || !Number.isInteger(bindPort) || bindPort < 0 || bindPort > 65535 ||
+      !Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+    return Promise.reject(new Error('Valid local and destination ports are required'));
+  }
+  return new Promise((resolve, reject) => {
+    const server = net.createServer((socket) => {
+      session.conn.forwardOut(socket.remoteAddress || bindHost, socket.remotePort || 0, targetHost, targetPort, (err, stream) => {
+        if (err) return socket.destroy(err);
+        socket.pipe(stream).pipe(socket);
+      });
+    });
+    server.once('error', reject);
+    server.listen(bindPort, bindHost, () => {
+      server.removeListener('error', reject);
+      const address = server.address();
+      const id = crypto.randomUUID();
+      session.forwards.set(id, server);
+      resolve({ id, bindHost, bindPort: address.port, targetHost, targetPort });
+    });
+  });
+}
+
+function stopForward(sessionId, forwardId) {
+  const server = sessions.get(sessionId)?.forwards?.get(forwardId);
+  if (!server) return false;
+  server.close();
+  sessions.get(sessionId).forwards.delete(forwardId);
+  return true;
 }
 
 function write(sessionId, data) {
@@ -604,6 +654,8 @@ module.exports = {
   resize,
   attach,
   disconnect,
+  startForward,
+  stopForward,
   sftpHome,
   sftpList,
   sftpDownload,

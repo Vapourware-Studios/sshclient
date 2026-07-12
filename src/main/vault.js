@@ -49,6 +49,14 @@ function init(userDataDir) {
       data_ciphertext TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS snippets (
+      id TEXT PRIMARY KEY, data_iv TEXT NOT NULL, data_auth_tag TEXT NOT NULL,
+      data_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS session_history (
+      id TEXT PRIMARY KEY, data_iv TEXT NOT NULL, data_auth_tag TEXT NOT NULL,
+      data_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
   `);
 }
 
@@ -375,6 +383,69 @@ function getKnownHostKey(host, port) {
   return row ? row.fingerprint : null;
 }
 
+function listKnownHosts() {
+  const rows = db
+    .prepare(
+      `SELECT host, port, fingerprint, first_seen AS firstSeen
+       FROM known_hosts
+       ORDER BY LOWER(host), port`
+    )
+    .all();
+  return rows.map((row) => ({ ...row }));
+}
+
+function deleteKnownHost(host, port) {
+  db.prepare('DELETE FROM known_hosts WHERE host = ? AND port = ?').run(host, port);
+  return listKnownHosts();
+}
+
+function listEncrypted(table) {
+  requireUnlocked();
+  return db.prepare(`SELECT * FROM ${table} ORDER BY created_at DESC`).all().map((row) => ({
+    id: row.id,
+    ...decryptJSON(derivedKey, { iv: row.data_iv, authTag: row.data_auth_tag, ciphertext: row.data_ciphertext }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+function saveSnippet(snippet) {
+  requireUnlocked();
+  const name = String(snippet?.name || '').trim();
+  const command = String(snippet?.command || '');
+  if (!name || !command.trim()) throw new Error('Snippet name and command are required');
+  const id = snippet.id || crypto.randomUUID();
+  const now = Date.now();
+  const enc = encryptJSON(derivedKey, { name, command });
+  db.prepare(`INSERT INTO snippets VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET data_iv=excluded.data_iv, data_auth_tag=excluded.data_auth_tag,
+    data_ciphertext=excluded.data_ciphertext, updated_at=excluded.updated_at`)
+    .run(id, enc.iv, enc.authTag, enc.ciphertext, now, now);
+  return listEncrypted('snippets');
+}
+
+function deleteSnippet(id) {
+  requireUnlocked();
+  db.prepare('DELETE FROM snippets WHERE id = ?').run(id);
+  return listEncrypted('snippets');
+}
+
+function saveSessionHistory(recording) {
+  requireUnlocked();
+  const id = recording.id || crypto.randomUUID();
+  const createdAt = recording.startedAt || Date.now();
+  const enc = encryptJSON(derivedKey, recording);
+  db.prepare('INSERT INTO session_history VALUES (?, ?, ?, ?, ?)')
+    .run(id, enc.iv, enc.authTag, enc.ciphertext, createdAt);
+  return id;
+}
+
+function deleteSessionHistory(id) {
+  requireUnlocked();
+  db.prepare('DELETE FROM session_history WHERE id = ?').run(id);
+  return listEncrypted('session_history');
+}
+
 function trustHostKey(host, port, fingerprint) {
   db.prepare(
     `INSERT INTO known_hosts (host, port, fingerprint, first_seen) VALUES (?, ?, ?, ?)
@@ -399,5 +470,13 @@ module.exports = {
   getKeySecret,
   deleteKey,
   getKnownHostKey,
+  listKnownHosts,
   trustHostKey,
+  deleteKnownHost,
+  listSnippets: () => listEncrypted('snippets'),
+  saveSnippet,
+  deleteSnippet,
+  listSessionHistory: () => listEncrypted('session_history'),
+  saveSessionHistory,
+  deleteSessionHistory,
 };

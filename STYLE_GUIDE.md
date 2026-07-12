@@ -15,7 +15,7 @@ The visual foundation is:
 - dark mode by default
 - restrained animation used to explain state changes
 
-Prefer flat surfaces, thin borders, small radii, and clear type hierarchy. Avoid gradients, glass effects, neon accents, oversized cards, decorative shadows, and ornamental motion.
+Prefer flat surfaces, thin borders, small radii, and clear type hierarchy. Avoid gradients, neon accents, oversized cards, decorative shadows, and ornamental motion. The exception is Liquid Glass: on macOS the tab bar and terminal background can let the OS-level glass material show through, controlled by `GlassSettingsProvider` — this is opt-in, platform-specific, and not a license to add arbitrary glass effects elsewhere.
 
 ## 2. Sources of truth
 

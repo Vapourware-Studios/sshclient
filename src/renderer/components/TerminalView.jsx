@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Slider } from '@/components/ui/slider';
+import { Pause, Play } from 'lucide-react';
 
 const ADAPTERS = {
   ssh: {
@@ -29,17 +31,28 @@ const ADAPTERS = {
   },
 };
 
-export default function TerminalView({ sessionId, kind = 'ssh', active }) {
+function formatTime(ms) {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+export default function TerminalView({ sessionId, kind = 'ssh', active, recording }) {
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitAddonRef = useRef(null);
+  const seekRef = useRef(null);
+  const positionRef = useRef(0);
+  const [playing, setPlaying] = useState(true);
+  const [position, setPosition] = useState(0);
+  const duration = recording?.duration ?? 0;
 
   useEffect(() => {
-    const adapter = ADAPTERS[kind] ?? ADAPTERS.ssh;
-
     const term = new Terminal({
       convertEol: true,
-      cursorBlink: true,
+      cursorBlink: kind !== 'playback',
+      disableStdin: kind === 'playback',
       fontSize: 13,
       fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
       theme: { background: '#00000000' },
@@ -51,6 +64,41 @@ export default function TerminalView({ sessionId, kind = 'ssh', active }) {
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+    resizeObserver.observe(containerRef.current);
+
+    if (kind === 'playback') {
+      const frames = recording?.frames ?? [];
+      let writtenCount = 0;
+
+      const seekTo = (ms) => {
+        const clamped = Math.max(0, Math.min(ms, duration));
+        const targetCount = frames.filter((f) => f.at <= clamped).length;
+        if (targetCount < writtenCount) {
+          term.reset();
+          term.write(frames.slice(0, targetCount).map((f) => f.data).join(''));
+        } else if (targetCount > writtenCount) {
+          term.write(frames.slice(writtenCount, targetCount).map((f) => f.data).join(''));
+        }
+        writtenCount = targetCount;
+        positionRef.current = clamped;
+        setPosition(clamped);
+      };
+
+      seekRef.current = seekTo;
+      positionRef.current = 0;
+      setPosition(0);
+      setPlaying(true);
+
+      return () => {
+        seekRef.current = null;
+        resizeObserver.disconnect();
+        term.dispose();
+      };
+    }
+
+    const adapter = ADAPTERS[kind] ?? ADAPTERS.ssh;
 
     const dataSub = term.onData((data) => {
       window.api[adapter.write](sessionId, data);
@@ -97,11 +145,6 @@ export default function TerminalView({ sessionId, kind = 'ssh', active }) {
       }
     });
 
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-    });
-    resizeObserver.observe(containerRef.current);
-
     return () => {
       disposed = true;
       dataSub.dispose();
@@ -112,7 +155,28 @@ export default function TerminalView({ sessionId, kind = 'ssh', active }) {
       resizeObserver.disconnect();
       term.dispose();
     };
-  }, [sessionId, kind]);
+  }, [sessionId, kind, recording]);
+
+  useEffect(() => {
+    if (kind !== 'playback' || !playing) return;
+
+    let raf;
+    let last = performance.now();
+    const tick = (now) => {
+      const delta = now - last;
+      last = now;
+      const next = positionRef.current + delta;
+      if (next >= duration) {
+        seekRef.current?.(duration);
+        setPlaying(false);
+        return;
+      }
+      seekRef.current?.(next);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [kind, playing, duration]);
 
   useEffect(() => {
     if (active) {
@@ -123,8 +187,36 @@ export default function TerminalView({ sessionId, kind = 'ssh', active }) {
 
   return (
     <div
-      className={`absolute inset-0 bg-background p-2 ${active ? '' : 'invisible pointer-events-none'}`}
-      ref={containerRef}
-    />
+      className={`absolute inset-0 flex flex-col bg-background ${active ? '' : 'invisible pointer-events-none'}`}
+    >
+      <div className="min-h-0 flex-1 p-2" ref={containerRef} />
+
+      {kind === 'playback' && (
+        <div className="flex shrink-0 items-center gap-3 border-t px-4 py-3">
+          <button
+            onClick={() => setPlaying((p) => !p)}
+            title={playing ? 'Pause' : 'Play'}
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+          </button>
+          <span className="w-10 shrink-0 text-right text-xs text-muted-foreground">
+            {formatTime(position)}
+          </span>
+          <Slider
+            className="flex-1"
+            min={0}
+            max={Math.max(duration, 1)}
+            step={1}
+            value={[position]}
+            onValueChange={([value]) => {
+              setPlaying(false);
+              seekRef.current?.(value);
+            }}
+          />
+          <span className="w-10 shrink-0 text-xs text-muted-foreground">{formatTime(duration)}</span>
+        </div>
+      )}
+    </div>
   );
 }

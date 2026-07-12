@@ -25,7 +25,7 @@ function connect(config = {}, handlers = {}) {
     env: process.env,
   });
 
-  const session = { term, history: [], historyLength: 0, seq: 0, attached: false };
+  const session = { term, history: [], historyLength: 0, seq: 0, attached: false, disconnecting: false };
   sessions.set(sessionId, session);
 
   term.onData((text) => {
@@ -41,7 +41,9 @@ function connect(config = {}, handlers = {}) {
 
   term.onExit(({ exitCode }) => {
     sessions.delete(sessionId);
-    if (exitCode !== 0) onError?.(sessionId, new Error(`Shell exited with code ${exitCode}`));
+    if (exitCode !== 0 && !session.disconnecting) {
+      onError?.(sessionId, new Error(`Shell exited with code ${exitCode}`));
+    }
     onClose?.(sessionId);
   });
 
@@ -66,6 +68,7 @@ function attach(sessionId) {
 function disconnect(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
+    session.disconnecting = true;
     session.term.kill();
     sessions.delete(sessionId);
   }
