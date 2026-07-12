@@ -324,6 +324,44 @@ async function sftpHome(sessionId) {
   });
 }
 
+function assertSafeSftpName(name) {
+  if (
+    typeof name !== 'string' ||
+    name === '' ||
+    name === '.' ||
+    name === '..' ||
+    name.includes('/') ||
+    name.includes('\\')
+  ) {
+    throw new Error('Unsafe filename returned by SFTP server');
+  }
+  return name;
+}
+
+function assertSafeRelativePath(relPath) {
+  if (typeof relPath !== 'string' || relPath === '') {
+    throw new Error('Unsafe relative SFTP path');
+  }
+  for (const segment of relPath.split('/')) assertSafeSftpName(segment);
+  return relPath;
+}
+
+function resolveLocalChild(rootDir, relPath) {
+  assertSafeRelativePath(relPath);
+  const root = path.resolve(rootDir);
+  const destination = path.resolve(root, ...relPath.split('/'));
+  const relative = path.relative(root, destination);
+  if (
+    relative === '' ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error('Local SFTP destination escapes the selected directory');
+  }
+  return destination;
+}
+
 async function sftpList(sessionId, dirPath) {
   const sftp = await getSftp(sessionId);
   return new Promise((resolve, reject) => {
@@ -331,7 +369,7 @@ async function sftpList(sessionId, dirPath) {
       if (err) return reject(err);
 
       const entries = items.map(({ filename, attrs }) => ({
-        name: filename,
+        name: assertSafeSftpName(filename),
         type: attrs.isDirectory() ? 'dir' : attrs.isSymbolicLink() ? 'link' : 'file',
         size: attrs.size,
         mtime: attrs.mtime * 1000,
@@ -403,6 +441,7 @@ async function sftpIsDir(sessionId, remotePath) {
 }
 
 function joinRemotePath(base, relPath) {
+  assertSafeRelativePath(relPath);
   return (base === '/' ? '' : base) + '/' + relPath;
 }
 
@@ -444,8 +483,9 @@ async function walkRemoteDir(sftp, rootDir) {
       sftp.readdir(dir, (err, list) => (err ? reject(err) : resolve(list)));
     });
     for (const item of items) {
-      const relPath = rel ? `${rel}/${item.filename}` : item.filename;
-      const abs = joinRemotePath(dir, item.filename);
+      const filename = assertSafeSftpName(item.filename);
+      const relPath = rel ? `${rel}/${filename}` : filename;
+      const abs = joinRemotePath(dir, filename);
       if (item.attrs.isDirectory()) {
         dirs.push(relPath);
         await walk(abs, relPath);
@@ -492,12 +532,12 @@ async function sftpDownloadDir(sessionId, remoteDir, localDir, onStep) {
 
   await fsp.mkdir(localDir, { recursive: true });
   for (const relDir of dirs) {
-    await fsp.mkdir(path.join(localDir, relDir), { recursive: true });
+    await fsp.mkdir(resolveLocalChild(localDir, relDir), { recursive: true });
   }
 
   let doneBytes = 0;
   for (const file of files) {
-    const localPath = path.join(localDir, file.relPath);
+    const localPath = resolveLocalChild(localDir, file.relPath);
     await new Promise((resolve, reject) => {
       sftp.fastGet(
         file.abs,
@@ -573,4 +613,7 @@ module.exports = {
   sftpUploadDir,
   sftpDownloadDir,
   sftpTransferRemoteDir,
+  assertSafeSftpName,
+  joinRemotePath,
+  resolveLocalChild,
 };

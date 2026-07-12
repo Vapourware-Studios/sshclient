@@ -277,7 +277,7 @@ function runTransfer(win, { sessionId, kind, name, destSessionId }, startFn) {
 }
 
 function joinRemote(dir, name) {
-  return (dir === '/' ? '' : dir) + '/' + name;
+  return ssh.joinRemotePath(dir, name);
 }
 
 ipcMain.handle('sftp:home', async (event, sessionId) => {
@@ -327,11 +327,13 @@ ipcMain.handle('sftp:upload', async (event, { sessionId, remoteDir }) => {
 // no save dialog involved.
 ipcMain.handle('sftp:downloadTo', async (event, { sessionId, remotePath, localDir, name }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
+  ssh.assertSafeSftpName(name);
+  const localPath = ssh.resolveLocalChild(localDir, name);
   const isDir = await ssh.sftpIsDir(sessionId, remotePath).catch(() => false);
   const transferId = runTransfer(win, { sessionId, kind: 'download', name }, (onStep) =>
     isDir
-      ? ssh.sftpDownloadDir(sessionId, remotePath, path.join(localDir, name), onStep)
-      : ssh.sftpDownload(sessionId, remotePath, path.join(localDir, name), onStep)
+      ? ssh.sftpDownloadDir(sessionId, remotePath, localPath, onStep)
+      : ssh.sftpDownload(sessionId, remotePath, localPath, onStep)
   );
   return { transferId };
 });
@@ -359,6 +361,8 @@ ipcMain.handle(
   'sftp:transferRemote',
   async (event, { sourceSessionId, sourcePath, destSessionId, destDir, name }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
+    ssh.assertSafeSftpName(name);
+    const destPath = joinRemote(destDir, name);
     const isDir = await ssh.sftpIsDir(sourceSessionId, sourcePath).catch(() => false);
     const transferId = runTransfer(
       win,
@@ -369,10 +373,10 @@ ipcMain.handle(
               sourceSessionId,
               sourcePath,
               destSessionId,
-              joinRemote(destDir, name),
+              destPath,
               onStep
             )
-          : ssh.sftpTransferRemote(sourceSessionId, sourcePath, destSessionId, joinRemote(destDir, name), onStep)
+          : ssh.sftpTransferRemote(sourceSessionId, sourcePath, destSessionId, destPath, onStep)
     );
     return { transferId };
   }
