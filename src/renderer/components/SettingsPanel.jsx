@@ -1,12 +1,14 @@
-import { Sparkles } from 'lucide-react';
+import { Moon, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { useGlassSettings } from '@/lib/glass-settings.jsx';
+import { useTheme } from '@/lib/theme-settings.jsx';
 
 export default function SettingsPanel() {
   const { enabled, intensity, setEnabled, setIntensity } = useGlassSettings();
+  const { isDark, setIsDark } = useTheme();
 
   return (
     <div className="h-full overflow-y-auto p-4">
@@ -15,6 +17,21 @@ export default function SettingsPanel() {
           <h2 className="text-lg font-semibold">Settings</h2>
           <p className="text-sm text-muted-foreground">App preferences.</p>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Moon className="size-4" /> Appearance
+            </CardTitle>
+            <CardDescription>Controls the colour theme of the app.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+              <Checkbox checked={isDark} onCheckedChange={(v) => setIsDark(Boolean(v))} />
+              Dark mode
+            </label>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
