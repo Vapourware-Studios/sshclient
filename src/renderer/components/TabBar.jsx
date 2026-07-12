@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Terminal as TerminalIcon, X, Loader2, Home, Plus, Folder } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 
@@ -24,9 +25,29 @@ function Tab({ active, onClick, children }) {
 }
 
 export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewConnection }) {
+  // In macOS full screen the traffic lights hide, so the left padding that
+  // clears them becomes dead space — drop it while full screen is on, and
+  // bring it back when the window leaves full screen.
+  const [fullScreen, setFullScreen] = useState(false);
+
+  useEffect(() => {
+    if (!IS_MAC || typeof window.api.onFullScreenChange !== 'function') return;
+    let alive = true;
+    window.api.windowIsFullScreen().then((fs) => {
+      if (alive) setFullScreen(Boolean(fs));
+    });
+    const unsub = window.api.onFullScreenChange((payload) => setFullScreen(payload.fullScreen));
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, []);
+
   return (
     <div
-      className={`flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pr-3 ${IS_MAC ? 'pl-24' : 'pl-3'}`}
+      className={`flex h-11 shrink-0 items-center gap-1 border-b bg-muted/40 pr-3 transition-[padding] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        IS_MAC && !fullScreen ? 'pl-24' : 'pl-3'
+      }`}
       style={{ WebkitAppRegion: 'drag' }}
     >
       {tabs.filter((t) => t.constant).map((tab) => {

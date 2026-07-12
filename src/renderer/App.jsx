@@ -39,6 +39,18 @@ export default function App() {
     refreshVaultStatus();
   }, []);
 
+  // A file dropped anywhere outside a real drop zone would make Electron
+  // navigate the whole window to that file — swallow stray drops globally.
+  useEffect(() => {
+    const prevent = (e) => e.preventDefault();
+    document.addEventListener('dragover', prevent);
+    document.addEventListener('drop', prevent);
+    return () => {
+      document.removeEventListener('dragover', prevent);
+      document.removeEventListener('drop', prevent);
+    };
+  }, []);
+
   useEffect(() => {
     if (vaultStatus?.unlocked) refreshHosts();
   }, [vaultStatus?.unlocked]);

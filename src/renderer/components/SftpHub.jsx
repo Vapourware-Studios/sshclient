@@ -69,6 +69,9 @@ function EntryIcon({ type }) {
 
 // One side of the dual-pane browser. Purely presentational: the parent owns
 // the path/entries state and tells it what happens on navigate/transfer.
+// File rows can be dragged out (stamped with this pane's `dragType`), and
+// payloads carrying the opposite pane's type can be dropped anywhere on the
+// file list to transfer into the folder currently open here.
 function FilePane({
   title,
   TitleIcon,
@@ -81,7 +84,36 @@ function FilePane({
   actionTitle,
   ActionIcon,
   onAction,
+  dragType,
+  dragExtra,
+  acceptType,
+  onDropEntry,
+  onDropFiles,
 }) {
+  const [dropReady, setDropReady] = useState(false);
+  // Drag events fire enter/leave for every child row the drag passes over;
+  // counting them is the standard way to know when the drag truly left.
+  const dragDepth = useRef(0);
+
+  function accepts(e) {
+    return (
+      Boolean(acceptType && e.dataTransfer.types.includes(acceptType)) ||
+      Boolean(onDropFiles && e.dataTransfer.types.includes('Files'))
+    );
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDropReady(false);
+    const raw = acceptType ? e.dataTransfer.getData(acceptType) : '';
+    if (raw) {
+      onDropEntry?.(JSON.parse(raw));
+    } else if (onDropFiles && e.dataTransfer.files.length > 0) {
+      onDropFiles([...e.dataTransfer.files]);
+    }
+  }
+
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
@@ -130,13 +162,44 @@ function FilePane({
         <p className="border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive">{error}</p>
       )}
 
-      <div key={path} className="flex-1 overflow-y-auto py-1">
+      <div
+        key={path}
+        onDragEnter={(e) => {
+          if (!accepts(e)) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDropReady(true);
+        }}
+        onDragOver={(e) => {
+          if (!accepts(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={(e) => {
+          if (!accepts(e)) return;
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDropReady(false);
+        }}
+        onDrop={handleDrop}
+        className={`flex-1 overflow-y-auto py-1 ${
+          dropReady ? 'bg-primary/5 ring-2 ring-inset ring-primary/40' : ''
+        }`}
+      >
         {entries.length === 0 && !loading && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">This folder is empty</p>
         )}
         {entries.map((entry, i) => (
           <div
             key={entry.name}
+            draggable={Boolean(dragType) && entry.type !== 'dir'}
+            onDragStart={(e) => {
+              if (!dragType) return;
+              e.dataTransfer.effectAllowed = 'copy';
+              e.dataTransfer.setData(
+                dragType,
+                JSON.stringify({ name: entry.name, path: joinPath(path, entry.name), ...dragExtra })
+              );
+            }}
             onDoubleClick={() => entry.type !== 'file' && onNavigate(joinPath(path, entry.name))}
             className="group flex cursor-default items-center gap-2.5 px-3 py-1.5 text-sm animate-rise-in hover:bg-accent"
             style={{ animationDelay: `${Math.min(i, 20) * 15}ms` }}
@@ -271,6 +334,15 @@ function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload })
     if (refreshTick > 0 && pathRef.current) loadDir(pathRef.current);
   }, [refreshTick]);
 
+  // Anything dropped on this pane uploads into the folder currently open
+  // here. Works for rows dragged over from the Local pane and for files
+  // dragged straight in from Finder/Explorer.
+  function uploadPaths(localPaths) {
+    if (pathRef.current && localPaths.length > 0) {
+      window.api.sftpUploadPaths(sessionId, pathRef.current, localPaths);
+    }
+  }
+
   return (
     <FilePane
       title={title}
@@ -284,6 +356,11 @@ function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload })
       actionTitle="Download to local folder"
       ActionIcon={ArrowDownToLine}
       onAction={(entry) => path && onDownload(joinPath(path, entry.name), entry.name)}
+      dragType="application/x-sftp-remote"
+      dragExtra={{ sessionId }}
+      acceptType="application/x-sftp-local"
+      onDropEntry={(payload) => uploadPaths([payload.path])}
+      onDropFiles={(files) => uploadPaths(files.map((f) => window.api.pathForFile(f)))}
     />
   );
 }
@@ -642,6 +719,12 @@ export default function SftpHub({ hosts, visible }) {
               actionTitle="Upload to remote folder"
               ActionIcon={ArrowUpFromLine}
               onAction={uploadEntry}
+              dragType="application/x-sftp-local"
+              acceptType="application/x-sftp-remote"
+              onDropEntry={(payload) =>
+                localPath &&
+                window.api.sftpDownloadTo(payload.sessionId, payload.path, localPath, payload.name)
+              }
             />
 
             <div className="w-px shrink-0 bg-border" />
