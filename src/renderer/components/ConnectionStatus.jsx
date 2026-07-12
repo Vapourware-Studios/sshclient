@@ -149,7 +149,7 @@ export function ConnectingView({ title, stage, logs, onCancel }) {
   const currentIndex = usePacedIndex(targetIndex < 0 ? 0 : targetIndex);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 px-6 text-center animate-view-in">
+    <div className="flex h-full flex-col items-center justify-center gap-6 bg-background px-6 text-center animate-view-in">
       <div className="relative flex size-20 items-center justify-center">
         <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo" />
         <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo [animation-delay:1.2s]" />
@@ -182,7 +182,7 @@ export function HostKeyPromptView({ title, info, onTrust, onReject }) {
   const changed = info?.changed;
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center animate-view-in">
+    <div className="flex h-full flex-col items-center justify-center gap-5 bg-background px-6 text-center animate-view-in">
       <div
         className={`relative flex size-16 items-center justify-center rounded-full animate-step-pop ${
           changed ? 'bg-destructive/10' : 'bg-primary/10'
@@ -233,7 +233,7 @@ export function ConnectErrorView({ title, message, logs, onRetry, onClose }) {
   const [showLogs, setShowLogs] = useState(false);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center animate-view-in">
+    <div className="flex h-full flex-col items-center justify-center gap-5 bg-background px-6 text-center animate-view-in">
       <div className="flex size-16 items-center justify-center rounded-full bg-destructive/10 animate-step-pop">
         <TriangleAlert className="size-7 text-destructive" />
       </div>

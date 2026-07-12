@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { utils: sshUtils } = require('ssh2');
 const ssh = require('./ssh');
 const vault = require('./vault');
+const liquidGlass = require('electron-liquid-glass');
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -15,7 +16,7 @@ function createWindow() {
     minHeight: 500,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 16 },
-    backgroundColor: '#0d1117',
+    transparent: true,
     icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
@@ -25,14 +26,23 @@ function createWindow() {
     },
   });
 
-  // The traffic lights disappear in macOS full screen; tell the renderer so
-  // the tab bar can reclaim the space it normally reserves for them.
   win.on('enter-full-screen', () =>
     win.webContents.send('window:fullscreen', { fullScreen: true })
   );
   win.on('leave-full-screen', () =>
     win.webContents.send('window:fullscreen', { fullScreen: false })
   );
+
+  win.setWindowButtonVisibility(true);
+
+  win.webContents.once('did-finish-load', () => {
+    const glassId = liquidGlass.addView(win.getNativeWindowHandle(), {
+      cornerRadius: 20,
+      tintColor: '#ffffff0d',
+      opaque: false,
+    });
+    liquidGlass.unstable_setVariant?.(glassId, 0);
+  });
 
   if (process.argv.includes('--dev')) {
     win.loadURL('http://localhost:5173');

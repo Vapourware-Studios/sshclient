@@ -13,7 +13,7 @@ export default function TerminalView({ sessionId, active }) {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-      theme: { background: '#0d1117' },
+      theme: { background: '#00000000' },
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -94,7 +94,7 @@ export default function TerminalView({ sessionId, active }) {
 
   return (
     <div
-      className={`absolute inset-0 p-2 ${active ? '' : 'invisible pointer-events-none'}`}
+      className={`absolute inset-0 bg-background p-2 ${active ? '' : 'invisible pointer-events-none'}`}
       ref={containerRef}
     />
   );
