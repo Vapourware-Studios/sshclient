@@ -31,7 +31,27 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('sftp:uploadPaths', { sessionId, remoteDir, localPaths }),
   sftpDownloadTo: (sessionId, remotePath, localDir, name) =>
     ipcRenderer.invoke('sftp:downloadTo', { sessionId, remotePath, localDir, name }),
+  sftpTransferRemote: (sourceSessionId, sourcePath, destSessionId, destDir, name) =>
+    ipcRenderer.invoke('sftp:transferRemote', { sourceSessionId, sourcePath, destSessionId, destDir, name }),
   onSftpTransfer: (callback) => subscribe('sftp:transfer', callback),
+
+  localConnect: (config) => ipcRenderer.invoke('local:connect', config),
+  localWrite: (sessionId, data) => ipcRenderer.invoke('local:write', { sessionId, data }),
+  localResize: (sessionId, cols, rows) => ipcRenderer.invoke('local:resize', { sessionId, cols, rows }),
+  localDisconnect: (sessionId) => ipcRenderer.invoke('local:disconnect', sessionId),
+  localAttach: (sessionId) => ipcRenderer.invoke('local:attach', sessionId),
+  onLocalData: (callback) => subscribe('local:data', callback),
+  onLocalClosed: (callback) => subscribe('local:closed', callback),
+  onLocalError: (callback) => subscribe('local:error', callback),
+
+  serialList: () => ipcRenderer.invoke('serial:list'),
+  serialConnect: (config) => ipcRenderer.invoke('serial:connect', config),
+  serialWrite: (sessionId, data) => ipcRenderer.invoke('serial:write', { sessionId, data }),
+  serialDisconnect: (sessionId) => ipcRenderer.invoke('serial:disconnect', sessionId),
+  serialAttach: (sessionId) => ipcRenderer.invoke('serial:attach', sessionId),
+  onSerialData: (callback) => subscribe('serial:data', callback),
+  onSerialClosed: (callback) => subscribe('serial:closed', callback),
+  onSerialError: (callback) => subscribe('serial:error', callback),
 
   fsHome: () => ipcRenderer.invoke('fs:home'),
   fsList: (path) => ipcRenderer.invoke('fs:list', path),
@@ -56,6 +76,7 @@ contextBridge.exposeInMainWorld('api', {
   keysReveal: (id) => ipcRenderer.invoke('keys:reveal', id),
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
+  selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
 
   windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
   onFullScreenChange: (callback) => subscribe('window:fullscreen', callback),

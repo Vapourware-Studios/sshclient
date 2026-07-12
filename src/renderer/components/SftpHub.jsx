@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   ArrowDownToLine,
+  ArrowRightLeft,
   ArrowUpFromLine,
   Check,
   ChevronRight,
@@ -131,7 +132,7 @@ function FilePane({
           <FolderUp className="size-4" />
         </button>
 
-        <div className="flex min-w-0 flex-1 items-center overflow-x-auto text-xs">
+        <div className="flex min-w-0 flex-1 items-center overflow-x-auto text-xs custom-scrollbar">
           {path &&
             crumbsOf(path).map((crumb, i) => (
               <span key={crumb.path} className="flex shrink-0 items-center">
@@ -181,7 +182,7 @@ function FilePane({
           if (dragDepth.current === 0) setDropReady(false);
         }}
         onDrop={handleDrop}
-        className={`flex-1 overflow-y-auto py-1 ${
+        className={`custom-scrollbar flex-1 overflow-y-auto py-1 ${
           dropReady ? 'bg-primary/5 ring-2 ring-inset ring-primary/40' : ''
         }`}
       >
@@ -191,7 +192,7 @@ function FilePane({
         {entries.map((entry, i) => (
           <div
             key={entry.name}
-            draggable={Boolean(dragType) && entry.type !== 'dir'}
+            draggable={Boolean(dragType)}
             onDragStart={(e) => {
               if (!dragType) return;
               e.dataTransfer.effectAllowed = 'copy';
@@ -224,9 +225,7 @@ function FilePane({
             <button
               onClick={() => onAction(entry)}
               title={actionTitle}
-              className={`shrink-0 rounded p-1 text-muted-foreground hover:text-foreground ${
-                entry.type === 'dir' ? 'invisible' : 'invisible group-hover:visible'
-              }`}
+              className="invisible shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:visible"
             >
               <ActionIcon className="size-3.5" />
             </button>
@@ -245,6 +244,8 @@ function TransferRow({ transfer, onDismiss }) {
     <div className="flex items-center gap-3 px-4 py-2 animate-rise-in">
       {kind === 'download' ? (
         <ArrowDownToLine className="size-4 shrink-0 text-sky-400" />
+      ) : kind === 'remote-transfer' ? (
+        <ArrowRightLeft className="size-4 shrink-0 text-violet-400" />
       ) : (
         <ArrowUpFromLine className="size-4 shrink-0 text-emerald-400" />
       )}
@@ -365,13 +366,42 @@ function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload })
   );
 }
 
-function ConnectionChip({ connection, active, onSelect, onClose }) {
+function ConnectionChip({ connection, active, onSelect, onClose, onDropRemote, onDropLocal }) {
+  const [dropReady, setDropReady] = useState(false);
+
+  function accepts(e) {
+    return (
+      e.dataTransfer.types.includes('application/x-sftp-remote') ||
+      e.dataTransfer.types.includes('application/x-sftp-local')
+    );
+  }
+
   return (
     <div
       onClick={onSelect}
+      onDragEnter={(e) => {
+        if (!accepts(e)) return;
+        e.preventDefault();
+        setDropReady(true);
+      }}
+      onDragOver={(e) => {
+        if (!accepts(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }}
+      onDragLeave={() => setDropReady(false)}
+      onDrop={(e) => {
+        if (!accepts(e)) return;
+        e.preventDefault();
+        setDropReady(false);
+        const remoteRaw = e.dataTransfer.getData('application/x-sftp-remote');
+        const localRaw = e.dataTransfer.getData('application/x-sftp-local');
+        if (remoteRaw) onDropRemote(JSON.parse(remoteRaw));
+        else if (localRaw) onDropLocal(JSON.parse(localRaw));
+      }}
       className={`flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-sm ${
         active ? 'border bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
-      }`}
+      } ${dropReady ? 'ring-2 ring-inset ring-primary/50 bg-primary/10' : ''}`}
     >
       {connection.status === 'connecting' ? (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
@@ -498,9 +528,13 @@ export default function SftpHub({ hosts, visible }) {
       });
 
       if (t.done) {
-        // A finished transfer means one side has a new file — refresh it.
         if (t.kind === 'upload') {
           setRemoteRefresh((prev) => ({ ...prev, [t.sessionId]: (prev[t.sessionId] ?? 0) + 1 }));
+        } else if (t.kind === 'remote-transfer') {
+          setRemoteRefresh((prev) => ({
+            ...prev,
+            [t.destSessionId]: (prev[t.destSessionId] ?? 0) + 1,
+          }));
         } else if (localPathRef.current) {
           loadLocal(localPathRef.current);
         }
@@ -562,6 +596,25 @@ export default function SftpHub({ hosts, visible }) {
     window.api.sftpUploadPaths(selected.sessionId, remoteDir, [joinPath(localPath, entry.name)]);
   }
 
+  function chipDropRemote(destConnection, payload) {
+    if (payload.sessionId === destConnection.sessionId) return;
+    const destDir = remotePaths[destConnection.sessionId];
+    if (!destDir) return;
+    window.api.sftpTransferRemote(
+      payload.sessionId,
+      payload.path,
+      destConnection.sessionId,
+      destDir,
+      payload.name
+    );
+  }
+
+  function chipDropLocal(destConnection, payload) {
+    const destDir = remotePaths[destConnection.sessionId];
+    if (!destDir) return;
+    window.api.sftpUploadPaths(destConnection.sessionId, destDir, [payload.path]);
+  }
+
   function downloadFrom(sessionId) {
     return (remotePath, name) => {
       if (localPathRef.current) {
@@ -586,6 +639,8 @@ export default function SftpHub({ hosts, visible }) {
               setPicking(false);
             }}
             onClose={() => closeConnection(connection.sessionId)}
+            onDropRemote={(payload) => chipDropRemote(connection, payload)}
+            onDropLocal={(payload) => chipDropLocal(connection, payload)}
           />
         ))}
         <button
@@ -602,7 +657,7 @@ export default function SftpHub({ hosts, visible }) {
       </div>
 
       {showPicker ? (
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
           <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Connect for file transfer
           </p>
@@ -752,7 +807,7 @@ export default function SftpHub({ hosts, visible }) {
           </div>
 
           {visibleTransfers.length > 0 && (
-            <div className="max-h-40 shrink-0 overflow-y-auto border-t bg-muted/30">
+            <div className="custom-scrollbar max-h-40 shrink-0 overflow-y-auto border-t bg-muted/30">
               {visibleTransfers.map((transfer) => (
                 <TransferRow
                   key={transfer.id}
