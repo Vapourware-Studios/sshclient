@@ -4,7 +4,7 @@ import KeychainView from '@/components/KeychainView';
 import SettingsPanel from '@/components/SettingsPanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Search, Plus, Server, Pencil, Trash2, ChevronRight } from 'lucide-react';
+import { Search, Plus, Server, Terminal, Pencil, Trash2, ChevronRight } from 'lucide-react';
 
 function HostRow({ host, onConnect, onEdit, onDelete }) {
   const address = `${host.username ? `${host.username}@` : ''}${host.host}${
@@ -53,7 +53,7 @@ function HostRow({ host, onConnect, onEdit, onDelete }) {
   );
 }
 
-function HostsPanel({ hosts, onConnect, onEdit, onDelete, onNewConnection }) {
+function HostsPanel({ hosts, onConnect, onEdit, onDelete, onNewConnection, onOpenLocalTerminal }) {
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -76,6 +76,9 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onNewConnection }) {
             className="pl-8"
           />
         </div>
+        <Button onClick={onOpenLocalTerminal} variant="outline" className="shrink-0">
+          <Terminal className="size-4" /> Local Terminal
+        </Button>
         <Button onClick={onNewConnection} className="shrink-0">
           <Plus className="size-4" /> New Host
         </Button>
@@ -93,6 +96,9 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onNewConnection }) {
                 Add your first host to connect over SSH.
               </p>
             </div>
+            <Button size="sm" onClick={onOpenLocalTerminal} variant="outline">
+              <Terminal className="size-4" /> Local Terminal
+            </Button>
             <Button size="sm" onClick={onNewConnection}>
               <Plus className="size-4" /> New Host
             </Button>
@@ -150,6 +156,7 @@ export default function VaultView({
   onDelete,
   onNewConnection,
   onLockVault,
+  onOpenLocalTerminal,
 }) {
   const [section, setSection] = useState('hosts');
 
@@ -165,6 +172,7 @@ export default function VaultView({
             onEdit={onEdit}
             onDelete={onDelete}
             onNewConnection={onNewConnection}
+            onOpenLocalTerminal={onOpenLocalTerminal}
           />
         ) : section === 'keychain' ? (
           <KeychainView />

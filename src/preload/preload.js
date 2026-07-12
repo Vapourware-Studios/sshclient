@@ -57,6 +57,13 @@ contextBridge.exposeInMainWorld('api', {
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
 
+  localSpawn: (cols, rows) => ipcRenderer.invoke('local:spawn', { cols, rows }),
+  localWrite: (sessionId, data) => ipcRenderer.invoke('local:write', { sessionId, data }),
+  localResize: (sessionId, cols, rows) => ipcRenderer.invoke('local:resize', { sessionId, cols, rows }),
+  localClose: (sessionId) => ipcRenderer.invoke('local:close', sessionId),
+  onLocalData: (callback) => subscribe('local:data', callback),
+  onLocalClosed: (callback) => subscribe('local:closed', callback),
+
   windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
   onFullScreenChange: (callback) => subscribe('window:fullscreen', callback),
 });

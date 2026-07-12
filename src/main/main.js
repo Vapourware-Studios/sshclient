@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { utils: sshUtils } = require('ssh2');
 const ssh = require('./ssh');
 const vault = require('./vault');
+const pty = require('node-pty');
 const isMac = process.platform === 'darwin';
 let liquidGlass = null;
 if (isMac) {
@@ -140,6 +141,56 @@ ipcMain.handle('ssh:disconnect', (event, sessionId) => {
 });
 
 ipcMain.handle('ssh:attach', (event, sessionId) => ssh.attach(sessionId));
+
+// ── Local terminal (node-pty) ──────────────────────────────────────────
+const localShells = new Map();
+
+ipcMain.handle('local:spawn', (event, { cols, rows }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const sessionId = crypto.randomUUID();
+  const shell = process.env.SHELL || '/bin/zsh';
+
+  try {
+    const ptyProc = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: cols || 80,
+      rows: rows || 24,
+      cwd: os.homedir(),
+      env: process.env,
+    });
+
+    localShells.set(sessionId, ptyProc);
+
+    ptyProc.onData((data) => {
+      win?.webContents.send('local:data', { sessionId, data });
+    });
+
+    ptyProc.onExit(({ exitCode }) => {
+      win?.webContents.send('local:closed', { sessionId, exitCode });
+      localShells.delete(sessionId);
+    });
+
+    return { sessionId };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('local:write', (event, { sessionId, data }) => {
+  localShells.get(sessionId)?.write(data);
+});
+
+ipcMain.handle('local:resize', (event, { sessionId, cols, rows }) => {
+  localShells.get(sessionId)?.resize(cols, rows);
+});
+
+ipcMain.handle('local:close', (event, sessionId) => {
+  const p = localShells.get(sessionId);
+  if (p) {
+    p.kill();
+    localShells.delete(sessionId);
+  }
+});
 
 // Lets the renderer know the starting state (the events above only cover
 // transitions that happen after the page has loaded).
