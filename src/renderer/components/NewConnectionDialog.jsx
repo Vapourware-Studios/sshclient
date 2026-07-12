@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
 import { FolderOpen, KeyRound } from 'lucide-react';
@@ -293,11 +294,10 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
           {mode === 'add' && (
             <div className="flex flex-col gap-2">
               <Label htmlFor="save-toggle" className="flex items-center gap-2 font-normal">
-                <input
+                <Checkbox
                   id="save-toggle"
-                  type="checkbox"
                   checked={form.saveToVault}
-                  onChange={(e) => update('saveToVault', e.target.checked)}
+                  onCheckedChange={(checked) => update('saveToVault', checked === true)}
                 />
                 Save this host to the vault
               </Label>

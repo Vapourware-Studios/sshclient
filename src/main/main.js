@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const os = require('os');
 const fsp = require('fs/promises');
@@ -435,7 +435,18 @@ ipcMain.handle('dialog:selectPrivateKey', async (event) => {
   return { path: result.filePaths[0] };
 });
 
+function buildMenu() {
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }])
+    );
+  } else {
+    Menu.setApplicationMenu(null);
+  }
+}
+
 app.whenReady().then(() => {
+  buildMenu();
   if (process.platform === 'darwin') {
     app.dock.setIcon(path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'));
   }
