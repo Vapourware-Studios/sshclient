@@ -8,7 +8,6 @@ const ssh = require('./ssh');
 const localTerm = require('./localTerm');
 const serial = require('./serial');
 const vault = require('./vault');
-const pty = require('node-pty');
 const isMac = process.platform === 'darwin';
 let liquidGlass = null;
 if (isMac) {

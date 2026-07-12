@@ -399,9 +399,13 @@ function deleteKnownHost(host, port) {
   return listKnownHosts();
 }
 
+const ENCRYPTED_TABLES = { snippets: 'snippets', session_history: 'session_history' };
+
 function listEncrypted(table) {
   requireUnlocked();
-  return db.prepare(`SELECT * FROM ${table} ORDER BY created_at DESC`).all().map((row) => ({
+  const safeName = ENCRYPTED_TABLES[table];
+  if (!safeName) throw new Error(`Unknown encrypted table: ${table}`);
+  return db.prepare(`SELECT * FROM ${safeName} ORDER BY created_at DESC`).all().map((row) => ({
     id: row.id,
     ...decryptJSON(derivedKey, { iv: row.data_iv, authTag: row.data_auth_tag, ciphertext: row.data_ciphertext }),
     createdAt: row.created_at,
@@ -435,7 +439,7 @@ function saveSessionHistory(recording) {
   const id = recording.id || crypto.randomUUID();
   const createdAt = recording.startedAt || Date.now();
   const enc = encryptJSON(derivedKey, recording);
-  db.prepare('INSERT INTO session_history VALUES (?, ?, ?, ?, ?)')
+  db.prepare('INSERT OR IGNORE INTO session_history VALUES (?, ?, ?, ?, ?)')
     .run(id, enc.iv, enc.authTag, enc.ciphertext, createdAt);
   return id;
 }
