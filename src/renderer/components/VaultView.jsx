@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import KeychainView from '@/components/KeychainView';
+import SettingsPanel from '@/components/SettingsPanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Search, Plus, Server, Pencil, Trash2, ChevronRight } from 'lucide-react';
@@ -129,7 +130,6 @@ const SECTION_LABELS = {
   'known-hosts': 'Known Hosts',
   snippets: 'Snippets',
   history: 'History',
-  settings: 'Settings',
 };
 
 function PlaceholderPanel({ section }) {
@@ -168,6 +168,8 @@ export default function VaultView({
           />
         ) : section === 'keychain' ? (
           <KeychainView />
+        ) : section === 'settings' ? (
+          <SettingsPanel />
         ) : (
           <PlaceholderPanel section={section} />
         )}

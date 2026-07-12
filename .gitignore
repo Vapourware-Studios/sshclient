@@ -83,6 +83,9 @@ out
 dist
 .output
 
+# electron-builder packaged app output
+release/
+
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and not Next.js
@@ -145,3 +148,4 @@ vite.config.ts.timestamp-*
 .claude
 
 package-lock.json
+.DS_Store
