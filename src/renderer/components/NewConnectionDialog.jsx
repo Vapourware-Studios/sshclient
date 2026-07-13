@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
+import { ColorPicker } from '@/components/ColorPicker';
 import { FolderOpen, KeyRound, Server, TerminalSquare, Cable, RefreshCw } from 'lucide-react';
 import { keyTypeLabel } from '@/lib/keys';
 
@@ -18,6 +19,7 @@ const EMPTY_FORM = {
   passphrase: '',
   keyId: '',
   saveToVault: false,
+  color: null,
 };
 
 const EMPTY_LOCAL_FORM = { label: '', shell: '', cwd: '' };
@@ -44,7 +46,14 @@ function buildCredential(authType, form) {
   return cred;
 }
 
-export default function NewConnectionDialog({ open, onOpenChange, onConnect, editingHost, onSaved }) {
+export default function NewConnectionDialog({
+  open,
+  onOpenChange,
+  onConnect,
+  editingHost,
+  onSaved,
+  initialType = 'ssh',
+}) {
   const mode = editingHost ? 'edit' : 'add';
   const [connType, setConnType] = useState('ssh');
   const [form, setForm] = useState(EMPTY_FORM);
@@ -77,19 +86,20 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
         privateKeyPath: editingHost.privateKeyPath || '',
         keyId: editingHost.keyId || '',
         saveToVault: true,
+        color: editingHost.color || null,
       });
       setAuthType(
         editingHost.keyId ? 'keychain' : editingHost.hasPrivateKey ? 'key' : 'password'
       );
     } else {
-      setConnType('ssh');
+      setConnType(initialType);
       setForm(EMPTY_FORM);
       setAuthType('password');
       setLocalForm(EMPTY_LOCAL_FORM);
       setSerialForm(EMPTY_SERIAL_FORM);
       refreshSerialPorts();
     }
-  }, [open, editingHost]);
+  }, [open, editingHost, initialType]);
 
   async function refreshSerialPorts() {
     setSerialPortsLoading(true);
@@ -172,6 +182,7 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
           host: form.host,
           port: Number(form.port) || 22,
           username: form.username,
+          color: form.color,
           ...credential,
         });
         if (result.error) throw new Error(result.error);
@@ -187,6 +198,7 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
           host: form.host,
           port: Number(form.port) || 22,
           username: form.username,
+          color: form.color,
           ...credential,
         });
         if (result.error) throw new Error(result.error);
@@ -510,11 +522,17 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
                     Save this host to the vault
                   </Label>
                   {form.saveToVault && (
-                    <Input
-                      placeholder="Label (optional)"
-                      value={form.label}
-                      onChange={(e) => update('label', e.target.value)}
-                    />
+                    <>
+                      <Input
+                        placeholder="Label (optional)"
+                        value={form.label}
+                        onChange={(e) => update('label', e.target.value)}
+                      />
+                      <div className="flex flex-col gap-2 pt-1">
+                        <Label>Icon color</Label>
+                        <ColorPicker value={form.color} onChange={(color) => update('color', color)} />
+                      </div>
+                    </>
                   )}
                 </div>
               )}
@@ -528,6 +546,10 @@ export default function NewConnectionDialog({ open, onOpenChange, onConnect, edi
                     value={form.label}
                     onChange={(e) => update('label', e.target.value)}
                   />
+                  <div className="flex flex-col gap-2 pt-1">
+                    <Label>Icon color</Label>
+                    <ColorPicker value={form.color} onChange={(color) => update('color', color)} />
+                  </div>
                 </div>
               )}
             </>

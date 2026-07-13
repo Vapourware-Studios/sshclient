@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { toneForId, toneStyle } from '@/lib/tone';
 import {
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRightLeft,
   ArrowUpFromLine,
   Check,
@@ -10,10 +13,12 @@ import {
   Folder,
   FolderUp,
   HardDrive,
+  Home,
   Link as LinkIcon,
   Loader2,
-  Plus,
   RefreshCw,
+  Repeat,
+  Search,
   Server,
   ShieldQuestion,
   TriangleAlert,
@@ -68,11 +73,8 @@ function EntryIcon({ type }) {
   return <File className="size-4 shrink-0 text-muted-foreground" />;
 }
 
-// One side of the dual-pane browser. Purely presentational: the parent owns
-// the path/entries state and tells it what happens on navigate/transfer.
-// File rows can be dragged out (stamped with this pane's `dragType`), and
-// payloads carrying the opposite pane's type can be dropped anywhere on the
-// file list to transfer into the folder currently open here.
+const DRAG_TYPE = 'application/x-sftp-item';
+
 function FilePane({
   title,
   TitleIcon,
@@ -85,11 +87,10 @@ function FilePane({
   actionTitle,
   ActionIcon,
   onAction,
-  dragType,
   dragExtra,
-  acceptType,
   onDropEntry,
   onDropFiles,
+  onChangeSource,
 }) {
   const [dropReady, setDropReady] = useState(false);
   // Drag events fire enter/leave for every child row the drag passes over;
@@ -98,7 +99,7 @@ function FilePane({
 
   function accepts(e) {
     return (
-      Boolean(acceptType && e.dataTransfer.types.includes(acceptType)) ||
+      Boolean(onDropEntry && e.dataTransfer.types.includes(DRAG_TYPE)) ||
       Boolean(onDropFiles && e.dataTransfer.types.includes('Files'))
     );
   }
@@ -107,7 +108,7 @@ function FilePane({
     e.preventDefault();
     dragDepth.current = 0;
     setDropReady(false);
-    const raw = acceptType ? e.dataTransfer.getData(acceptType) : '';
+    const raw = e.dataTransfer.getData(DRAG_TYPE);
     if (raw) {
       onDropEntry?.(JSON.parse(raw));
     } else if (onDropFiles && e.dataTransfer.files.length > 0) {
@@ -157,6 +158,16 @@ function FilePane({
         >
           <RefreshCw className="size-4" />
         </button>
+
+        {onChangeSource && (
+          <button
+            onClick={onChangeSource}
+            title="Change source"
+            className="rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <Repeat className="size-4" />
+          </button>
+        )}
       </div>
 
       {error && (
@@ -192,12 +203,12 @@ function FilePane({
         {entries.map((entry, i) => (
           <div
             key={entry.name}
-            draggable={Boolean(dragType)}
+            draggable={Boolean(dragExtra)}
             onDragStart={(e) => {
-              if (!dragType) return;
+              if (!dragExtra) return;
               e.dataTransfer.effectAllowed = 'copy';
               e.dataTransfer.setData(
-                dragType,
+                DRAG_TYPE,
                 JSON.stringify({ name: entry.name, path: joinPath(path, entry.name), ...dragExtra })
               );
             }}
@@ -222,13 +233,15 @@ function FilePane({
             <span className="hidden w-24 shrink-0 text-right text-xs text-muted-foreground xl:block">
               {formatDate(entry.mtime)}
             </span>
-            <button
-              onClick={() => onAction(entry)}
-              title={actionTitle}
-              className="invisible shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:visible"
-            >
-              <ActionIcon className="size-3.5" />
-            </button>
+            {onAction && ActionIcon && (
+              <button
+                onClick={() => onAction(entry)}
+                title={actionTitle}
+                className="invisible shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:visible"
+              >
+                <ActionIcon className="size-3.5" />
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -296,9 +309,81 @@ function TransferRow({ transfer, onDismiss }) {
   );
 }
 
-// The remote half of the pane pair. Each SFTP connection gets its own
-// instance that stays mounted, so browsing state survives switching.
-function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload }) {
+function LocalPane({ refreshTick, onPathChange, onChangeSource, actionTitle, ActionIcon, onAction }) {
+  const [path, setPath] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const pathRef = useRef(null);
+  pathRef.current = path;
+
+  async function loadDir(nextPath) {
+    setLoading(true);
+    setError(null);
+    const result = await window.api.fsList(nextPath);
+    setLoading(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setPath(nextPath);
+    setEntries(result.entries);
+    onPathChange?.(nextPath);
+  }
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (typeof window.api.fsHome !== 'function') {
+          throw new Error(
+            'The app core was updated — quit and restart it (main-process changes do not hot-reload).'
+          );
+        }
+        const home = await window.api.fsHome();
+        await loadDir(home.path);
+      } catch (err) {
+        setError(err.message);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (refreshTick > 0 && pathRef.current) loadDir(pathRef.current);
+  }, [refreshTick]);
+
+  return (
+    <FilePane
+      title="Local"
+      TitleIcon={HardDrive}
+      path={path}
+      entries={entries}
+      loading={loading}
+      error={error}
+      onNavigate={loadDir}
+      onRefresh={() => path && loadDir(path)}
+      actionTitle={actionTitle}
+      ActionIcon={ActionIcon}
+      onAction={onAction ? (entry) => onAction(joinPath(path, entry.name), entry.name) : undefined}
+      dragExtra={{ kind: 'local' }}
+      onDropEntry={(payload) => {
+        if (payload.kind !== 'remote' || !pathRef.current) return;
+        window.api.sftpDownloadTo(payload.sessionId, payload.path, pathRef.current, payload.name);
+      }}
+      onChangeSource={onChangeSource}
+    />
+  );
+}
+
+function RemotePane({
+  sessionId,
+  title,
+  refreshTick,
+  onPathChange,
+  onChangeSource,
+  actionTitle,
+  ActionIcon,
+  onAction,
+}) {
   const [path, setPath] = useState(null);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -317,7 +402,7 @@ function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload })
     }
     setPath(nextPath);
     setEntries(result.entries);
-    onPathChange(nextPath);
+    onPathChange?.(nextPath);
   }
 
   useEffect(() => {
@@ -335,15 +420,6 @@ function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload })
     if (refreshTick > 0 && pathRef.current) loadDir(pathRef.current);
   }, [refreshTick]);
 
-  // Anything dropped on this pane uploads into the folder currently open
-  // here. Works for rows dragged over from the Local pane and for files
-  // dragged straight in from Finder/Explorer.
-  function uploadPaths(localPaths) {
-    if (pathRef.current && localPaths.length > 0) {
-      window.api.sftpUploadPaths(sessionId, pathRef.current, localPaths);
-    }
-  }
-
   return (
     <FilePane
       title={title}
@@ -354,162 +430,309 @@ function RemotePane({ sessionId, title, refreshTick, onPathChange, onDownload })
       error={error}
       onNavigate={loadDir}
       onRefresh={() => path && loadDir(path)}
-      actionTitle="Download to local folder"
-      ActionIcon={ArrowDownToLine}
-      onAction={(entry) => path && onDownload(joinPath(path, entry.name), entry.name)}
-      dragType="application/x-sftp-remote"
-      dragExtra={{ sessionId }}
-      acceptType="application/x-sftp-local"
-      onDropEntry={(payload) => uploadPaths([payload.path])}
-      onDropFiles={(files) => uploadPaths(files.map((f) => window.api.pathForFile(f)))}
+      actionTitle={actionTitle}
+      ActionIcon={ActionIcon}
+      onAction={onAction ? (entry) => onAction(joinPath(path, entry.name), entry.name) : undefined}
+      dragExtra={{ kind: 'remote', sessionId }}
+      onDropEntry={(payload) => {
+        if (!pathRef.current) return;
+        if (payload.kind === 'local') {
+          window.api.sftpUploadPaths(sessionId, pathRef.current, [payload.path]);
+        } else if (payload.kind === 'remote' && payload.sessionId !== sessionId) {
+          window.api.sftpTransferRemote(payload.sessionId, payload.path, sessionId, pathRef.current, payload.name);
+        }
+      }}
+      onDropFiles={(files) =>
+        pathRef.current &&
+        window.api.sftpUploadPaths(sessionId, pathRef.current, files.map((f) => window.api.pathForFile(f)))
+      }
+      onChangeSource={onChangeSource}
     />
   );
 }
 
-function ConnectionChip({ connection, active, onSelect, onClose, onDropRemote, onDropLocal }) {
-  const [dropReady, setDropReady] = useState(false);
-
-  function accepts(e) {
-    return (
-      e.dataTransfer.types.includes('application/x-sftp-remote') ||
-      e.dataTransfer.types.includes('application/x-sftp-local')
+function HostPicker({ hosts, query, onQueryChange, onPickLocal, onPickHost, onBack, canBack, connectError }) {
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return hosts;
+    return hosts.filter((h) =>
+      [h.label, h.host, h.username].some((v) => v && v.toLowerCase().includes(q))
     );
-  }
+  }, [hosts, query]);
 
   return (
-    <div
-      onClick={onSelect}
-      onDragEnter={(e) => {
-        if (!accepts(e)) return;
-        e.preventDefault();
-        setDropReady(true);
-      }}
-      onDragOver={(e) => {
-        if (!accepts(e)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-      }}
-      onDragLeave={() => setDropReady(false)}
-      onDrop={(e) => {
-        if (!accepts(e)) return;
-        e.preventDefault();
-        setDropReady(false);
-        const remoteRaw = e.dataTransfer.getData('application/x-sftp-remote');
-        const localRaw = e.dataTransfer.getData('application/x-sftp-local');
-        if (remoteRaw) onDropRemote(JSON.parse(remoteRaw));
-        else if (localRaw) onDropLocal(JSON.parse(localRaw));
-      }}
-      className={`flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-sm ${
-        active ? 'border bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'
-      } ${dropReady ? 'ring-2 ring-inset ring-primary/50 bg-primary/10' : ''}`}
-    >
-      {connection.status === 'connecting' ? (
-        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-      ) : connection.status === 'error' ? (
-        <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-      ) : (
-        <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
-      )}
-      <span className="max-w-40 truncate">{connection.title}</span>
-      <X
-        className="size-3.5 hover:text-destructive"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-      />
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex items-center gap-3 border-b px-4 py-3">
+        {canBack && (
+          <button
+            onClick={onBack}
+            title="Back"
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" />
+          </button>
+        )}
+        <p className="flex-1 text-sm font-medium">Select Host</p>
+        <Button size="sm" onClick={onPickLocal} className="shrink-0">
+          <Home className="size-3.5" /> Local
+        </Button>
+      </div>
+
+      <div className="border-b px-4 py-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="Find a host or ssh user@hostname…"
+            className="pl-8"
+          />
+        </div>
+      </div>
+
+      <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
+        {connectError && (
+          <p className="mx-3 mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {connectError}
+          </p>
+        )}
+        {hosts.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+            No saved hosts — add one under the Hosts tab first.
+          </p>
+        ) : filtered.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+            No hosts match “{query}”.
+          </p>
+        ) : (
+          <>
+            <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Hosts
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {filtered.map((host) => {
+                const address = `${host.username ? `${host.username}@` : ''}${host.host}${
+                  host.port && host.port !== 22 ? `:${host.port}` : ''
+                }`;
+                return (
+                  <button
+                    key={host.id}
+                    onClick={() => onPickHost(host)}
+                    className="group flex items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-accent"
+                  >
+                    <span
+                      className="flex size-9 shrink-0 items-center justify-center rounded-lg"
+                      style={toneStyle(host.color || toneForId(host.id))}
+                    >
+                      <Server className="size-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">
+                        {host.label || host.host}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        ssh · {address}
+                      </span>
+                    </span>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-// The constant SFTP tab. Connections made here are their own SSH sessions,
-// fully independent of any terminal tab — connect to each server separately.
-export default function SftpHub({ hosts, visible }) {
-  const [connections, setConnections] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
-  const [picking, setPicking] = useState(false);
-  const [connectError, setConnectError] = useState(null);
+function ConnectingPane({ conn, onTrust, onReject }) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 text-center">
+      {conn.hostKey ? (
+        <>
+          <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
+            <ShieldQuestion className="size-6" />
+          </span>
+          <div>
+            <p className="text-sm font-medium">
+              {conn.hostKey.changed ? 'Host key changed!' : 'Unknown host key'}
+            </p>
+            <p className="mx-auto max-w-md break-all px-4 text-xs text-muted-foreground">
+              SHA256:{conn.hostKey.fingerprint}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={onTrust}>
+              Trust
+            </Button>
+            <Button size="sm" variant="outline" onClick={onReject}>
+              Reject
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Connecting to {conn.title}…</p>
+        </>
+      )}
+    </div>
+  );
+}
 
-  const [localPath, setLocalPath] = useState(null);
-  const [localEntries, setLocalEntries] = useState([]);
-  const [localLoading, setLocalLoading] = useState(false);
-  const [localError, setLocalError] = useState(null);
+function ErrorPane({ conn, onRetry, onClose }) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 text-center">
+      <span className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+        <TriangleAlert className="size-6" />
+      </span>
+      <div>
+        <p className="text-sm font-medium">Couldn't connect to {conn.title}</p>
+        <p className="max-w-md text-sm text-muted-foreground">{conn.error}</p>
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+        <Button size="sm" variant="outline" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </div>
+  );
+}
 
-  const [transfers, setTransfers] = useState([]);
-  const [remoteRefresh, setRemoteRefresh] = useState({});
-  const [remotePaths, setRemotePaths] = useState({});
+function Slot({
+  side,
+  isLocal,
+  conn,
+  hosts,
+  query,
+  onQueryChange,
+  picking,
+  onPickLocal,
+  onPickHost,
+  onOpenPicker,
+  onRetry,
+  onClose,
+  connectError,
+  refreshTick,
+  onPathChange,
+  cross,
+}) {
+  const resolved = isLocal ? 'local' : conn ? 'remote' : null;
 
-  const connectionsRef = useRef([]);
-  connectionsRef.current = connections;
-  const localPathRef = useRef(null);
-  localPathRef.current = localPath;
-
-  const selected = connections.find((c) => c.sessionId === selectedId) ?? connections[0] ?? null;
-  const showPicker = picking || connections.length === 0;
-
-  function patchConnection(sessionId, patch) {
-    setConnections((prev) =>
-      prev.map((c) => (c.sessionId === sessionId ? { ...c, ...patch } : c))
+  if (picking || !resolved) {
+    return (
+      <HostPicker
+        hosts={hosts}
+        query={query}
+        onQueryChange={onQueryChange}
+        onPickLocal={onPickLocal}
+        onPickHost={onPickHost}
+        onBack={onOpenPicker}
+        canBack={Boolean(resolved)}
+        connectError={connectError}
+      />
     );
   }
 
-  async function loadLocal(nextPath) {
-    setLocalLoading(true);
-    setLocalError(null);
-    const result = await window.api.fsList(nextPath);
-    setLocalLoading(false);
-    if (result.error) {
-      setLocalError(result.error);
-      return;
-    }
-    setLocalPath(nextPath);
-    setLocalEntries(result.entries);
+  if (resolved === 'local') {
+    return (
+      <LocalPane
+        refreshTick={refreshTick}
+        onPathChange={onPathChange}
+        onChangeSource={onOpenPicker}
+        actionTitle={cross?.title}
+        ActionIcon={cross?.Icon}
+        onAction={cross?.run}
+      />
+    );
+  }
+
+  if (conn.status === 'connecting') {
+    return (
+      <ConnectingPane
+        conn={conn}
+        onTrust={() => window.api.sshHostKeyResponse(conn.sessionId, true)}
+        onReject={() => window.api.sshHostKeyResponse(conn.sessionId, false)}
+      />
+    );
+  }
+
+  if (conn.status === 'error') {
+    return <ErrorPane conn={conn} onRetry={onRetry} onClose={onClose} />;
+  }
+
+  return (
+    <RemotePane
+      sessionId={conn.sessionId}
+      title={conn.title}
+      refreshTick={refreshTick}
+      onPathChange={onPathChange}
+      onChangeSource={onOpenPicker}
+      actionTitle={cross?.title}
+      ActionIcon={cross?.Icon}
+      onAction={cross?.run}
+    />
+  );
+}
+
+export default function SftpHub({ hosts, visible }) {
+  const [leftIsLocal, setLeftIsLocal] = useState(false);
+  const [rightIsLocal, setRightIsLocal] = useState(false);
+  const [leftConn, setLeftConn] = useState(null);
+  const [rightConn, setRightConn] = useState(null);
+  const [leftPicking, setLeftPicking] = useState(true);
+  const [rightPicking, setRightPicking] = useState(true);
+  const [leftQuery, setLeftQuery] = useState('');
+  const [rightQuery, setRightQuery] = useState('');
+  const [leftConnectError, setLeftConnectError] = useState(null);
+  const [rightConnectError, setRightConnectError] = useState(null);
+  const [leftPath, setLeftPath] = useState(null);
+  const [rightPath, setRightPath] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [transfers, setTransfers] = useState([]);
+
+  const leftConnRef = useRef(null);
+  leftConnRef.current = leftConn;
+  const rightConnRef = useRef(null);
+  rightConnRef.current = rightConn;
+
+  function patchBySession(sessionId, patch) {
+    setLeftConn((prev) => (prev?.sessionId === sessionId ? { ...prev, ...patch } : prev));
+    setRightConn((prev) => (prev?.sessionId === sessionId ? { ...prev, ...patch } : prev));
   }
 
   useEffect(() => {
-    if (!visible || localPath !== null) return;
-    (async () => {
-      try {
-        if (typeof window.api.fsHome !== 'function') {
-          throw new Error(
-            'The app core was updated — quit and restart it (main-process changes do not hot-reload).'
-          );
-        }
-        const home = await window.api.fsHome();
-        await loadLocal(home.path);
-      } catch (err) {
-        setLocalError(err.message);
-      }
-    })();
-  }, [visible]);
-
-  // These sessions never appear in the tab bar, so the hub tracks their
-  // lifecycle itself (App only patches tabs it knows about).
-  useEffect(() => {
-    const owns = (id) => connectionsRef.current.some((c) => c.sessionId === id);
+    const owns = (id) => leftConnRef.current?.sessionId === id || rightConnRef.current?.sessionId === id;
 
     const unsubReady = window.api.onSshReady(({ sessionId }) => {
-      if (owns(sessionId)) patchConnection(sessionId, { status: 'connected', hostKey: null });
+      if (owns(sessionId)) patchBySession(sessionId, { status: 'connected', hostKey: null });
     });
 
     const unsubError = window.api.onSshError(({ sessionId, message }) => {
-      if (owns(sessionId)) {
-        patchConnection(sessionId, { status: 'error', error: message, hostKey: null });
-      }
+      if (owns(sessionId)) patchBySession(sessionId, { status: 'error', error: message, hostKey: null });
     });
 
     const unsubClosed = window.api.onSshClosed(({ sessionId }) => {
-      if (owns(sessionId)) {
-        setConnections((prev) => prev.filter((c) => c.sessionId !== sessionId));
+      if (leftConnRef.current?.sessionId === sessionId) {
+        setLeftConn(null);
+        setLeftPicking(true);
+      }
+      if (rightConnRef.current?.sessionId === sessionId) {
+        setRightConn(null);
+        setRightPicking(true);
       }
     });
 
     const unsubHostKey = window.api.onSshHostKey(({ sessionId, ...info }) => {
-      if (owns(sessionId)) patchConnection(sessionId, { hostKey: info });
+      if (owns(sessionId)) patchBySession(sessionId, { hostKey: info });
     });
 
     const unsubTransfer = window.api.onSftpTransfer((t) => {
-      if (!owns(t.sessionId)) return;
+      if (!owns(t.sessionId) && !owns(t.destSessionId)) return;
 
       setTransfers((prev) => {
         const patch = {
@@ -521,24 +744,10 @@ export default function SftpHub({ hosts, visible }) {
         if (prev.some((x) => x.id === t.transferId)) {
           return prev.map((x) => (x.id === t.transferId ? { ...x, ...patch } : x));
         }
-        return [
-          ...prev,
-          { id: t.transferId, sessionId: t.sessionId, kind: t.kind, name: t.name, ...patch },
-        ];
+        return [...prev, { id: t.transferId, kind: t.kind, name: t.name, ...patch }];
       });
 
-      if (t.done) {
-        if (t.kind === 'upload') {
-          setRemoteRefresh((prev) => ({ ...prev, [t.sessionId]: (prev[t.sessionId] ?? 0) + 1 }));
-        } else if (t.kind === 'remote-transfer') {
-          setRemoteRefresh((prev) => ({
-            ...prev,
-            [t.destSessionId]: (prev[t.destSessionId] ?? 0) + 1,
-          }));
-        } else if (localPathRef.current) {
-          loadLocal(localPathRef.current);
-        }
-      }
+      if (t.done) setRefreshTick((n) => n + 1);
       if (t.done || t.error) {
         setTimeout(() => {
           setTransfers((prev) => prev.filter((x) => x.id !== t.transferId));
@@ -555,271 +764,161 @@ export default function SftpHub({ hosts, visible }) {
     };
   }, []);
 
-  async function connectHost(host) {
+  function pickLocal(side) {
+    const conn = side === 'left' ? leftConnRef.current : rightConnRef.current;
+    if (conn) window.api.sshDisconnect(conn.sessionId);
+    if (side === 'left') {
+      setLeftConnectError(null);
+      setLeftConn(null);
+      setLeftIsLocal(true);
+      setLeftPicking(false);
+    } else {
+      setRightConnectError(null);
+      setRightConn(null);
+      setRightIsLocal(true);
+      setRightPicking(false);
+    }
+  }
+
+  async function pickHost(side, host) {
+    const setConnectError = side === 'left' ? setLeftConnectError : setRightConnectError;
+    const setConn = side === 'left' ? setLeftConn : setRightConn;
+    const setIsLocal = side === 'left' ? setLeftIsLocal : setRightIsLocal;
+    const setPicking = side === 'left' ? setLeftPicking : setRightPicking;
+    const prevConn = side === 'left' ? leftConnRef.current : rightConnRef.current;
+
     setConnectError(null);
     const result = await window.api.sshConnect({ hostId: host.id, mode: 'sftp' });
     if (result.error) {
       setConnectError(result.error);
       return;
     }
-    setConnections((prev) => [
-      ...prev,
-      {
-        sessionId: result.sessionId,
-        hostId: host.id,
-        title: host.label || host.host,
-        status: 'connecting',
-        error: null,
-        hostKey: null,
-      },
-    ]);
-    setSelectedId(result.sessionId);
+    if (prevConn) window.api.sshDisconnect(prevConn.sessionId);
+
+    setIsLocal(false);
+    setConn({
+      sessionId: result.sessionId,
+      hostId: host.id,
+      title: host.label || host.host,
+      status: 'connecting',
+      error: null,
+      hostKey: null,
+    });
     setPicking(false);
   }
 
-  async function closeConnection(sessionId) {
-    await window.api.sshDisconnect(sessionId);
-    setConnections((prev) => prev.filter((c) => c.sessionId !== sessionId));
-    setTransfers((prev) => prev.filter((t) => t.sessionId !== sessionId));
+  function retry(side) {
+    const conn = side === 'left' ? leftConn : rightConn;
+    const host = hosts.find((h) => h.id === conn?.hostId);
+    if (side === 'left') setLeftConn(null);
+    else setRightConn(null);
+    if (host) pickHost(side, host);
   }
 
-  function retryConnection(connection) {
-    const host = hosts.find((h) => h.id === connection.hostId);
-    setConnections((prev) => prev.filter((c) => c.sessionId !== connection.sessionId));
-    if (host) connectHost(host);
+  function closeSide(side) {
+    const conn = side === 'left' ? leftConn : rightConn;
+    if (conn) window.api.sshDisconnect(conn.sessionId);
+    if (side === 'left') {
+      setLeftConn(null);
+      setLeftPicking(true);
+    } else {
+      setRightConn(null);
+      setRightPicking(true);
+    }
   }
 
-  function uploadEntry(entry) {
-    if (!selected || selected.status !== 'connected') return;
-    const remoteDir = remotePaths[selected.sessionId];
-    if (!remoteDir || !localPath) return;
-    window.api.sftpUploadPaths(selected.sessionId, remoteDir, [joinPath(localPath, entry.name)]);
-  }
+  function crossActionFor(side) {
+    const mine = side === 'left' ? { isLocal: leftIsLocal, conn: leftConn } : { isLocal: rightIsLocal, conn: rightConn };
+    const other = side === 'left' ? { isLocal: rightIsLocal, conn: rightConn } : { isLocal: leftIsLocal, conn: leftConn };
+    const otherPath = side === 'left' ? rightPath : leftPath;
 
-  function chipDropRemote(destConnection, payload) {
-    if (payload.sessionId === destConnection.sessionId) return;
-    const destDir = remotePaths[destConnection.sessionId];
-    if (!destDir) return;
-    window.api.sftpTransferRemote(
-      payload.sessionId,
-      payload.path,
-      destConnection.sessionId,
-      destDir,
-      payload.name
-    );
-  }
-
-  function chipDropLocal(destConnection, payload) {
-    const destDir = remotePaths[destConnection.sessionId];
-    if (!destDir) return;
-    window.api.sftpUploadPaths(destConnection.sessionId, destDir, [payload.path]);
-  }
-
-  function downloadFrom(sessionId) {
-    return (remotePath, name) => {
-      if (localPathRef.current) {
-        window.api.sftpDownloadTo(sessionId, remotePath, localPathRef.current, name);
-      }
-    };
+    if (mine.isLocal && other.conn?.status === 'connected' && otherPath) {
+      return {
+        title: 'Upload to other pane',
+        Icon: ArrowUpFromLine,
+        run: (path) => window.api.sftpUploadPaths(other.conn.sessionId, otherPath, [path]),
+      };
+    }
+    if (!mine.isLocal && mine.conn?.status === 'connected' && other.isLocal && otherPath) {
+      return {
+        title: 'Download to other pane',
+        Icon: ArrowDownToLine,
+        run: (path, name) => window.api.sftpDownloadTo(mine.conn.sessionId, path, otherPath, name),
+      };
+    }
+    if (
+      !mine.isLocal &&
+      mine.conn?.status === 'connected' &&
+      other.conn?.status === 'connected' &&
+      other.conn.sessionId !== mine.conn.sessionId &&
+      otherPath
+    ) {
+      return {
+        title: 'Transfer to other pane',
+        Icon: ArrowRightLeft,
+        run: (path, name) =>
+          window.api.sftpTransferRemote(mine.conn.sessionId, path, other.conn.sessionId, otherPath, name),
+      };
+    }
+    return null;
   }
 
   const hidden = visible ? '' : 'invisible pointer-events-none';
-  const visibleTransfers = transfers.filter((t) => t.sessionId === selected?.sessionId);
 
   return (
     <div className={`absolute inset-0 flex flex-col bg-background ${hidden}`}>
-      <div className="flex items-center gap-1 border-b px-3 py-2">
-        {connections.map((connection) => (
-          <ConnectionChip
-            key={connection.sessionId}
-            connection={connection}
-            active={!showPicker && connection.sessionId === selected?.sessionId}
-            onSelect={() => {
-              setSelectedId(connection.sessionId);
-              setPicking(false);
-            }}
-            onClose={() => closeConnection(connection.sessionId)}
-            onDropRemote={(payload) => chipDropRemote(connection, payload)}
-            onDropLocal={(payload) => chipDropLocal(connection, payload)}
-          />
-        ))}
-        <button
-          onClick={() => setPicking(true)}
-          title="New SFTP connection"
-          className={`flex size-7 items-center justify-center rounded-md ${
-            showPicker
-              ? 'border bg-muted text-foreground'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Plus className="size-4" />
-        </button>
+      <div className="flex min-h-0 flex-1">
+        <Slot
+          side="left"
+          isLocal={leftIsLocal}
+          conn={leftConn}
+          hosts={hosts}
+          query={leftQuery}
+          onQueryChange={setLeftQuery}
+          picking={leftPicking}
+          onPickLocal={() => pickLocal('left')}
+          onPickHost={(host) => pickHost('left', host)}
+          onOpenPicker={() => setLeftPicking(true)}
+          onRetry={() => retry('left')}
+          onClose={() => closeSide('left')}
+          connectError={leftConnectError}
+          refreshTick={refreshTick}
+          onPathChange={setLeftPath}
+          cross={crossActionFor('left')}
+        />
+
+        <div className="w-px shrink-0 bg-border" />
+
+        <Slot
+          side="right"
+          isLocal={rightIsLocal}
+          conn={rightConn}
+          hosts={hosts}
+          query={rightQuery}
+          onQueryChange={setRightQuery}
+          picking={rightPicking}
+          onPickLocal={() => pickLocal('right')}
+          onPickHost={(host) => pickHost('right', host)}
+          onOpenPicker={() => setRightPicking(true)}
+          onRetry={() => retry('right')}
+          onClose={() => closeSide('right')}
+          connectError={rightConnectError}
+          refreshTick={refreshTick}
+          onPathChange={setRightPath}
+          cross={crossActionFor('right')}
+        />
       </div>
 
-      {showPicker ? (
-        <div className="custom-scrollbar flex-1 overflow-y-auto p-4">
-          <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Connect for file transfer
-          </p>
-          <p className="px-3 pb-3 text-sm text-muted-foreground">
-            SFTP uses its own connection to the server, separate from your terminal sessions.
-          </p>
-          {connectError && (
-            <p className="mx-3 mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {connectError}
-            </p>
-          )}
-          {hosts.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              No saved hosts — add one under the Hosts tab first.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-0.5">
-              {hosts.map((host) => (
-                <button
-                  key={host.id}
-                  onClick={() => connectHost(host)}
-                  className="group flex items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-accent"
-                >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
-                    <Folder className="size-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">
-                      {host.label || host.host}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {host.username ? `${host.username}@` : ''}
-                      {host.host}
-                    </span>
-                  </span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : selected?.status === 'connecting' ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-          {selected.hostKey ? (
-            <>
-              <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
-                <ShieldQuestion className="size-6" />
-              </span>
-              <div>
-                <p className="text-sm font-medium">
-                  {selected.hostKey.changed ? 'Host key changed!' : 'Unknown host key'}
-                </p>
-                <p className="mx-auto max-w-md break-all px-4 text-xs text-muted-foreground">
-                  SHA256:{selected.hostKey.fingerprint}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  onClick={() => window.api.sshHostKeyResponse(selected.sessionId, true)}
-                >
-                  Trust
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => window.api.sshHostKeyResponse(selected.sessionId, false)}
-                >
-                  Reject
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <Loader2 className="size-6 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Connecting to {selected.title}…</p>
-            </>
-          )}
-        </div>
-      ) : selected?.status === 'error' ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <span className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
-            <TriangleAlert className="size-6" />
-          </span>
-          <div>
-            <p className="text-sm font-medium">Couldn't connect to {selected.title}</p>
-            <p className="max-w-md text-sm text-muted-foreground">{selected.error}</p>
-          </div>
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => retryConnection(selected)}>
-              Retry
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => closeConnection(selected.sessionId)}
-            >
-              Close
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="flex min-h-0 flex-1">
-            <FilePane
-              title="Local"
-              TitleIcon={HardDrive}
-              path={localPath}
-              entries={localEntries}
-              loading={localLoading}
-              error={localError}
-              onNavigate={loadLocal}
-              onRefresh={() => localPath && loadLocal(localPath)}
-              actionTitle="Upload to remote folder"
-              ActionIcon={ArrowUpFromLine}
-              onAction={uploadEntry}
-              dragType="application/x-sftp-local"
-              acceptType="application/x-sftp-remote"
-              onDropEntry={(payload) =>
-                localPath &&
-                window.api.sftpDownloadTo(payload.sessionId, payload.path, localPath, payload.name)
-              }
+      {transfers.length > 0 && (
+        <div className="custom-scrollbar max-h-40 shrink-0 overflow-y-auto border-t bg-muted/30">
+          {transfers.map((transfer) => (
+            <TransferRow
+              key={transfer.id}
+              transfer={transfer}
+              onDismiss={() => setTransfers((prev) => prev.filter((x) => x.id !== transfer.id))}
             />
-
-            <div className="w-px shrink-0 bg-border" />
-
-            {connections
-              .filter((c) => c.status === 'connected')
-              .map((connection) => (
-                <div
-                  key={connection.sessionId}
-                  className={`min-w-0 flex-1 ${
-                    connection.sessionId === selected?.sessionId ? 'flex' : 'hidden'
-                  }`}
-                >
-                  <RemotePane
-                    sessionId={connection.sessionId}
-                    title={connection.title}
-                    refreshTick={remoteRefresh[connection.sessionId] ?? 0}
-                    onPathChange={(p) =>
-                      setRemotePaths((prev) => ({ ...prev, [connection.sessionId]: p }))
-                    }
-                    onDownload={downloadFrom(connection.sessionId)}
-                  />
-                </div>
-              ))}
-          </div>
-
-          {visibleTransfers.length > 0 && (
-            <div className="custom-scrollbar max-h-40 shrink-0 overflow-y-auto border-t bg-muted/30">
-              {visibleTransfers.map((transfer) => (
-                <TransferRow
-                  key={transfer.id}
-                  transfer={transfer}
-                  onDismiss={() =>
-                    setTransfers((prev) => prev.filter((x) => x.id !== transfer.id))
-                  }
-                />
-              ))}
-            </div>
-          )}
-        </>
+          ))}
+        </div>
       )}
     </div>
   );

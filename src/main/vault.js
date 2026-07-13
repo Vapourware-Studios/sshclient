@@ -217,6 +217,7 @@ function listHosts() {
       username: data.username,
       privateKeyPath: data.privateKeyPath || undefined,
       keyId: data.keyId || undefined,
+      color: data.color || null,
       hasPassword: Boolean(data.password),
       hasPassphrase: Boolean(data.passphrase),
       hasPrivateKey: Boolean(data.privateKeyPath),
@@ -286,6 +287,7 @@ function saveHost(host) {
     username: merged.username,
     privateKeyPath: merged.privateKeyPath || undefined,
     keyId: merged.keyId || undefined,
+    color: merged.color || undefined,
   };
   if (merged.password) payload.password = merged.password;
   if (merged.passphrase) payload.passphrase = merged.passphrase;
@@ -301,6 +303,25 @@ function saveHost(host) {
        data_ciphertext = excluded.data_ciphertext,
        updated_at = excluded.updated_at`
   ).run(id, enc.iv, enc.authTag, enc.ciphertext, existingRow ? existingRow.created_at : now, now);
+
+  return listHosts();
+}
+
+function duplicateHost(id) {
+  requireUnlocked();
+  const row = db.prepare('SELECT * FROM hosts WHERE id = ?').get(id);
+  if (!row) throw new Error('Host not found');
+
+  const data = decryptHostData(row);
+  const payload = { ...data, label: `${data.label || data.host} copy` };
+  const enc = encryptJSON(derivedKey, payload);
+  const newId = crypto.randomUUID();
+  const now = Date.now();
+
+  db.prepare(
+    `INSERT INTO hosts (id, data_iv, data_auth_tag, data_ciphertext, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(newId, enc.iv, enc.authTag, enc.ciphertext, now, now);
 
   return listHosts();
 }
@@ -333,6 +354,7 @@ function listKeys() {
       bits: data.bits,
       public: data.public,
       fingerprint: data.fingerprint,
+      color: data.color || null,
       hasPassphrase: Boolean(data.passphrase),
       createdAt: row.created_at,
     };
@@ -373,6 +395,24 @@ function getKeySecret(id) {
 function deleteKey(id) {
   requireUnlocked();
   db.prepare('DELETE FROM keys WHERE id = ?').run(id);
+  return listKeys();
+}
+
+function setKeyColor(id, color) {
+  requireUnlocked();
+  const row = db.prepare('SELECT * FROM keys WHERE id = ?').get(id);
+  if (!row) throw new Error('Key not found');
+
+  const data = decryptKeyData(row);
+  const enc = encryptJSON(derivedKey, { ...data, color: color || undefined });
+
+  db.prepare('UPDATE keys SET data_iv = ?, data_auth_tag = ?, data_ciphertext = ? WHERE id = ?').run(
+    enc.iv,
+    enc.authTag,
+    enc.ciphertext,
+    id
+  );
+
   return listKeys();
 }
 
@@ -420,7 +460,8 @@ function saveSnippet(snippet) {
   if (!name || !command.trim()) throw new Error('Snippet name and command are required');
   const id = snippet.id || crypto.randomUUID();
   const now = Date.now();
-  const enc = encryptJSON(derivedKey, { name, command });
+  const targets = Array.isArray(snippet?.targets) ? snippet.targets.filter((v) => typeof v === 'string') : [];
+  const enc = encryptJSON(derivedKey, { name, command, targets });
   db.prepare(`INSERT INTO snippets VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET data_iv=excluded.data_iv, data_auth_tag=excluded.data_auth_tag,
     data_ciphertext=excluded.data_ciphertext, updated_at=excluded.updated_at`)
@@ -467,12 +508,14 @@ module.exports = {
   lock,
   listHosts,
   saveHost,
+  duplicateHost,
   deleteHost,
   getHostSecret,
   listKeys,
   saveKey,
   getKeySecret,
   deleteKey,
+  setKeyColor,
   getKnownHostKey,
   listKnownHosts,
   trustHostKey,

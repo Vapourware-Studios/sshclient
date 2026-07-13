@@ -1,9 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+} from '@/components/ui/context-menu';
 import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
+import { ColorPicker } from '@/components/ColorPicker';
+import { GridCard, ViewToggle, GRID_CLASS } from '@/components/GridCard';
+import { useViewMode } from '@/lib/view-mode';
 import { KEY_TYPE_OPTIONS, keyTypeLabel } from '@/lib/keys';
+import { useConfirm } from '@/lib/confirm';
 import {
   KeyRound,
   Plus,
@@ -12,8 +30,11 @@ import {
   Check,
   Loader2,
   ClipboardPaste,
+  ChevronDown,
   Eye,
   EyeOff,
+  Pencil,
+  Search,
 } from 'lucide-react';
 
 const TEXTAREA_CLASS =
@@ -47,7 +68,7 @@ function CopyButton({ value, label = 'Copy' }) {
 // Detail view for one key — the content that swaps in place when you
 // click a different key in the list, Termius-style. Kept lean: the two
 // halves of the pair, ready to copy wherever they're needed.
-function KeyDetailPanel({ keyItem, onDelete, onClose }) {
+function KeyDetailPanel({ keyItem, onDelete, onClose, onColorChange }) {
   // Private key stays in the vault until the user asks to see it.
   const [privateKey, setPrivateKey] = useState(null);
   const [revealBusy, setRevealBusy] = useState(false);
@@ -76,6 +97,11 @@ function KeyDetailPanel({ keyItem, onDelete, onClose }) {
       <PanelHeader title={keyItem.name} description={keyTypeLabel(keyItem)} onClose={onClose} />
 
       <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+        <div className="flex flex-col gap-2">
+          <Label>Icon color</Label>
+          <ColorPicker value={keyItem.color} onChange={(color) => onColorChange(keyItem, color)} />
+        </div>
+
         <div className="flex flex-col gap-2">
           <Label htmlFor="detail-public">Public key</Label>
           <textarea
@@ -379,6 +405,31 @@ function ImportKeyPanel({ onImported, onClose }) {
   );
 }
 
+function KeyContextMenu({ keyItem, onEdit, onDelete, children }) {
+  async function copyPublicKey() {
+    await navigator.clipboard.writeText(keyItem.public);
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => onEdit(keyItem)}>
+          <Pencil className="size-4" /> Edit
+          <ContextMenuShortcut>E</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onClick={copyPublicKey}>
+          <Copy className="size-4" /> Copy public key
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onClick={() => onDelete(keyItem)}>
+          <Trash2 className="size-4" /> Remove
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
 function KeyRow({ keyItem, selected, onSelect, onDelete }) {
   const [copied, setCopied] = useState(false);
 
@@ -395,48 +446,104 @@ function KeyRow({ keyItem, selected, onSelect, onDelete }) {
   }
 
   return (
-    <div
-      onClick={() => onSelect(keyItem)}
-      className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
-        selected ? 'bg-accent' : 'hover:bg-accent/60'
-      }`}
-    >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
-        <KeyRound className="size-4" />
-      </span>
+    <KeyContextMenu keyItem={keyItem} onEdit={onSelect} onDelete={onDelete}>
+      <div
+        onClick={() => onSelect(keyItem)}
+        className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
+          selected ? 'bg-accent' : 'hover:bg-accent/60'
+        }`}
+      >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
+          <KeyRound className="size-4" />
+        </span>
 
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{keyItem.name}</p>
-        <p className="truncate text-xs text-muted-foreground">
-          {keyTypeLabel(keyItem)} · {keyItem.fingerprint}
-        </p>
-      </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{keyItem.name}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {keyTypeLabel(keyItem)} · {keyItem.fingerprint}
+          </p>
+        </div>
 
-      <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
-        <button
-          onClick={copyPublicKey}
-          title="Copy public key"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-foreground"
-        >
-          {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(keyItem);
-          }}
-          title="Delete key"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-destructive"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
+        <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
+          <button
+            onClick={copyPublicKey}
+            title="Copy public key"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-foreground"
+          >
+            {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(keyItem);
+            }}
+            title="Delete key"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-destructive"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
       </div>
-    </div>
+    </KeyContextMenu>
+  );
+}
+
+function KeyGridCard({ keyItem, selected, onSelect, onDelete }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  async function copyPublicKey(e) {
+    e.stopPropagation();
+    await navigator.clipboard.writeText(keyItem.public);
+    setCopied(true);
+  }
+
+  return (
+    <KeyContextMenu keyItem={keyItem} onEdit={onSelect} onDelete={onDelete}>
+      <GridCard
+        id={keyItem.id}
+        tone={keyItem.color || 'chart-2'}
+        icon={KeyRound}
+        title={keyItem.name}
+        subtitle={`${keyTypeLabel(keyItem)} · ${keyItem.fingerprint}`}
+        onClick={() => onSelect(keyItem)}
+        actions={
+          <>
+            <button
+              onClick={copyPublicKey}
+              title="Copy public key"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(keyItem);
+              }}
+              title="Delete key"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </>
+        }
+        className={selected ? 'ring-1 ring-primary' : ''}
+      />
+    </KeyContextMenu>
   );
 }
 
 export default function KeychainView() {
+  const confirm = useConfirm();
   const [keys, setKeys] = useState([]);
+  const [query, setQuery] = useState('');
+  const [viewMode, setViewMode] = useViewMode('keychain');
   // panel: null | { mode: 'detail', keyId } | { mode: 'generate' } | { mode: 'import' }
   const [panel, setPanel] = useState(null);
   // Kept during the slide-out so the panel doesn't blank while closing.
@@ -478,9 +585,12 @@ export default function KeychainView() {
   }
 
   async function deleteKey(keyItem) {
-    const confirmed = window.confirm(
-      `Delete key "${keyItem.name}"? Hosts using it will no longer authenticate with it. This cannot be undone.`
-    );
+    const confirmed = await confirm({
+      title: 'Delete key',
+      description: `Delete key "${keyItem.name}"? Hosts using it will no longer authenticate with it. This cannot be undone.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
     if (!confirmed) return;
 
     const result = await window.api.keysDelete(keyItem.id);
@@ -489,25 +599,65 @@ export default function KeychainView() {
     setPanel((prev) => (prev?.mode === 'detail' && prev.keyId === keyItem.id ? null : prev));
   }
 
+  async function changeKeyColor(keyItem, color) {
+    const result = await window.api.keysSetColor(keyItem.id, color);
+    if (!result.error) setKeys(result.keys);
+  }
+
   const detailKey =
     renderedPanel?.mode === 'detail' ? keys.find((k) => k.id === renderedPanel.keyId) : null;
+
+  const filteredKeys = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return keys;
+    return keys.filter((k) =>
+      [k.name, k.fingerprint, keyTypeLabel(k)].some((v) => v && v.toLowerCase().includes(q))
+    );
+  }, [keys, query]);
 
   return (
     <div className="flex h-full overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-          <p className="text-sm font-medium">Keychain</p>
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex items-center gap-2 border-b px-4 py-3">
+          <div className="flex shrink-0 items-stretch">
             <Button
-              variant="outline"
-              onClick={() => setPanel({ mode: 'import', nonce: Date.now() })}
+              onClick={() => setPanel({ mode: 'generate', nonce: Date.now() })}
+              className="rounded-r-none"
             >
-              <ClipboardPaste className="size-4" /> Import Key
+              <Plus className="size-4" /> New key
             </Button>
-            <Button onClick={() => setPanel({ mode: 'generate', nonce: Date.now() })}>
-              <Plus className="size-4" /> Generate Key
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  className="rounded-l-none border-l border-primary-foreground/15 px-2"
+                  aria-label="More new key options"
+                >
+                  <ChevronDown className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => setPanel({ mode: 'generate', nonce: Date.now() })}>
+                  <Plus className="size-4" /> Generate key
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setPanel({ mode: 'import', nonce: Date.now() })}>
+                  <ClipboardPaste className="size-4" /> Import key
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
+
+          <div className="flex-1" />
+
+          <div className="relative w-64 shrink-0">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find a key…"
+              className="pl-8"
+            />
+          </div>
+          <ViewToggle mode={viewMode} onChange={setViewMode} />
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -538,19 +688,37 @@ export default function KeychainView() {
           ) : (
             <>
               <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Keys — {keys.length}
+                Keys — {filteredKeys.length}
               </p>
-              <div className="flex flex-col gap-0.5">
-                {keys.map((keyItem) => (
-                  <KeyRow
-                    key={keyItem.id}
-                    keyItem={keyItem}
-                    selected={panel?.mode === 'detail' && panel.keyId === keyItem.id}
-                    onSelect={selectKey}
-                    onDelete={deleteKey}
-                  />
-                ))}
-              </div>
+              {filteredKeys.length === 0 ? (
+                <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  No keys match “{query}”.
+                </p>
+              ) : viewMode === 'grid' ? (
+                <div className={GRID_CLASS}>
+                  {filteredKeys.map((keyItem) => (
+                    <KeyGridCard
+                      key={keyItem.id}
+                      keyItem={keyItem}
+                      selected={panel?.mode === 'detail' && panel.keyId === keyItem.id}
+                      onSelect={selectKey}
+                      onDelete={deleteKey}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  {filteredKeys.map((keyItem) => (
+                    <KeyRow
+                      key={keyItem.id}
+                      keyItem={keyItem}
+                      selected={panel?.mode === 'detail' && panel.keyId === keyItem.id}
+                      onSelect={selectKey}
+                      onDelete={deleteKey}
+                    />
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -558,7 +726,12 @@ export default function KeychainView() {
 
       <SlidePanel open={Boolean(panel)} onClose={closePanel}>
         {renderedPanel?.mode === 'detail' && detailKey && (
-          <KeyDetailPanel keyItem={detailKey} onDelete={deleteKey} onClose={closePanel} />
+          <KeyDetailPanel
+            keyItem={detailKey}
+            onDelete={deleteKey}
+            onClose={closePanel}
+            onColorChange={changeKeyColor}
+          />
         )}
         {renderedPanel?.mode === 'generate' && (
           <GenerateKeyPanel

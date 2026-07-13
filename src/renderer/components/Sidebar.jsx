@@ -15,9 +15,9 @@ const NAV_ITEMS = [
   { id: 'hosts', label: 'Hosts', Icon: Server },
   { id: 'keychain', label: 'Keychain', Icon: KeyRound },
   { id: 'port-forwarding', label: 'Port Forwarding', Icon: ArrowRightLeft },
-  { id: 'known-hosts', label: 'Known Hosts', Icon: ShieldCheck },
   { id: 'snippets', label: 'Snippets', Icon: Code2 },
-  { id: 'history', label: 'History', Icon: History },
+  { id: 'known-hosts', label: 'Known Hosts', Icon: ShieldCheck },
+  { id: 'history', label: 'Logs', Icon: History },
 ];
 
 function NavButton({ active, onClick, Icon, label }) {

@@ -3,10 +3,12 @@ import Unlock from '@/components/Unlock';
 import NewConnectionDialog from '@/components/NewConnectionDialog';
 import TabBar from '@/components/TabBar';
 import ContentArea from '@/components/ContentArea';
+import { useConfirm } from '@/lib/confirm';
 
 const MIN_CONNECTING_MS = 2000;
 
 export default function App() {
+  const confirm = useConfirm();
   const [vaultStatus, setVaultStatus] = useState(null);
   const [hosts, setHosts] = useState([]);
   const [tabs, setTabs] = useState([
@@ -16,11 +18,13 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState('vault');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
+  const [dialogInitialType, setDialogInitialType] = useState('ssh');
   const [connectError, setConnectError] = useState(null);
   const [sessionLogs, setSessionLogs] = useState({});
 
   const startedAtRef = useRef(new Map());
   const pendingTimeoutsRef = useRef(new Map());
+  const pendingReadyActionRef = useRef(new Map());
 
   function afterMinDelay(sessionId, apply) {
     const startedAt = startedAtRef.current.get(sessionId) ?? Date.now();
@@ -65,7 +69,14 @@ export default function App() {
     });
 
     const unsubReady = window.api.onSshReady(({ sessionId }) => {
-      afterMinDelay(sessionId, () => patchTab(sessionId, { status: 'connected' }));
+      afterMinDelay(sessionId, () => {
+        patchTab(sessionId, { status: 'connected' });
+        const pending = pendingReadyActionRef.current.get(sessionId);
+        if (pending) {
+          pendingReadyActionRef.current.delete(sessionId);
+          pending.onReady(sessionId);
+        }
+      });
     });
 
     const unsubError = window.api.onSshError(({ sessionId, message }) => {
@@ -77,6 +88,11 @@ export default function App() {
               : t
           )
         );
+        const pending = pendingReadyActionRef.current.get(sessionId);
+        if (pending) {
+          pendingReadyActionRef.current.delete(sessionId);
+          pending.onFailure?.(message);
+        }
       });
     });
 
@@ -124,7 +140,7 @@ export default function App() {
       const tab = { id: result.sessionId, title, type, status: 'connected', connectConfig };
       setTabs((prev) => [...prev, tab]);
       setActiveTabId(tab.id);
-      return;
+      return tab.id;
     }
 
     const result = await window.api.sshConnect(connectConfig);
@@ -143,6 +159,7 @@ export default function App() {
     startedAtRef.current.set(tab.id, Date.now());
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
+    return tab.id;
   }
 
   async function openLocalTerminal() {
@@ -202,6 +219,52 @@ export default function App() {
     } catch {}
   }
 
+  async function runOnHost(host, command) {
+    const text = command.endsWith('\n') ? command : `${command}\n`;
+    const existing = tabs.find(
+      (t) => t.type === 'ssh' && t.status === 'connected' && t.connectConfig?.hostId === host.id
+    );
+    if (existing) {
+      window.api.sshWrite(existing.id, text);
+      return;
+    }
+    try {
+      const sessionId = await openSession({ hostId: host.id }, host.label || host.host);
+      if (sessionId) {
+        pendingReadyActionRef.current.set(sessionId, {
+          onReady: () => window.api.sshWrite(sessionId, text),
+        });
+      }
+    } catch {}
+  }
+
+  async function connectAndStartForward(host, spec) {
+    const existing = tabs.find(
+      (t) => t.type === 'ssh' && t.status === 'connected' && t.connectConfig?.hostId === host.id
+    );
+    if (existing) {
+      const result = await window.api.sshForwardStart(existing.id, spec);
+      return result.error ? result : { forward: result.forward, sessionId: existing.id };
+    }
+
+    let sessionId;
+    try {
+      sessionId = await openSession({ hostId: host.id }, host.label || host.host);
+    } catch (err) {
+      return { error: err.message };
+    }
+
+    return new Promise((resolve) => {
+      pendingReadyActionRef.current.set(sessionId, {
+        onReady: async () => {
+          const result = await window.api.sshForwardStart(sessionId, spec);
+          resolve(result.error ? result : { forward: result.forward, sessionId });
+        },
+        onFailure: (message) => resolve({ error: message || 'Failed to connect' }),
+      });
+    });
+  }
+
   function openPlayback(recording) {
     const existing = tabs.find((t) => t.type === 'playback' && t.recording?.id === recording.id);
     if (existing) {
@@ -219,8 +282,9 @@ export default function App() {
     setActiveTabId(tab.id);
   }
 
-  function openNewConnectionDialog() {
+  function openNewConnectionDialog(type = 'ssh') {
     setEditingHost(null);
+    setDialogInitialType(type);
     setDialogOpen(true);
   }
 
@@ -230,12 +294,20 @@ export default function App() {
   }
 
   async function deleteHost(host) {
-    const confirmed = window.confirm(
-      `Delete saved host "${host.label || host.host}"? This cannot be undone.`
-    );
+    const confirmed = await confirm({
+      title: 'Delete host',
+      description: `Delete saved host "${host.label || host.host}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
     if (!confirmed) return;
 
     const result = await window.api.hostsDelete(host.id);
+    if (!result.error) setHosts(result.hosts);
+  }
+
+  async function duplicateHost(host) {
+    const result = await window.api.hostsDuplicate(host.id);
     if (!result.error) setHosts(result.hosts);
   }
 
@@ -287,10 +359,13 @@ export default function App() {
             onConnect={connectToHost}
             onEdit={openEditHostDialog}
             onDelete={deleteHost}
+            onDuplicate={duplicateHost}
             onNewConnection={openNewConnectionDialog}
             onLockVault={lockVault}
             onOpenLocalTerminal={openLocalTerminal}
             onPlayRecording={openPlayback}
+            onRunOnHost={runOnHost}
+            onConnectAndStartForward={connectAndStartForward}
           />
 
           <NewConnectionDialog
@@ -300,6 +375,7 @@ export default function App() {
               if (!next) setEditingHost(null);
             }}
             editingHost={editingHost}
+            initialType={dialogInitialType}
             onSaved={setHosts}
             onConnect={async (config, title, type) => {
               await openSession(config, title, type);

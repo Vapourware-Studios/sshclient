@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('api', {
 
   hostsList: () => ipcRenderer.invoke('hosts:list'),
   hostsSave: (host) => ipcRenderer.invoke('hosts:save', host),
+  hostsDuplicate: (id) => ipcRenderer.invoke('hosts:duplicate', id),
   hostsDelete: (id) => ipcRenderer.invoke('hosts:delete', id),
 
   knownHostsList: () => ipcRenderer.invoke('knownHosts:list'),
@@ -85,6 +86,7 @@ contextBridge.exposeInMainWorld('api', {
   keysImport: (spec) => ipcRenderer.invoke('keys:import', spec),
   keysDelete: (id) => ipcRenderer.invoke('keys:delete', id),
   keysReveal: (id) => ipcRenderer.invoke('keys:reveal', id),
+  keysSetColor: (id, color) => ipcRenderer.invoke('keys:setColor', { id, color }),
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),

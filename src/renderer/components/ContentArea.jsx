@@ -14,10 +14,13 @@ export default function ContentArea({
   onConnect,
   onEdit,
   onDelete,
+  onDuplicate,
   onNewConnection,
   onLockVault,
   onOpenLocalTerminal,
   onPlayRecording,
+  onRunOnHost,
+  onConnectAndStartForward,
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
@@ -28,10 +31,13 @@ export default function ContentArea({
         onConnect={onConnect}
         onEdit={onEdit}
         onDelete={onDelete}
+        onDuplicate={onDuplicate}
         onNewConnection={onNewConnection}
         onLockVault={onLockVault}
         onOpenLocalTerminal={onOpenLocalTerminal}
         onPlayRecording={onPlayRecording}
+        onRunOnHost={onRunOnHost}
+        onConnectAndStartForward={onConnectAndStartForward}
         tabs={tabs}
         visible={activeTab?.id === 'vault'}
       />

@@ -435,6 +435,14 @@ ipcMain.handle('hosts:save', (event, host) => {
   }
 });
 
+ipcMain.handle('hosts:duplicate', (event, id) => {
+  try {
+    return { hosts: vault.duplicateHost(id) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('hosts:delete', (event, id) => {
   try {
     return { hosts: vault.deleteHost(id) };
@@ -598,6 +606,14 @@ ipcMain.handle('keys:list', () => {
 ipcMain.handle('keys:delete', (event, id) => {
   try {
     return { keys: vault.deleteKey(id) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('keys:setColor', (event, { id, color }) => {
+  try {
+    return { keys: vault.setKeyColor(id, color) };
   } catch (err) {
     return { error: err.message };
   }
