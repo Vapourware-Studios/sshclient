@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Slider } from '@/components/ui/slider';
+import { useTheme } from '@/lib/theme-settings.jsx';
 import { Pause, Play } from 'lucide-react';
 
 const ADAPTERS = {
@@ -39,8 +40,11 @@ function formatTime(ms) {
 }
 
 export default function TerminalView({ sessionId, kind = 'ssh', active, recording }) {
+  const { terminalTheme } = useTheme();
   const containerRef = useRef(null);
   const termRef = useRef(null);
+  const terminalThemeRef = useRef(terminalTheme);
+  terminalThemeRef.current = terminalTheme;
   const fitAddonRef = useRef(null);
   const seekRef = useRef(null);
   const positionRef = useRef(0);
@@ -55,7 +59,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       disableStdin: kind === 'playback',
       fontSize: 13,
       fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-      theme: { background: '#00000000' },
+      theme: terminalThemeRef.current,
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -177,6 +181,12 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [kind, playing, duration]);
+
+  // Restyle live terminals when the theme template changes — no re-mount,
+  // so scrollback and the running session are untouched.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = terminalTheme;
+  }, [terminalTheme]);
 
   useEffect(() => {
     if (active) {

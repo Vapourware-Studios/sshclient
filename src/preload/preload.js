@@ -91,7 +91,11 @@ contextBridge.exposeInMainWorld('api', {
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
 
+  themeOpenCssFile: () => ipcRenderer.invoke('theme:openCssFile'),
+  themeSaveCssTemplate: (contents) => ipcRenderer.invoke('theme:saveCssTemplate', contents),
+
   windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
+  windowSetTitleBarOverlay: (isDark) => ipcRenderer.invoke('window:setTitleBarOverlay', isDark),
   onFullScreenChange: (callback) => subscribe('window:fullscreen', callback),
 });
 

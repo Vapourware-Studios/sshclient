@@ -220,6 +220,21 @@ ipcMain.handle('window:isFullScreen', (event) =>
   BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
 );
 
+// Windows-only: repaint the native window-controls strip when the renderer
+// theme flips, so light mode isn't stuck with a dark title bar. macOS uses
+// hiddenInset traffic lights and has no overlay to update.
+ipcMain.handle('window:setTitleBarOverlay', (event, isDark) => {
+  if (process.platform === 'darwin') return;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  try {
+    win?.setTitleBarOverlay(
+      isDark
+        ? { color: '#09090b', symbolColor: '#a1a1aa', height: 44 }
+        : { color: '#fafafa', symbolColor: '#52525b', height: 44 }
+    );
+  } catch {}
+});
+
 // Local filesystem browsing for the SFTP dual-pane view.
 ipcMain.handle('fs:home', () => ({ path: os.homedir() }));
 
@@ -643,6 +658,42 @@ ipcMain.handle('dialog:selectFolder', async (event) => {
   const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return { canceled: true };
   return { path: result.filePaths[0] };
+});
+
+// Custom-theme CSS. The renderer stores the file's contents (localStorage),
+// so the file itself is only read here once per load — no path is retained.
+const MAX_CUSTOM_CSS_BYTES = 512 * 1024;
+
+ipcMain.handle('theme:openCssFile', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile'],
+    filters: [{ name: 'CSS', extensions: ['css'] }],
+  });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+  try {
+    const filePath = result.filePaths[0];
+    const stat = await fsp.stat(filePath);
+    if (stat.size > MAX_CUSTOM_CSS_BYTES) throw new Error('CSS file too large (max 512 KB)');
+    return { css: await fsp.readFile(filePath, 'utf8'), name: path.basename(filePath) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('theme:saveCssTemplate', async (event, contents) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showSaveDialog(win, {
+    defaultPath: 'sshclient-theme.css',
+    filters: [{ name: 'CSS', extensions: ['css'] }],
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  try {
+    await fsp.writeFile(result.filePath, String(contents), 'utf8');
+    return { saved: true };
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
 function buildMenu() {

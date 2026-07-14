@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { Palette } from 'lucide-react';
 import Unlock from '@/components/Unlock';
 import NewConnectionDialog from '@/components/NewConnectionDialog';
 import TabBar from '@/components/TabBar';
 import ContentArea from '@/components/ContentArea';
+import TerminalStylePanel from '@/components/TerminalStylePanel';
+import { SlidePanel } from '@/components/SlidePanel';
 import { useConfirm } from '@/lib/confirm';
 
 const MIN_CONNECTING_MS = 2000;
@@ -17,6 +20,7 @@ export default function App() {
   ]);
   const [activeTabId, setActiveTabId] = useState('vault');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
   const [dialogInitialType, setDialogInitialType] = useState('ssh');
   const [connectError, setConnectError] = useState(null);
@@ -238,6 +242,20 @@ export default function App() {
     } catch {}
   }
 
+  // Types a snippet into the active terminal tab, whatever kind it is.
+  function runSnippetInActiveTab(snippet) {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || tab.status !== 'connected') return;
+    const write =
+      tab.type === 'local'
+        ? window.api.localWrite
+        : tab.type === 'serial'
+          ? window.api.serialWrite
+          : window.api.sshWrite;
+    const command = snippet.command;
+    write(tab.id, command.endsWith('\n') ? command : `${command}\n`);
+  }
+
   async function connectAndStartForward(host, spec) {
     const existing = tabs.find(
       (t) => t.type === 'ssh' && t.status === 'connected' && t.connectConfig?.hostId === host.id
@@ -321,6 +339,10 @@ export default function App() {
     await refreshVaultStatus();
   }
 
+  const activeTab = tabs.find((t) => t.id === activeTabId) || null;
+  const terminalTabActive =
+    activeTab?.status === 'connected' && ['ssh', 'local', 'serial'].includes(activeTab.type);
+
   if (!vaultStatus) return null;
 
   if (!vaultStatus.unlocked) {
@@ -348,25 +370,47 @@ export default function App() {
         )}
 
         <div className="flex min-w-0 flex-1 overflow-hidden">
-          <ContentArea
-            tabs={tabs}
-            activeTabId={activeTabId}
-            sessionLogs={sessionLogs}
-            hosts={hosts}
-            onCloseTab={closeTab}
-            onRetryTab={retryTab}
-            onRespondToHostKey={respondToHostKey}
-            onConnect={connectToHost}
-            onEdit={openEditHostDialog}
-            onDelete={deleteHost}
-            onDuplicate={duplicateHost}
-            onNewConnection={openNewConnectionDialog}
-            onLockVault={lockVault}
-            onOpenLocalTerminal={openLocalTerminal}
-            onPlayRecording={openPlayback}
-            onRunOnHost={runOnHost}
-            onConnectAndStartForward={connectAndStartForward}
-          />
+          <div className="relative flex min-w-0 flex-1">
+            <ContentArea
+              tabs={tabs}
+              activeTabId={activeTabId}
+              sessionLogs={sessionLogs}
+              hosts={hosts}
+              onCloseTab={closeTab}
+              onRetryTab={retryTab}
+              onRespondToHostKey={respondToHostKey}
+              onConnect={connectToHost}
+              onEdit={openEditHostDialog}
+              onDelete={deleteHost}
+              onDuplicate={duplicateHost}
+              onNewConnection={openNewConnectionDialog}
+              onLockVault={lockVault}
+              onOpenLocalTerminal={openLocalTerminal}
+              onPlayRecording={openPlayback}
+              onRunOnHost={runOnHost}
+              onConnectAndStartForward={connectAndStartForward}
+            />
+
+            {terminalTabActive && (
+              <button
+                onClick={() => setStylePanelOpen((open) => !open)}
+                title="Terminal style & snippets"
+                className="absolute right-2 top-2 z-20 flex size-8 items-center justify-center rounded-md border bg-background/80 text-muted-foreground backdrop-blur hover:bg-accent hover:text-foreground"
+              >
+                <Palette className="size-4" />
+              </button>
+            )}
+          </div>
+
+          <SlidePanel
+            open={stylePanelOpen && terminalTabActive}
+            onClose={() => setStylePanelOpen(false)}
+          >
+            <TerminalStylePanel
+              onClose={() => setStylePanelOpen(false)}
+              onRunSnippet={runSnippetInActiveTab}
+            />
+          </SlidePanel>
 
           <NewConnectionDialog
             open={dialogOpen}

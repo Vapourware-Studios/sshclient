@@ -524,6 +524,17 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                onEdit(item);
+              }}
+              title="Edit snippet"
+              aria-label={`Edit snippet ${item.name}`}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
                 onDelete(item.id);
               }}
               title="Delete snippet"
@@ -688,6 +699,14 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost }) {
                           title={item.targets?.length ? 'Run on targets' : 'Run snippet'}
                           className={iconButtonClass}>
                           <Play className="size-3.5" />
+                        </button>
+                        <button
+                          onClick={() => openEdit(item)}
+                          title="Edit snippet"
+                          aria-label={`Edit snippet ${item.name}`}
+                          className={iconButtonClass}
+                        >
+                          <Pencil className="size-3.5" />
                         </button>
                         <button
                           onClick={() => remove(item.id)}

@@ -72,7 +72,6 @@ export default function Sidebar({ section, onSectionChange, onLockVault }) {
           Icon={Settings}
           label="Settings"
         />
-        <NavButton active={false} onClick={onLockVault} Icon={Lock} label="Lock Vault" />
       </div>
     </aside>
   );
