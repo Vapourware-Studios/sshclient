@@ -6,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import ThemePicker from '@/components/ThemePicker';
-import { useGlassSettings } from '@/lib/glass-settings.jsx';
+import { useGlassSettings, GLASS_SUPPORTED } from '@/lib/glass-settings.jsx';
 import { useTheme } from '@/lib/theme-settings.jsx';
 import { CUSTOM_CSS_TEMPLATE } from '@/lib/terminal-themes';
 
@@ -93,13 +93,16 @@ export default function SettingsPanel() {
           </CardContent>
         </Card>
 
+        {GLASS_SUPPORTED && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               Liquid Glass
             </CardTitle>
             <CardDescription>
-              Native MacOS liquid glass. Requires macOS 26+
+              Lets the native macOS Tahoe glass material show through the tab bar and
+              terminal background. Requires macOS 26+; has no visible effect on older
+              versions or other platforms.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
@@ -124,6 +127,7 @@ export default function SettingsPanel() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
   );

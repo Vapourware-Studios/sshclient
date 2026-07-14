@@ -313,6 +313,6 @@ export const CUSTOM_CSS_TEMPLATE = `/*
 }
 
 /* You can also target any part of the UI with regular CSS, e.g.:
-.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cba6f7; }
+::-webkit-scrollbar-thumb { background-color: #cba6f7; }
 */
 `;

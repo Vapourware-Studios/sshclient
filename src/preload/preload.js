@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   platform: process.platform,
+  osVersion: process.getSystemVersion(),
 
   ping: (message) => ipcRenderer.invoke('ping', message),
 
@@ -95,8 +96,12 @@ contextBridge.exposeInMainWorld('api', {
   themeSaveCssTemplate: (contents) => ipcRenderer.invoke('theme:saveCssTemplate', contents),
 
   windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
-  windowSetTitleBarOverlay: (isDark) => ipcRenderer.invoke('window:setTitleBarOverlay', isDark),
+  windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+  windowMaximizeToggle: () => ipcRenderer.invoke('window:maximizeToggle'),
+  windowClose: () => ipcRenderer.invoke('window:close'),
   onFullScreenChange: (callback) => subscribe('window:fullscreen', callback),
+  onMaximizedChange: (callback) => subscribe('window:maximized', callback),
 });
 
 function subscribe(channel, callback) {

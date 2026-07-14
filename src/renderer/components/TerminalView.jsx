@@ -63,6 +63,25 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return true;
+      const key = e.key.toLowerCase();
+      if (key === 'c' && term.hasSelection()) {
+        e.preventDefault();
+        navigator.clipboard.writeText(term.getSelection());
+        return false;
+      }
+      if (key === 'v') {
+        e.preventDefault();
+        navigator.clipboard.readText().then((text) => {
+          if (text) term.paste(text);
+        });
+        return false;
+      }
+      return true;
+    });
+
     term.open(containerRef.current);
     fitAddon.fit();
 

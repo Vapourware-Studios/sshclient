@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Terminal as TerminalIcon, X, Loader2, Home, Plus, Folder } from 'lucide-react';
+import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useGlassSettings, glassAlpha } from '@/lib/glass-settings.jsx';
 
@@ -21,6 +21,53 @@ function Tab({ active, onClick, children }) {
       }`}
     >
       {children}
+    </div>
+  );
+}
+
+function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    if (typeof window.api?.onMaximizedChange !== 'function') return;
+    let alive = true;
+    window.api.windowIsMaximized().then((m) => {
+      if (alive) setMaximized(Boolean(m));
+    });
+    const unsub = window.api.onMaximizedChange((payload) => setMaximized(payload.maximized));
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, []);
+
+  return (
+    <div className="flex h-full shrink-0 items-stretch self-stretch" style={NO_DRAG}>
+      <button
+        onClick={() => window.api.windowMinimize()}
+        title="Minimize"
+        className="flex w-11 items-center justify-center text-muted-foreground hover:bg-background/60 hover:text-foreground"
+      >
+        <Minus className="size-3.5" />
+      </button>
+      <button
+        onClick={() => window.api.windowMaximizeToggle()}
+        title={maximized ? 'Restore' : 'Maximize'}
+        className="flex w-11 items-center justify-center text-muted-foreground hover:bg-background/60 hover:text-foreground"
+      >
+        {maximized ? (
+          <Copy className="size-3 -scale-x-100" />
+        ) : (
+          <Square className="size-3" />
+        )}
+      </button>
+      <button
+        onClick={() => window.api.windowClose()}
+        title="Close"
+        className="flex w-11 items-center justify-center text-muted-foreground hover:bg-red-500/90 hover:text-white"
+      >
+        <X className="size-4" />
+      </button>
     </div>
   );
 }
@@ -49,7 +96,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
     <div
       className={`flex h-11 shrink-0 items-center gap-1 border-b transition-[padding] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         IS_MAC && !fullScreen ? 'pl-24' : 'pl-3'
-      } ${IS_MAC ? 'pr-3' : 'pr-36'}`}
+      } ${IS_MAC ? 'pr-3' : 'pr-0'}`}
       style={{
         WebkitAppRegion: 'drag',
         backgroundColor: `color-mix(in oklch, var(--muted) ${barAlpha * 100}%, transparent)`,
@@ -99,10 +146,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
         <Plus className="size-4" />
       </button>
 
-      {/* <div className="ml-auto flex items-center gap-2" style={NO_DRAG}>
-        <TerminalIcon className="size-4" />
-        <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
-        </div> */}
+      {!IS_MAC && <WindowControls />}
     </div>
   );
 }

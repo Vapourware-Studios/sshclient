@@ -45,9 +45,6 @@ export function ThemeProvider({ children }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
     document.documentElement.classList.toggle('dark', activeTheme.dark);
-    // Windows draws its own window-controls strip — keep it in the same
-    // light/dark world as the rest of the app (no-op elsewhere).
-    window.api.windowSetTitleBarOverlay?.(activeTheme.dark);
 
     try {
       templateSheet.replaceSync(activeTheme.builtin ? '' : themeCssText(activeTheme));

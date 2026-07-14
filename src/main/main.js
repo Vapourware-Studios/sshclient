@@ -30,7 +30,6 @@ function createWindow() {
         }
       : {
           titleBarStyle: 'hidden',
-          titleBarOverlay: { color: '#09090b', symbolColor: '#a1a1aa', height: 44 },
           backgroundColor: '#09090b',
         }),
     icon: path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'),
@@ -47,6 +46,12 @@ function createWindow() {
   );
   win.on('leave-full-screen', () =>
     win.webContents.send('window:fullscreen', { fullScreen: false })
+  );
+  win.on('maximize', () =>
+    win.webContents.send('window:maximized', { maximized: true })
+  );
+  win.on('unmaximize', () =>
+    win.webContents.send('window:maximized', { maximized: false })
   );
 
   if (isMac) {
@@ -220,19 +225,23 @@ ipcMain.handle('window:isFullScreen', (event) =>
   BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
 );
 
-// Windows-only: repaint the native window-controls strip when the renderer
-// theme flips, so light mode isn't stuck with a dark title bar. macOS uses
-// hiddenInset traffic lights and has no overlay to update.
-ipcMain.handle('window:setTitleBarOverlay', (event, isDark) => {
-  if (process.platform === 'darwin') return;
+ipcMain.handle('window:isMaximized', (event) =>
+  BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+);
+
+ipcMain.handle('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+ipcMain.handle('window:maximizeToggle', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  try {
-    win?.setTitleBarOverlay(
-      isDark
-        ? { color: '#09090b', symbolColor: '#a1a1aa', height: 44 }
-        : { color: '#fafafa', symbolColor: '#52525b', height: 44 }
-    );
-  } catch {}
+  if (!win) return;
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+});
+
+ipcMain.handle('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
 });
 
 // Local filesystem browsing for the SFTP dual-pane view.

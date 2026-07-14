@@ -119,6 +119,25 @@
     @apply text-foreground;
     background-color: transparent;
   }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
 .xterm .xterm-viewport {
@@ -289,26 +308,5 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
-  }
-  .custom-scrollbar {
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background-color: var(--border);
-    border-radius: 9999px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background-color: var(--muted-foreground);
-  }
-  .custom-scrollbar::-webkit-scrollbar-corner {
-    background: transparent;
   }
 }
