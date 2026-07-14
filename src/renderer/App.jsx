@@ -1,28 +1,34 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Terminal as TerminalIcon, Plus, X, Server, Pencil, Trash2, Loader2, Lock, Folder } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Palette } from 'lucide-react';
 import Unlock from '@/components/Unlock';
 import NewConnectionDialog from '@/components/NewConnectionDialog';
-import TerminalView from '@/components/TerminalView';
-import SftpView from '@/components/SftpView';
-import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
+import TabBar from '@/components/TabBar';
+import ContentArea from '@/components/ContentArea';
+import TerminalStylePanel from '@/components/TerminalStylePanel';
+import { SlidePanel } from '@/components/SlidePanel';
+import { useConfirm } from '@/lib/confirm';
 
 const MIN_CONNECTING_MS = 2000;
 
 export default function App() {
+  const confirm = useConfirm();
   const [vaultStatus, setVaultStatus] = useState(null);
   const [hosts, setHosts] = useState([]);
-  const [tabs, setTabs] = useState([]);
-  const [activeTabId, setActiveTabId] = useState(null);
+  const [tabs, setTabs] = useState([
+    { id: 'vault', title: 'Hosts', constant: true },
+    { id: 'sftp', title: 'SFTP', constant: true },
+  ]);
+  const [activeTabId, setActiveTabId] = useState('vault');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [stylePanelOpen, setStylePanelOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
+  const [dialogInitialType, setDialogInitialType] = useState('ssh');
   const [connectError, setConnectError] = useState(null);
   const [sessionLogs, setSessionLogs] = useState({});
 
   const startedAtRef = useRef(new Map());
   const pendingTimeoutsRef = useRef(new Map());
+  const pendingReadyActionRef = useRef(new Map());
 
   function afterMinDelay(sessionId, apply) {
     const startedAt = startedAtRef.current.get(sessionId) ?? Date.now();
@@ -41,6 +47,18 @@ export default function App() {
     refreshVaultStatus();
   }, []);
 
+  // A file dropped anywhere outside a real drop zone would make Electron
+  // navigate the whole window to that file — swallow stray drops globally.
+  useEffect(() => {
+    const prevent = (e) => e.preventDefault();
+    document.addEventListener('dragover', prevent);
+    document.addEventListener('drop', prevent);
+    return () => {
+      document.removeEventListener('dragover', prevent);
+      document.removeEventListener('drop', prevent);
+    };
+  }, []);
+
   useEffect(() => {
     if (vaultStatus?.unlocked) refreshHosts();
   }, [vaultStatus?.unlocked]);
@@ -55,7 +73,14 @@ export default function App() {
     });
 
     const unsubReady = window.api.onSshReady(({ sessionId }) => {
-      afterMinDelay(sessionId, () => patchTab(sessionId, { status: 'connected' }));
+      afterMinDelay(sessionId, () => {
+        patchTab(sessionId, { status: 'connected' });
+        const pending = pendingReadyActionRef.current.get(sessionId);
+        if (pending) {
+          pendingReadyActionRef.current.delete(sessionId);
+          pending.onReady(sessionId);
+        }
+      });
     });
 
     const unsubError = window.api.onSshError(({ sessionId, message }) => {
@@ -67,6 +92,11 @@ export default function App() {
               : t
           )
         );
+        const pending = pendingReadyActionRef.current.get(sessionId);
+        if (pending) {
+          pendingReadyActionRef.current.delete(sessionId);
+          pending.onFailure?.(message);
+        }
       });
     });
 
@@ -74,8 +104,6 @@ export default function App() {
       patchTab(sessionId, { hostKeyInfo: info });
     });
 
-    // Every log line the main process emits while connecting (including
-    // ssh2's raw protocol trace) is kept per session, capped at 400 lines.
     const unsubLog = window.api.onSshLog(({ sessionId, line, level }) => {
       setSessionLogs((prev) => {
         const entry = { id: crypto.randomUUID(), time: Date.now(), line, level };
@@ -103,8 +131,22 @@ export default function App() {
     if (!result.error) setHosts(result.hosts);
   }
 
-  async function openSession(connectConfig, title) {
+  async function openSession(connectConfig, title, type = 'ssh') {
     setConnectError(null);
+
+    if (type !== 'ssh') {
+      const connect = type === 'local' ? window.api.localConnect : window.api.serialConnect;
+      const result = await connect(connectConfig);
+      if (result.error) {
+        setConnectError(result.error);
+        throw new Error(result.error);
+      }
+      const tab = { id: result.sessionId, title, type, status: 'connected', connectConfig };
+      setTabs((prev) => [...prev, tab]);
+      setActiveTabId(tab.id);
+      return tab.id;
+    }
+
     const result = await window.api.sshConnect(connectConfig);
     if (result.error) {
       setConnectError(result.error);
@@ -113,6 +155,7 @@ export default function App() {
     const tab = {
       id: result.sessionId,
       title,
+      type,
       status: 'connecting',
       stage: 'connecting',
       connectConfig,
@@ -120,9 +163,19 @@ export default function App() {
     startedAtRef.current.set(tab.id, Date.now());
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
+    return tab.id;
+  }
+
+  async function openLocalTerminal() {
+    try {
+      await openSession({}, 'Local', 'local');
+    } catch {}
   }
 
   async function closeTab(tabId) {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (tab?.constant) return;
+
     const pendingTimeout = pendingTimeoutsRef.current.get(tabId);
     if (pendingTimeout) {
       clearTimeout(pendingTimeout);
@@ -135,7 +188,15 @@ export default function App() {
       return rest;
     });
 
-    await window.api.sshDisconnect(tabId);
+    const disconnect =
+      tab?.type === 'local'
+        ? window.api.localDisconnect
+        : tab?.type === 'serial'
+          ? window.api.serialDisconnect
+          : tab?.type === 'playback'
+            ? null
+            : window.api.sshDisconnect;
+    if (disconnect) await disconnect(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (activeTabId === tabId) {
@@ -152,7 +213,7 @@ export default function App() {
       return rest;
     });
     try {
-      await openSession(tab.connectConfig, tab.title);
+      await openSession(tab.connectConfig, tab.title, tab.type);
     } catch {}
   }
 
@@ -162,8 +223,86 @@ export default function App() {
     } catch {}
   }
 
-  function openNewConnectionDialog() {
+  async function runOnHost(host, command) {
+    const text = command.endsWith('\n') ? command : `${command}\n`;
+    const existing = tabs.find(
+      (t) => t.type === 'ssh' && t.status === 'connected' && t.connectConfig?.hostId === host.id
+    );
+    if (existing) {
+      window.api.sshWrite(existing.id, text);
+      return;
+    }
+    try {
+      const sessionId = await openSession({ hostId: host.id }, host.label || host.host);
+      if (sessionId) {
+        pendingReadyActionRef.current.set(sessionId, {
+          onReady: () => window.api.sshWrite(sessionId, text),
+        });
+      }
+    } catch {}
+  }
+
+  // Types a snippet into the active terminal tab, whatever kind it is.
+  function runSnippetInActiveTab(snippet) {
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (!tab || tab.status !== 'connected') return;
+    const write =
+      tab.type === 'local'
+        ? window.api.localWrite
+        : tab.type === 'serial'
+          ? window.api.serialWrite
+          : window.api.sshWrite;
+    const command = snippet.command;
+    write(tab.id, command.endsWith('\n') ? command : `${command}\n`);
+  }
+
+  async function connectAndStartForward(host, spec) {
+    const existing = tabs.find(
+      (t) => t.type === 'ssh' && t.status === 'connected' && t.connectConfig?.hostId === host.id
+    );
+    if (existing) {
+      const result = await window.api.sshForwardStart(existing.id, spec);
+      return result.error ? result : { forward: result.forward, sessionId: existing.id };
+    }
+
+    let sessionId;
+    try {
+      sessionId = await openSession({ hostId: host.id }, host.label || host.host);
+    } catch (err) {
+      return { error: err.message };
+    }
+
+    return new Promise((resolve) => {
+      pendingReadyActionRef.current.set(sessionId, {
+        onReady: async () => {
+          const result = await window.api.sshForwardStart(sessionId, spec);
+          resolve(result.error ? result : { forward: result.forward, sessionId });
+        },
+        onFailure: (message) => resolve({ error: message || 'Failed to connect' }),
+      });
+    });
+  }
+
+  function openPlayback(recording) {
+    const existing = tabs.find((t) => t.type === 'playback' && t.recording?.id === recording.id);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const tab = {
+      id: crypto.randomUUID(),
+      title: `${recording.username}@${recording.host} (replay)`,
+      type: 'playback',
+      status: 'connected',
+      recording,
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+  }
+
+  function openNewConnectionDialog(type = 'ssh') {
     setEditingHost(null);
+    setDialogInitialType(type);
     setDialogOpen(true);
   }
 
@@ -173,24 +312,21 @@ export default function App() {
   }
 
   async function deleteHost(host) {
-    const confirmed = window.confirm(
-      `Delete saved host "${host.label || host.host}"? This cannot be undone.`
-    );
+    const confirmed = await confirm({
+      title: 'Delete host',
+      description: `Delete saved host "${host.label || host.host}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
     if (!confirmed) return;
 
     const result = await window.api.hostsDelete(host.id);
     if (!result.error) setHosts(result.hosts);
   }
 
-  // Switches a connected tab between the terminal and the file browser.
-  // The SFTP view mounts the first time it's opened and then stays alive
-  // (just hidden), so navigation state survives switching back and forth.
-  function setTabView(tabId, view) {
-    setTabs((prev) =>
-      prev.map((t) =>
-        t.id === tabId ? { ...t, view, sftpOpened: t.sftpOpened || view === 'files' } : t
-      )
-    );
+  async function duplicateHost(host) {
+    const result = await window.api.hostsDuplicate(host.id);
+    if (!result.error) setHosts(result.hosts);
   }
 
   async function respondToHostKey(tabId, trust) {
@@ -203,6 +339,10 @@ export default function App() {
     await refreshVaultStatus();
   }
 
+  const activeTab = tabs.find((t) => t.id === activeTabId) || null;
+  const terminalTabActive =
+    activeTab?.status === 'connected' && ['ssh', 'local', 'serial'].includes(activeTab.type);
+
   if (!vaultStatus) return null;
 
   if (!vaultStatus.unlocked) {
@@ -211,137 +351,17 @@ export default function App() {
     );
   }
 
-  const activeTab = tabs.find((t) => t.id === activeTabId) || null;
-
   return (
     <div className="flex h-screen">
-      <div
-        className="fixed inset-x-0 top-0 z-50 h-9"
-        style={{ WebkitAppRegion: 'drag' }}
-      />
+      <main className="flex min-w-0 flex-1 flex-col">
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelectTab={setActiveTabId}
+          onCloseTab={closeTab}
+          onNewConnection={openNewConnectionDialog}
+        />
 
-      <aside className="flex w-60 flex-col border-r bg-sidebar text-sidebar-foreground">
-        <div className="h-9 shrink-0" />
-
-        <div className="flex items-center justify-between px-4 py-2">
-          <div className="flex items-center gap-2">
-            <TerminalIcon className="size-4" />
-            <h1 className="text-sm font-semibold tracking-widest">SSH CLIENT</h1>
-          </div>
-          <button
-            onClick={lockVault}
-            title="Lock vault"
-            className="rounded p-1 text-muted-foreground hover:text-foreground"
-          >
-            <Lock className="size-3.5" />
-          </button>
-        </div>
-
-        <Separator />
-
-        <div className="flex items-center justify-between px-4 pt-4 pb-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Hosts
-          </h2>
-          <Badge variant="secondary">{hosts.length}</Badge>
-        </div>
-
-        <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-2">
-          {hosts.length === 0 && (
-            <p className="px-2 text-sm text-muted-foreground">No saved hosts yet</p>
-          )}
-          {hosts.map((host) => (
-            <div
-              key={host.id}
-              className="group flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-accent"
-            >
-              <button
-                onClick={() => connectToHost(host)}
-                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
-              >
-                <Server className="size-3.5 shrink-0" />
-                <span className="truncate">{host.label || host.host}</span>
-              </button>
-              <button
-                onClick={() => openEditHostDialog(host)}
-                title="Edit host"
-                className="hidden shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:block"
-              >
-                <Pencil className="size-3.5" />
-              </button>
-              <button
-                onClick={() => deleteHost(host)}
-                title="Delete host"
-                className="hidden shrink-0 rounded p-1 text-muted-foreground hover:text-destructive group-hover:block"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="p-2">
-          <Button className="w-full" size="sm" onClick={openNewConnectionDialog}>
-            <Plus className="size-4" /> New connection
-          </Button>
-        </div>
-      </aside>
-
-      <main className="flex flex-1 flex-col">
-        <div className="h-9 shrink-0" style={{ WebkitAppRegion: 'drag' }} />
-
-        {tabs.length > 0 && (
-          <div className="flex items-center gap-1 border-b bg-muted/40 px-2">
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                onClick={() => setActiveTabId(tab.id)}
-                className={`flex cursor-pointer items-center gap-2 rounded-t-md border-x border-t px-3 py-1.5 text-sm ${
-                  tab.id === activeTabId
-                    ? 'border-border bg-background'
-                    : 'border-transparent text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {tab.status === 'connecting' ? (
-                  <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                ) : tab.status === 'error' ? (
-                  <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-                ) : (
-                  <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
-                )}
-                <span className="max-w-32 truncate">{tab.title}</span>
-                <X
-                  className="size-3.5 hover:text-destructive"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(tab.id);
-                  }}
-                />
-              </div>
-            ))}
-
-            {activeTab?.status === 'connected' && (
-              <div className="ml-auto flex items-center gap-0.5 py-1">
-                {[
-                  { id: 'terminal', label: 'Terminal', Icon: TerminalIcon },
-                  { id: 'files', label: 'Files', Icon: Folder },
-                ].map(({ id, label, Icon }) => (
-                  <button
-                    key={id}
-                    onClick={() => setTabView(activeTab.id, id)}
-                    className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs ${
-                      (activeTab.view ?? 'terminal') === id
-                        ? 'border bg-background text-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <Icon className="size-3.5" /> {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {connectError && (
           <p className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
@@ -349,72 +369,64 @@ export default function App() {
           </p>
         )}
 
-        <div className="relative flex-1 bg-[#0d1117]">
-          {tabs.length === 0 && (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              No active sessions — connect to a host to get started.
-            </div>
-          )}
-
-          {tabs
-            .filter((t) => t.status === 'connected')
-            .map((tab) => (
-              <Fragment key={tab.id}>
-                <TerminalView
-                  sessionId={tab.id}
-                  active={tab.id === activeTabId && (tab.view ?? 'terminal') === 'terminal'}
-                />
-                {tab.sftpOpened && (
-                  <SftpView
-                    sessionId={tab.id}
-                    visible={tab.id === activeTabId && tab.view === 'files'}
-                  />
-                )}
-              </Fragment>
-            ))}
-
-          {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (
-            <HostKeyPromptView
-              title={activeTab.title}
-              info={activeTab.hostKeyInfo}
-              onTrust={() => respondToHostKey(activeTab.id, true)}
-              onReject={() => respondToHostKey(activeTab.id, false)}
+        <div className="flex min-w-0 flex-1 overflow-hidden">
+          <div className="relative flex min-w-0 flex-1">
+            <ContentArea
+              tabs={tabs}
+              activeTabId={activeTabId}
+              sessionLogs={sessionLogs}
+              hosts={hosts}
+              onCloseTab={closeTab}
+              onRetryTab={retryTab}
+              onRespondToHostKey={respondToHostKey}
+              onConnect={connectToHost}
+              onEdit={openEditHostDialog}
+              onDelete={deleteHost}
+              onDuplicate={duplicateHost}
+              onNewConnection={openNewConnectionDialog}
+              onLockVault={lockVault}
+              onOpenLocalTerminal={openLocalTerminal}
+              onPlayRecording={openPlayback}
+              onRunOnHost={runOnHost}
+              onConnectAndStartForward={connectAndStartForward}
             />
-          )}
 
-          {activeTab?.status === 'connecting' && !activeTab.hostKeyInfo && (
-            <ConnectingView
-              title={activeTab.title}
-              stage={activeTab.stage}
-              logs={sessionLogs[activeTab.id] ?? []}
-              onCancel={() => closeTab(activeTab.id)}
-            />
-          )}
+            {terminalTabActive && (
+              <button
+                onClick={() => setStylePanelOpen((open) => !open)}
+                title="Terminal style & snippets"
+                className="absolute right-2 top-2 z-20 flex size-8 items-center justify-center rounded-md border bg-background/80 text-muted-foreground backdrop-blur hover:bg-accent hover:text-foreground"
+              >
+                <Palette className="size-4" />
+              </button>
+            )}
+          </div>
 
-          {activeTab?.status === 'error' && (
-            <ConnectErrorView
-              title={activeTab.title}
-              message={activeTab.error}
-              logs={sessionLogs[activeTab.id] ?? []}
-              onRetry={() => retryTab(activeTab)}
-              onClose={() => closeTab(activeTab.id)}
+          <SlidePanel
+            open={stylePanelOpen && terminalTabActive}
+            onClose={() => setStylePanelOpen(false)}
+          >
+            <TerminalStylePanel
+              onClose={() => setStylePanelOpen(false)}
+              onRunSnippet={runSnippetInActiveTab}
             />
-          )}
+          </SlidePanel>
+
+          <NewConnectionDialog
+            open={dialogOpen}
+            onOpenChange={(next) => {
+              setDialogOpen(next);
+              if (!next) setEditingHost(null);
+            }}
+            editingHost={editingHost}
+            initialType={dialogInitialType}
+            onSaved={setHosts}
+            onConnect={async (config, title, type) => {
+              await openSession(config, title, type);
+            }}
+          />
         </div>
       </main>
-
-      <NewConnectionDialog
-        open={dialogOpen}
-        onOpenChange={(next) => {
-          setDialogOpen(next);
-          if (!next) setEditingHost(null);
-        }}
-        editingHost={editingHost}
-        onSaved={setHosts}
-        onConnect={async (config, title) => {
-          await openSession(config, title);
-        }}
-      />
     </div>
   );
 }

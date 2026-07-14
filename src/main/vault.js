@@ -42,6 +42,21 @@ function init(userDataDir) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS keys (
+      id TEXT PRIMARY KEY,
+      data_iv TEXT NOT NULL,
+      data_auth_tag TEXT NOT NULL,
+      data_ciphertext TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS snippets (
+      id TEXT PRIMARY KEY, data_iv TEXT NOT NULL, data_auth_tag TEXT NOT NULL,
+      data_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS session_history (
+      id TEXT PRIMARY KEY, data_iv TEXT NOT NULL, data_auth_tag TEXT NOT NULL,
+      data_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
   `);
 }
 
@@ -201,6 +216,8 @@ function listHosts() {
       port: data.port,
       username: data.username,
       privateKeyPath: data.privateKeyPath || undefined,
+      keyId: data.keyId || undefined,
+      color: data.color || null,
       hasPassword: Boolean(data.password),
       hasPassphrase: Boolean(data.passphrase),
       hasPrivateKey: Boolean(data.privateKeyPath),
@@ -238,8 +255,8 @@ function validateHost(host) {
     errors.push('Private key file does not exist');
   }
 
-  if (!host.password && !host.privateKeyPath) {
-    errors.push('Either a password or a private key is required');
+  if (!host.password && !host.privateKeyPath && !host.keyId) {
+    errors.push('A password, a private key, or a Keychain key is required');
   }
 
   return errors;
@@ -269,6 +286,8 @@ function saveHost(host) {
     port: Number(merged.port) || 22,
     username: merged.username,
     privateKeyPath: merged.privateKeyPath || undefined,
+    keyId: merged.keyId || undefined,
+    color: merged.color || undefined,
   };
   if (merged.password) payload.password = merged.password;
   if (merged.passphrase) payload.passphrase = merged.passphrase;
@@ -288,10 +307,113 @@ function saveHost(host) {
   return listHosts();
 }
 
+function duplicateHost(id) {
+  requireUnlocked();
+  const row = db.prepare('SELECT * FROM hosts WHERE id = ?').get(id);
+  if (!row) throw new Error('Host not found');
+
+  const data = decryptHostData(row);
+  const payload = { ...data, label: `${data.label || data.host} copy` };
+  const enc = encryptJSON(derivedKey, payload);
+  const newId = crypto.randomUUID();
+  const now = Date.now();
+
+  db.prepare(
+    `INSERT INTO hosts (id, data_iv, data_auth_tag, data_ciphertext, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(newId, enc.iv, enc.authTag, enc.ciphertext, now, now);
+
+  return listHosts();
+}
+
 function deleteHost(id) {
   requireUnlocked();
   db.prepare('DELETE FROM hosts WHERE id = ?').run(id);
   return listHosts();
+}
+
+function decryptKeyData(row) {
+  return decryptJSON(derivedKey, {
+    iv: row.data_iv,
+    authTag: row.data_auth_tag,
+    ciphertext: row.data_ciphertext,
+  });
+}
+
+// SSH keys generated in-app. The private key never leaves the vault
+// unencrypted except when handed to ssh2 for a connection.
+function listKeys() {
+  requireUnlocked();
+  const rows = db.prepare('SELECT * FROM keys ORDER BY created_at ASC').all();
+  return rows.map((row) => {
+    const data = decryptKeyData(row);
+    return {
+      id: row.id,
+      name: data.name,
+      type: data.type,
+      bits: data.bits,
+      public: data.public,
+      fingerprint: data.fingerprint,
+      color: data.color || null,
+      hasPassphrase: Boolean(data.passphrase),
+      createdAt: row.created_at,
+    };
+  });
+}
+
+function saveKey(key) {
+  requireUnlocked();
+  if (!key?.name || !key?.private || !key?.public) {
+    throw new Error('Key name and material are required');
+  }
+
+  const enc = encryptJSON(derivedKey, {
+    name: key.name,
+    type: key.type,
+    bits: key.bits,
+    private: key.private,
+    public: key.public,
+    passphrase: key.passphrase || undefined,
+    fingerprint: key.fingerprint,
+  });
+
+  db.prepare(
+    `INSERT INTO keys (id, data_iv, data_auth_tag, data_ciphertext, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(crypto.randomUUID(), enc.iv, enc.authTag, enc.ciphertext, Date.now());
+
+  return listKeys();
+}
+
+function getKeySecret(id) {
+  requireUnlocked();
+  const row = db.prepare('SELECT * FROM keys WHERE id = ?').get(id);
+  if (!row) return null;
+  return { id: row.id, ...decryptKeyData(row) };
+}
+
+function deleteKey(id) {
+  requireUnlocked();
+  db.prepare('DELETE FROM keys WHERE id = ?').run(id);
+  return listKeys();
+}
+
+function setKeyColor(id, color) {
+  requireUnlocked();
+  const row = db.prepare('SELECT * FROM keys WHERE id = ?').get(id);
+  if (!row) throw new Error('Key not found');
+
+  const data = decryptKeyData(row);
+  const enc = encryptJSON(derivedKey, { ...data, color: color || undefined });
+
+  db.prepare('UPDATE keys SET data_iv = ?, data_auth_tag = ?, data_ciphertext = ? WHERE id = ?').run(
+    enc.iv,
+    enc.authTag,
+    enc.ciphertext,
+    id
+  );
+
+  return listKeys();
 }
 
 function getKnownHostKey(host, port) {
@@ -299,6 +421,74 @@ function getKnownHostKey(host, port) {
     .prepare('SELECT fingerprint FROM known_hosts WHERE host = ? AND port = ?')
     .get(host, port);
   return row ? row.fingerprint : null;
+}
+
+function listKnownHosts() {
+  const rows = db
+    .prepare(
+      `SELECT host, port, fingerprint, first_seen AS firstSeen
+       FROM known_hosts
+       ORDER BY LOWER(host), port`
+    )
+    .all();
+  return rows.map((row) => ({ ...row }));
+}
+
+function deleteKnownHost(host, port) {
+  db.prepare('DELETE FROM known_hosts WHERE host = ? AND port = ?').run(host, port);
+  return listKnownHosts();
+}
+
+const ENCRYPTED_TABLES = { snippets: 'snippets', session_history: 'session_history' };
+
+function listEncrypted(table) {
+  requireUnlocked();
+  const safeName = ENCRYPTED_TABLES[table];
+  if (!safeName) throw new Error(`Unknown encrypted table: ${table}`);
+  return db.prepare(`SELECT * FROM ${safeName} ORDER BY created_at DESC`).all().map((row) => ({
+    id: row.id,
+    ...decryptJSON(derivedKey, { iv: row.data_iv, authTag: row.data_auth_tag, ciphertext: row.data_ciphertext }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+function saveSnippet(snippet) {
+  requireUnlocked();
+  const name = String(snippet?.name || '').trim();
+  const command = String(snippet?.command || '');
+  if (!name || !command.trim()) throw new Error('Snippet name and command are required');
+  const id = snippet.id || crypto.randomUUID();
+  const now = Date.now();
+  const targets = Array.isArray(snippet?.targets) ? snippet.targets.filter((v) => typeof v === 'string') : [];
+  const enc = encryptJSON(derivedKey, { name, command, targets });
+  db.prepare(`INSERT INTO snippets VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET data_iv=excluded.data_iv, data_auth_tag=excluded.data_auth_tag,
+    data_ciphertext=excluded.data_ciphertext, updated_at=excluded.updated_at`)
+    .run(id, enc.iv, enc.authTag, enc.ciphertext, now, now);
+  return listEncrypted('snippets');
+}
+
+function deleteSnippet(id) {
+  requireUnlocked();
+  db.prepare('DELETE FROM snippets WHERE id = ?').run(id);
+  return listEncrypted('snippets');
+}
+
+function saveSessionHistory(recording) {
+  requireUnlocked();
+  const id = recording.id || crypto.randomUUID();
+  const createdAt = recording.startedAt || Date.now();
+  const enc = encryptJSON(derivedKey, recording);
+  db.prepare('INSERT OR IGNORE INTO session_history VALUES (?, ?, ?, ?, ?)')
+    .run(id, enc.iv, enc.authTag, enc.ciphertext, createdAt);
+  return id;
+}
+
+function deleteSessionHistory(id) {
+  requireUnlocked();
+  db.prepare('DELETE FROM session_history WHERE id = ?').run(id);
+  return listEncrypted('session_history');
 }
 
 function trustHostKey(host, port, fingerprint) {
@@ -318,8 +508,22 @@ module.exports = {
   lock,
   listHosts,
   saveHost,
+  duplicateHost,
   deleteHost,
   getHostSecret,
+  listKeys,
+  saveKey,
+  getKeySecret,
+  deleteKey,
+  setKeyColor,
   getKnownHostKey,
+  listKnownHosts,
   trustHostKey,
+  deleteKnownHost,
+  listSnippets: () => listEncrypted('snippets'),
+  saveSnippet,
+  deleteSnippet,
+  listSessionHistory: () => listEncrypted('session_history'),
+  saveSessionHistory,
+  deleteSessionHistory,
 };
