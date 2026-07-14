@@ -96,12 +96,10 @@ export default function SettingsPanel() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Sparkles className="size-4" /> Liquid Glass
+              Liquid Glass
             </CardTitle>
             <CardDescription>
-              Lets the native macOS Tahoe glass material show through the tab bar and
-              terminal background. Requires macOS 26+; has no visible effect on older
-              versions or other platforms.
+              Native MacOS liquid glass. Requires macOS 26+
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
@@ -123,10 +121,6 @@ export default function SettingsPanel() {
                 step={1}
                 disabled={!enabled}
               />
-              <p className="text-xs text-muted-foreground">
-                Higher values make the tab bar and terminal more transparent, showing more
-                of the glass material underneath.
-              </p>
             </div>
           </CardContent>
         </Card>

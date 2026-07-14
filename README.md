@@ -1,50 +1,143 @@
-# sshclient
+# SSH Client
 
-A Termius-like SSH + SFTP client for macOS, built from scratch with Electron,
-React, and shadcn/ui — as a project to genuinely learn JavaScript.
+A modern, Termius-like SSH and SFTP desktop client for macOS, built from scratch with Electron, React, and xterm.js — as a project to genuinely learn JavaScript.
 
-## Run it
+> **v0.1.0 · alpha · GPL-3.0**
+
+---
+
+## Features
+
+### Terminal
+- SSH connections with password, private-key file, or keychain-based auth
+- Multi-tab interface — open as many sessions as you need
+- xterm.js terminal with full colour, resize, and scroll support
+- Local shell tab (PTY-backed)
+- Serial port terminal
+- Session recording and scrubbable playback
+
+### SFTP File Browser
+- Dual-pane manager: local filesystem on one side, remote on the other
+- Drag-and-drop transfers (and safety lock to prevent accidental drops)
+- Remote-to-remote transfers between open sessions
+- Progress tracking per transfer
+
+### Vault (encrypted host & key storage)
+- SQLite database encrypted with scrypt + AES-256-GCM
+- Master-password protection
+- Save, edit, duplicate, and delete SSH hosts
+- Colour labels for organisation
+- Known-host fingerprint tracking and change detection
+
+### SSH Key Manager
+- Generate RSA (2048 / 3072 / 4096), ECDSA (256 / 384 / 521), and Ed25519 keys
+- Import existing keys with optional passphrase
+- SHA-256 fingerprint display
+- Colour tagging
+
+### Customisation
+- Multiple built-in terminal colour themes
+- Custom CSS theme support
+- Font-size controls
+- Saved command snippets
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Shell | Electron 43 |
+| UI | React 19, Vite 8, Tailwind CSS 4 |
+| Components | shadcn/ui (New York), Radix UI, Lucide |
+| Terminal | xterm.js 6 + addon-fit |
+| SSH / SFTP | ssh2 1.17 |
+| Local PTY | node-pty |
+| Serial | SerialPort 13 |
+| Storage | Node built-in SQLite + AES-256-GCM |
+
+---
+
+## Getting started
 
 ```bash
-npm install   # first time only — downloads all dependencies
-npm start     # builds the UI, then opens the app window
-npm run dev   # development mode: edits to the UI appear instantly (hot reload)
+# 1. Clone
+git clone https://github.com/Vapourware-Studios/sshclient.git
+cd sshclient
+
+# 2. Install dependencies (first time only)
+npm install
+
+# 3a. Open the app (production build)
+npm start
+
+# 3b. Development mode (hot-reload UI)
+npm run dev
 ```
 
-## Where everything lives
+### Build a distributable
+
+```bash
+npm run dist:mac   # creates a signed .dmg in dist/
+```
+
+**Requirements:** Node 20+, macOS (other platforms untested).
+
+---
+
+## Project layout
 
 ```
 sshclient/
-├── ROADMAP.md             ← THE PLAN. Start here. Phases, lessons, checkpoints.
-├── package.json           ← project ID card: name, scripts, dependencies
-├── vite.config.mjs        ← build-tool settings (Vite turns JSX/Tailwind into plain JS/CSS)
-├── components.json        ← shadcn/ui settings (style, where components go)
-└── src/
-    ├── main/              ← MAIN PROCESS (Node.js — full power)
-    │   └── main.js        ←   creates the window; SSH/SFTP will live here
-    ├── preload/           ← THE BRIDGE between UI and main
-    │   └── preload.js     ←   exposes window.api to the UI
-    └── renderer/          ← THE UI (React — a Chrome page, sandboxed)
-        ├── index.html     ←   shell page; React mounts into <div id="root">
-        ├── main.jsx       ←   hands the page over to React
-        ├── App.jsx        ←   the app's structure + behavior, as components
-        ├── index.css      ←   Tailwind + the shadcn/ui theme (the look)
-        ├── lib/utils.js   ←   cn() class-merging helper the components use
-        └── components/ui/ ←   shadcn/ui building blocks (Button, Card, ...)
+├── src/
+│   ├── main/              ← Node.js / main process
+│   │   ├── main.js        ←   Electron bootstrap, all IPC handlers
+│   │   ├── ssh.js         ←   SSH2 wrapper: terminal, SFTP, recordings
+│   │   ├── vault.js       ←   Encrypted host + key storage
+│   │   ├── localTerm.js   ←   PTY-backed local shell
+│   │   └── serial.js      ←   Serial port adapter
+│   ├── preload/
+│   │   └── preload.js     ← Bridge: exposes window.api to the renderer
+│   └── renderer/          ← React UI (sandboxed Chrome page)
+│       ├── App.jsx        ←   Tab/session management, top-level state
+│       ├── index.css      ←   Tailwind + theme tokens (ONE stylesheet)
+│       └── components/    ←   Feature panels + shadcn/ui building blocks
+├── ROADMAP.md             ← Phase plan, lessons, and ssh2 deep-dive
+├── LICENSE                ← GPL-3.0-only
+└── package.json
 ```
 
-## Docs
+---
 
-Everything lives in `ROADMAP.md`: the phase plan, links to all official
-documentation (Electron, xterm.js, ssh2, MDN, React), and Appendix A —
-the ssh2 basics explained line by line.
+## Docs & learning notes
 
-UI components come from [shadcn/ui](https://ui.shadcn.com) — they're not a
-hidden library; each one is a readable file in `src/renderer/components/ui/`.
-Add more with `npx shadcn@latest add <name>`.
+`ROADMAP.md` is the heart of this project: a phase-by-phase JavaScript curriculum tied directly to the features being built. It includes official documentation links (Electron, xterm.js, ssh2, React, MDN) and **Appendix A** — the ssh2 library explained protocol-level, line by line.
 
-## Current status
+shadcn/ui components are not a hidden library — every component is a readable `.jsx` file in `src/renderer/components/ui/`. Add more with:
 
-**Phase 0 complete** — secure Electron backbone with a working IPC roundtrip.
-The renderer now runs React + Vite + Tailwind + shadcn/ui (Phase 7 pulled
-forward). Next: Phase 1 (JavaScript bootcamp). See `ROADMAP.md`.
+```bash
+npx shadcn@latest add <component-name>
+```
+
+---
+
+## Status
+
+| Phase | Description | Status |
+|---|---|---|
+| 0 | Electron backbone + IPC + React/Vite/Tailwind | ✅ Done |
+| 1 | JavaScript fundamentals | ✅ Done |
+| 2 | SSH terminal | ✅ Done |
+| 3 | Vault (encrypted storage) | ✅ Done |
+| 4 | SFTP browser | ✅ Done |
+| 5 | Key management | ✅ Done |
+| 6 | Serial port + local terminal | ✅ Done |
+| 7 | React (pulled forward to Phase 0) | ✅ Done |
+
+Active work: UI polish, session playback improvements, theme system.
+
+---
+
+## License
+
+GNU General Public License v3.0 — see [LICENSE](LICENSE).
