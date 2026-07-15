@@ -104,8 +104,13 @@ async function initMacUpdater() {
   if (!latest || compareSemver(latest.version, app.getVersion()) <= 0) return;
 
   const brewBin = await findBrewBin();
-  if (!brewBin) {
-    // Not a Homebrew install (or brew isn't on this Mac) — just point at the release page.
+  // Brew being present isn't enough — a DMG install on a Mac that also has
+  // Homebrew must not be routed into `brew upgrade` (the cask isn't installed
+  // there and the upgrade would fail). Only offer the Homebrew flow when the
+  // cask itself is installed.
+  const brewInstalled = brewBin ? await getBrewInstalledVersion(brewBin) : null;
+  if (!brewBin || !brewInstalled) {
+    // Not a Homebrew install of this app — just point at the release page.
     const { response } = await dialog.showMessageBox({
       type: 'info',
       buttons: ['Open download page', 'Later'],
