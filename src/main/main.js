@@ -8,6 +8,7 @@ const ssh = require('./ssh');
 const localTerm = require('./localTerm');
 const serial = require('./serial');
 const vault = require('./vault');
+const updater = require('./updater');
 const isMac = process.platform === 'darwin';
 let liquidGlass = null;
 if (isMac) {
@@ -722,6 +723,7 @@ app.whenReady().then(() => {
   }
   vault.init(app.getPath('userData'));
   createWindow();
+  updater.init();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

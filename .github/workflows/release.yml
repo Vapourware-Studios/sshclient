@@ -1,0 +1,76 @@
+name: Release
+
+# Only builds when a commit on main actually changes package.json's version
+# field — an ordinary commit (no version bump) never triggers a build.
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: check
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            PREVIOUS=$(git show HEAD~1:package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
+          else
+            PREVIOUS=""
+          fi
+          if [ "$CURRENT" != "$PREVIOUS" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            flag: --win
+          - os: macos-latest
+            flag: --mac
+          - os: ubuntu-latest
+            flag: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      # Publishes straight to a public GitHub Release tagged v<version>.
+      #
+      # Windows note: this build is NOT code-signed (no Authenticode cert).
+      # Windows Defender/SmartScreen may still flag or warn on an unsigned
+      # installer from a publisher with no reputation yet — there is no
+      # reliable way to fully avoid that without signing. What this config
+      # does do, as legitimate false-positive mitigation:
+      #   - NSIS installer (not a `portable` exe, which heuristics flag harder)
+      #   - "compression": "normal" — no aggressive/UPX-style packing, which
+      #     raises entropy and is itself a common heuristic trigger
+      #   - consistent publisherName/appId/productName metadata across builds
+      # The durable fix is a code-signing certificate (or Microsoft's Trusted
+      # Signing service) plus, ideally, submitting the installer to
+      # https://www.microsoft.com/wdsi/filesubmission after each release to
+      # build SmartScreen reputation — both are manual/account-holder steps,
+      # not something this workflow can do on its own.
+      - run: npx electron-builder ${{ matrix.flag }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
