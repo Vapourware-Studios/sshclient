@@ -42,7 +42,7 @@ export default function TermiusImportDialog({ open, onOpenChange, onImported }) 
       setConnections(res.connections);
       setKeys(res.keys);
       setSnippets(res.snippets);
-      setSelected(new Set(res.connections.map((c) => c.localId)));
+      setSelected(new Set(res.connections.filter((c) => !c.invalidReason).map((c) => c.localId)));
       setSelectedSnippets(new Set(res.snippets.map((s) => s.localId)));
     });
     return () => {
