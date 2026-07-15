@@ -1,11 +1,3 @@
-// Built-in theme templates. Each palette drives BOTH the app chrome (via the
-// CSS custom properties that index.css defines) and the xterm terminal
-// colours, so picking a template restyles the whole app.
-//
-// `ansi` is the classic 16-colour order:
-// [black, red, green, yellow, blue, magenta, cyan, white,
-//  brBlack, brRed, brGreen, brYellow, brBlue, brMagenta, brCyan, brWhite]
-
 export const THEMES = [
   {
     id: 'dracula', name: 'Dracula', dark: true,
@@ -149,9 +141,6 @@ export const THEMES = [
   },
 ];
 
-// The stock looks, exposed as styles like everything else. `builtin: true`
-// means "don't override the index.css tokens" — the palette fields below
-// only exist so the picker can draw a swatch.
 export const DEFAULT_THEMES = [
   {
     id: 'default-dark', name: 'Default Dark', dark: true, builtin: true,
@@ -173,10 +162,6 @@ export function getTheme(id) {
   return [...DEFAULT_THEMES, ...THEMES].find((t) => t.id === id) ?? null;
 }
 
-// CSS text applied through an adopted stylesheet — adopted sheets sit after
-// index.css in the cascade, so these `:root` values win over the built-in
-// `:root` / `.dark` tokens at equal specificity. Background and sidebar keep
-// the glass color-mix so Liquid Glass transparency still works on templates.
 export function themeCssText(t) {
   return `:root {
   --background: color-mix(in srgb, ${t.bg} var(--glass-bg-alpha, 100%), transparent);
@@ -219,9 +204,6 @@ const ANSI_KEYS = [
   'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
 ];
 
-// Default terminal colours when no template is selected. Dark mode keeps
-// xterm's stock palette; light mode needs dark text on the light app
-// background (One Light-ish), or the terminal is white-on-white.
 const LIGHT_DEFAULT_XTERM = {
   background: '#00000000',
   foreground: '#383a42',
@@ -235,10 +217,6 @@ const LIGHT_DEFAULT_XTERM = {
   brightCyan: '#0184bc', brightWhite: '#ffffff',
 };
 
-// xterm theme. Background stays transparent — the terminal container is
-// painted with the app's --background, so the template (and Liquid Glass)
-// shows through. Built-in styles keep xterm's stock palette in dark and the
-// light palette above in light.
 export function xtermThemeFor(theme) {
   if (!theme || theme.builtin) {
     return !theme || theme.dark ? { background: '#00000000' } : LIGHT_DEFAULT_XTERM;
@@ -254,8 +232,6 @@ export function xtermThemeFor(theme) {
   };
 }
 
-// Template offered to users from Settings → Custom CSS. Everything here is
-// optional: uncomment and change only what you want to override.
 export const CUSTOM_CSS_TEMPLATE = `/*
  * Custom theme for the SSH client.
  *

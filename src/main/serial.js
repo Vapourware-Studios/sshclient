@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { StringDecoder } = require('string_decoder');
 const { SerialPort } = require('serialport');
 
 const sessions = new Map();
@@ -29,9 +30,10 @@ function connect(config = {}, handlers = {}) {
     });
 
     const session = { port, history: [], historyLength: 0, seq: 0, attached: false };
+    const decoder = new StringDecoder('utf8');
 
     port.on('data', (chunk) => {
-      const text = chunk.toString('utf8');
+      const text = decoder.write(chunk);
       session.seq += 1;
       session.history.push(text);
       session.historyLength += text.length;

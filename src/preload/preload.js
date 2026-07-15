@@ -59,8 +59,6 @@ contextBridge.exposeInMainWorld('api', {
   fsHome: () => ipcRenderer.invoke('fs:home'),
   fsList: (path) => ipcRenderer.invoke('fs:list', path),
 
-  // Turns a File object from a drag-and-drop event into its local path.
-  // Only the preload can do this (webUtils is not available to the page).
   pathForFile: (file) => webUtils.getPathForFile(file),
 
   vaultStatus: () => ipcRenderer.invoke('vault:status'),
@@ -72,6 +70,7 @@ contextBridge.exposeInMainWorld('api', {
   hostsSave: (host) => ipcRenderer.invoke('hosts:save', host),
   hostsDuplicate: (id) => ipcRenderer.invoke('hosts:duplicate', id),
   hostsDelete: (id) => ipcRenderer.invoke('hosts:delete', id),
+  onHostsChanged: (callback) => subscribe('hosts:changed', callback),
 
   knownHostsList: () => ipcRenderer.invoke('knownHosts:list'),
   knownHostsDelete: (host, port) => ipcRenderer.invoke('knownHosts:delete', { host, port }),
@@ -88,6 +87,8 @@ contextBridge.exposeInMainWorld('api', {
   keysDelete: (id) => ipcRenderer.invoke('keys:delete', id),
   keysReveal: (id) => ipcRenderer.invoke('keys:reveal', id),
   keysSetColor: (id, color) => ipcRenderer.invoke('keys:setColor', { id, color }),
+
+  termiusPreviewImport: () => ipcRenderer.invoke('termius:preview'),
 
   selectPrivateKey: () => ipcRenderer.invoke('dialog:selectPrivateKey'),
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),

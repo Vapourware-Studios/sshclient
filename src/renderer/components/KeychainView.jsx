@@ -19,6 +19,7 @@ import {
 import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
 import { ColorPicker } from '@/components/ColorPicker';
 import { GridCard, ViewToggle, GRID_CLASS } from '@/components/GridCard';
+import CopyKeyToHostDialog from '@/components/CopyKeyToHostDialog';
 import { useViewMode } from '@/lib/view-mode';
 import { KEY_TYPE_OPTIONS, keyTypeLabel } from '@/lib/keys';
 import { useConfirm } from '@/lib/confirm';
@@ -35,6 +36,7 @@ import {
   EyeOff,
   Pencil,
   Search,
+  Server,
 } from 'lucide-react';
 
 const TEXTAREA_CLASS =
@@ -65,11 +67,7 @@ function CopyButton({ value, label = 'Copy' }) {
   );
 }
 
-// Detail view for one key — the content that swaps in place when you
-// click a different key in the list, Termius-style. Kept lean: the two
-// halves of the pair, ready to copy wherever they're needed.
-function KeyDetailPanel({ keyItem, onDelete, onClose, onColorChange }) {
-  // Private key stays in the vault until the user asks to see it.
+function KeyDetailPanel({ keyItem, onDelete, onClose, onColorChange, onCopyToHost }) {
   const [privateKey, setPrivateKey] = useState(null);
   const [revealBusy, setRevealBusy] = useState(false);
   const [revealError, setRevealError] = useState(null);
@@ -113,7 +111,10 @@ function KeyDetailPanel({ keyItem, onDelete, onClose, onColorChange }) {
             onFocus={(e) => e.target.select()}
             className={TEXTAREA_CLASS}
           />
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => onCopyToHost(keyItem)}>
+              <Server className="size-3.5" /> Copy to host…
+            </Button>
             <CopyButton key={keyItem.id} value={keyItem.public} label="Copy public key" />
           </div>
         </div>
@@ -405,7 +406,7 @@ function ImportKeyPanel({ onImported, onClose }) {
   );
 }
 
-function KeyContextMenu({ keyItem, onEdit, onDelete, children }) {
+function KeyContextMenu({ keyItem, onEdit, onDelete, onCopyToHost, children }) {
   async function copyPublicKey() {
     await navigator.clipboard.writeText(keyItem.public);
   }
@@ -421,6 +422,9 @@ function KeyContextMenu({ keyItem, onEdit, onDelete, children }) {
         <ContextMenuItem onClick={copyPublicKey}>
           <Copy className="size-4" /> Copy public key
         </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCopyToHost(keyItem)}>
+          <Server className="size-4" /> Copy to host…
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" onClick={() => onDelete(keyItem)}>
           <Trash2 className="size-4" /> Remove
@@ -430,7 +434,7 @@ function KeyContextMenu({ keyItem, onEdit, onDelete, children }) {
   );
 }
 
-function KeyRow({ keyItem, selected, onSelect, onDelete }) {
+function KeyRow({ keyItem, selected, onSelect, onDelete, onCopyToHost }) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -446,7 +450,7 @@ function KeyRow({ keyItem, selected, onSelect, onDelete }) {
   }
 
   return (
-    <KeyContextMenu keyItem={keyItem} onEdit={onSelect} onDelete={onDelete}>
+    <KeyContextMenu keyItem={keyItem} onEdit={onSelect} onDelete={onDelete} onCopyToHost={onCopyToHost}>
       <div
         onClick={() => onSelect(keyItem)}
         className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
@@ -488,7 +492,7 @@ function KeyRow({ keyItem, selected, onSelect, onDelete }) {
   );
 }
 
-function KeyGridCard({ keyItem, selected, onSelect, onDelete }) {
+function KeyGridCard({ keyItem, selected, onSelect, onDelete, onCopyToHost }) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -504,7 +508,7 @@ function KeyGridCard({ keyItem, selected, onSelect, onDelete }) {
   }
 
   return (
-    <KeyContextMenu keyItem={keyItem} onEdit={onSelect} onDelete={onDelete}>
+    <KeyContextMenu keyItem={keyItem} onEdit={onSelect} onDelete={onDelete} onCopyToHost={onCopyToHost}>
       <GridCard
         id={keyItem.id}
         tone={keyItem.color || 'chart-2'}
@@ -539,15 +543,14 @@ function KeyGridCard({ keyItem, selected, onSelect, onDelete }) {
   );
 }
 
-export default function KeychainView() {
+export default function KeychainView({ onNewHost }) {
   const confirm = useConfirm();
   const [keys, setKeys] = useState([]);
   const [query, setQuery] = useState('');
   const [viewMode, setViewMode] = useViewMode('keychain');
-  // panel: null | { mode: 'detail', keyId } | { mode: 'generate' } | { mode: 'import' }
   const [panel, setPanel] = useState(null);
-  // Kept during the slide-out so the panel doesn't blank while closing.
   const [renderedPanel, setRenderedPanel] = useState(null);
+  const [copyToHostKey, setCopyToHostKey] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -577,7 +580,6 @@ export default function KeychainView() {
     );
   }
 
-  // After generate/import, open the fresh key's detail panel.
   function showNewKey(nextKeys) {
     const fresh = nextKeys.find((k) => !keys.some((o) => o.id === k.id));
     setKeys(nextKeys);
@@ -703,6 +705,7 @@ export default function KeychainView() {
                       selected={panel?.mode === 'detail' && panel.keyId === keyItem.id}
                       onSelect={selectKey}
                       onDelete={deleteKey}
+                      onCopyToHost={setCopyToHostKey}
                     />
                   ))}
                 </div>
@@ -715,6 +718,7 @@ export default function KeychainView() {
                       selected={panel?.mode === 'detail' && panel.keyId === keyItem.id}
                       onSelect={selectKey}
                       onDelete={deleteKey}
+                      onCopyToHost={setCopyToHostKey}
                     />
                   ))}
                 </div>
@@ -731,6 +735,7 @@ export default function KeychainView() {
             onDelete={deleteKey}
             onClose={closePanel}
             onColorChange={changeKeyColor}
+            onCopyToHost={setCopyToHostKey}
           />
         )}
         {renderedPanel?.mode === 'generate' && (
@@ -748,6 +753,15 @@ export default function KeychainView() {
           />
         )}
       </SlidePanel>
+
+      {copyToHostKey && (
+        <CopyKeyToHostDialog
+          keyItem={copyToHostKey}
+          open={Boolean(copyToHostKey)}
+          onOpenChange={(next) => !next && setCopyToHostKey(null)}
+          onNewHost={onNewHost}
+        />
+      )}
     </div>
   );
 }

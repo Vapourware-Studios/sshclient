@@ -50,8 +50,11 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "serialport": "^13.0.0",
+    "simple-icons": "^16.26.0",
+    "snappyjs": "^0.7.0",
     "ssh2": "^1.17.0",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "tweetnacl": "^1.0.3"
   },
   "optionalDependencies": {
     "electron-liquid-glass": "^1.1.1"

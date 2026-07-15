@@ -1,11 +1,6 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
-// Termius-style push panel: rendered as a flex sibling of the content it
-// docks against. The animated width shifts that content to the left, and
-// the right-anchored inner pane slides in with the edge — no backdrop,
-// so the rest of the UI stays usable. Children stay mounted while the
-// panel closes, so content doesn't blank mid-animation.
 export function SlidePanel({ open, onClose, children }) {
   useEffect(() => {
     if (!open || !onClose) return;

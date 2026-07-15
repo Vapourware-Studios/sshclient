@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
 import { ColorPicker } from '@/components/ColorPicker';
+import { HostIconPicker } from '@/components/HostIconPicker';
 import { FolderOpen, KeyRound, Server, TerminalSquare, Cable, RefreshCw } from 'lucide-react';
 import { keyTypeLabel } from '@/lib/keys';
 
@@ -20,14 +21,13 @@ const EMPTY_FORM = {
   keyId: '',
   saveToVault: false,
   color: null,
+  icon: null,
 };
 
 const EMPTY_LOCAL_FORM = { label: '', shell: '', cwd: '' };
 const EMPTY_SERIAL_FORM = { label: '', path: '', baudRate: '9600' };
 const BAUD_PRESETS = [9600, 19200, 38400, 57600, 115200];
 
-// Empty strings are sent on purpose: saving a host merges into the stored
-// record, so '' clears the auth methods the user switched away from.
 function buildCredential(authType, form) {
   if (authType === 'key') {
     const cred = { privateKeyPath: form.privateKeyPath, keyId: '' };
@@ -35,8 +35,6 @@ function buildCredential(authType, form) {
     return cred;
   }
   if (authType === 'keychain') {
-    // Password is optional here: it lets the first connection in, and the
-    // public key is auto-installed on the host during that session.
     const cred = { keyId: form.keyId, privateKeyPath: '' };
     if (form.password) cred.password = form.password;
     return cred;
@@ -87,6 +85,7 @@ export default function NewConnectionDialog({
         keyId: editingHost.keyId || '',
         saveToVault: true,
         color: editingHost.color || null,
+        icon: editingHost.icon || null,
       });
       setAuthType(
         editingHost.keyId ? 'keychain' : editingHost.hasPrivateKey ? 'key' : 'password'
@@ -183,6 +182,7 @@ export default function NewConnectionDialog({
           port: Number(form.port) || 22,
           username: form.username,
           color: form.color,
+          icon: form.icon,
           ...credential,
         });
         if (result.error) throw new Error(result.error);
@@ -199,6 +199,7 @@ export default function NewConnectionDialog({
           port: Number(form.port) || 22,
           username: form.username,
           color: form.color,
+          icon: form.icon,
           ...credential,
         });
         if (result.error) throw new Error(result.error);
@@ -532,6 +533,10 @@ export default function NewConnectionDialog({
                         <Label>Icon color</Label>
                         <ColorPicker value={form.color} onChange={(color) => update('color', color)} />
                       </div>
+                      <div className="flex flex-col gap-2 pt-1">
+                        <Label>Icon</Label>
+                        <HostIconPicker value={form.icon} onChange={(icon) => update('icon', icon)} />
+                      </div>
                     </>
                   )}
                 </div>
@@ -549,6 +554,10 @@ export default function NewConnectionDialog({
                   <div className="flex flex-col gap-2 pt-1">
                     <Label>Icon color</Label>
                     <ColorPicker value={form.color} onChange={(color) => update('color', color)} />
+                  </div>
+                  <div className="flex flex-col gap-2 pt-1">
+                    <Label>Icon</Label>
+                    <HostIconPicker value={form.icon} onChange={(icon) => update('icon', icon)} />
                   </div>
                 </div>
               )}

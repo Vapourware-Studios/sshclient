@@ -4,23 +4,20 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const net = require('net');
+const { StringDecoder } = require('string_decoder');
 const vault = require('./vault');
 
 const sessions = new Map();
 const pending = new Map();
 
-// How much shell output (in characters) we keep per session for replay.
 const MAX_HISTORY_CHARS = 200000;
 
-// Terminal output is full of invisible control sequences (colors, cursor
-// moves, window-title updates). Strip them so a line reads as plain text
-// in the connection log.
 function stripControlSequences(text) {
   return text
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (e.g. set window title)
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '') // CSI (colors, cursor movement)
-    .replace(/\x1b[@-_]/g, '') // other two-byte escapes
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ''); // stray control bytes
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]/g, '')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 }
 
 async function verifyHostKey(sessionId, host, port, fingerprint, onHostKey) {
@@ -66,47 +63,109 @@ function buildConnectConfig(config) {
     if (config.passphrase) connectConfig.passphrase = config.passphrase;
   }
 
-  // Key and password can coexist: ssh2 tries every method the server
-  // allows, so a saved password still works while the public key is not
-  // yet installed on the host.
   if (config.password) connectConfig.password = config.password;
 
   return connectConfig;
 }
 
-// Appends the public key to the remote ~/.ssh/authorized_keys unless it
-// is already there, so key auth works on the next connection.
-function installPublicKey(conn, publicKey, log) {
+function installPublicKeyAsync(conn, publicKey) {
   const line = publicKey.trim();
-  if (line.includes("'") || line.includes('\n')) {
-    log('Public key has unexpected characters — skipped authorized_keys install', 'error');
-    return;
+  if (!line || line.includes('\n')) {
+    return Promise.reject(new Error('Public key has an unexpected format'));
   }
 
   const cmd =
-    `mkdir -p ~/.ssh && chmod 700 ~/.ssh && ` +
-    `touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && ` +
-    `{ grep -qF '${line}' ~/.ssh/authorized_keys || echo '${line}' >> ~/.ssh/authorized_keys; }`;
+    'umask 077; KEY_LINE=$(cat); mkdir -p ~/.ssh && chmod 700 ~/.ssh && ' +
+    'touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && ' +
+    'grep -qxF "$KEY_LINE" ~/.ssh/authorized_keys || echo "$KEY_LINE" >> ~/.ssh/authorized_keys';
 
-  conn.exec(cmd, (err, stream) => {
-    if (err) {
-      log(`Could not update authorized_keys: ${err.message}`, 'error');
-      return;
-    }
-    stream.on('data', () => {});
-    stream.stderr.on('data', () => {});
-    stream.on('close', (code) => {
-      if (code === 0) {
-        log('Public key is set up in ~/.ssh/authorized_keys');
-      } else {
-        log(`authorized_keys install exited with code ${code}`, 'error');
-      }
+  return new Promise((resolve, reject) => {
+    conn.exec(cmd, (err, stream) => {
+      if (err) return reject(err);
+      let stderr = '';
+      stream.on('data', () => {});
+      stream.stderr.on('data', (chunk) => {
+        stderr += chunk.toString('utf8');
+      });
+      stream.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `authorized_keys install exited with code ${code}`));
+      });
+      stream.end(line + '\n');
     });
   });
 }
 
+const OS_ID_TO_ICON = [
+  ['ubuntu', 'ubuntu'],
+  ['debian', 'debian'],
+  ['raspbian', 'raspberrypi'],
+  ['fedora', 'fedora'],
+  ['centos', 'centos'],
+  ['rhel', 'redhat'],
+  ['rocky', 'rockylinux'],
+  ['almalinux', 'almalinux'],
+  ['arch', 'archlinux'],
+  ['opensuse', 'opensuse'],
+  ['sles', 'opensuse'],
+  ['alpine', 'alpinelinux'],
+  ['freebsd', 'freebsd'],
+];
+
+function detectOsIcon(probeOutput) {
+  if (/RASPBERRY_PI_MODEL/.test(probeOutput)) return 'raspberrypi';
+
+  const idMatch = probeOutput.match(/^ID=["']?([\w.-]+)/im);
+  const idLikeMatch = probeOutput.match(/^ID_LIKE=["']?([\w.\- ]+)/im);
+  const ids = [idMatch?.[1], ...(idLikeMatch?.[1]?.split(/\s+/) ?? [])].filter(Boolean);
+  for (const id of ids) {
+    const hit = OS_ID_TO_ICON.find(([osId]) => osId === id.toLowerCase());
+    if (hit) return hit[1];
+  }
+
+  if (/^Darwin/im.test(probeOutput)) return 'apple';
+  if (/^FreeBSD/im.test(probeOutput)) return 'freebsd';
+  if (/^Linux/im.test(probeOutput)) return 'linux';
+  return null;
+}
+
+function detectAndSaveOsIcon(hostId, conn, onDetected) {
+  const cmd =
+    'cat /etc/os-release 2>/dev/null; ' +
+    'grep -qi raspberry /proc/device-tree/model 2>/dev/null && echo RASPBERRY_PI_MODEL; ' +
+    'uname -s 2>/dev/null';
+
+  conn.exec(cmd, (err, stream) => {
+    if (err) return;
+    let output = '';
+    stream.on('data', (chunk) => {
+      output += chunk.toString('utf8');
+    });
+    stream.stderr.on('data', () => {});
+    stream.on('close', () => {
+      const icon = detectOsIcon(output);
+      if (!icon) return;
+      try {
+        const hosts = vault.saveHost({ id: hostId, icon });
+        onDetected?.(hosts);
+      } catch {}
+    });
+  });
+}
+
+function installPublicKey(conn, publicKey, log) {
+  installPublicKeyAsync(conn, publicKey)
+    .then(() => log('Public key is set up in ~/.ssh/authorized_keys'))
+    .catch((err) => log(`Could not update authorized_keys: ${err.message}`, 'error'));
+}
+
 function connect(config, handlers = {}) {
-  const { onProgress, onReady, onData, onClose, onError, onHostKey, onLog, onRecording } = handlers;
+  const { onProgress, onReady, onData, onClose, onError, onHostKey, onLog, onRecording, onHostsUpdated } =
+    handlers;
+
+  if (config.mode === 'keycopy' && !config.publicKey) {
+    throw new Error('A public key is required to copy a key to a host');
+  }
 
   const connectConfig = buildConnectConfig(config);
   const conn = new Client();
@@ -115,9 +174,6 @@ function connect(config, handlers = {}) {
 
   const log = (line, level = 'info') => onLog?.(sessionId, line, level);
 
-  // ssh2's debug callback fires for every protocol message. We forward it
-  // only until the session is ready, so the log shows the connection story
-  // without spamming a line per keystroke afterwards.
   let forwardDebug = true;
   connectConfig.debug = (message) => {
     if (forwardDebug) log(message, 'debug');
@@ -144,10 +200,34 @@ function connect(config, handlers = {}) {
   });
 
   conn.on('ready', () => {
+    if (config.id) {
+      try {
+        onHostsUpdated?.(vault.saveHost({ id: config.id, lastConnectedAt: Date.now() }));
+      } catch {}
+      if (!config.icon) detectAndSaveOsIcon(config.id, conn, onHostsUpdated);
+    }
+
+    if (config.mode === 'keycopy') {
+      onProgress?.(sessionId, 'keycopy');
+      log('Authenticated. Installing public key…');
+      installPublicKeyAsync(conn, config.publicKey)
+        .then(() => {
+          pending.delete(sessionId);
+          log('Public key is set up in ~/.ssh/authorized_keys');
+          conn.end();
+          onReady?.(sessionId);
+        })
+        .catch((err) => {
+          pending.delete(sessionId);
+          log(`Could not update authorized_keys: ${err.message}`, 'error');
+          conn.end();
+          onError?.(sessionId, err);
+        });
+      return;
+    }
+
     if (config.publicKey) installPublicKey(conn, config.publicKey, log);
 
-    // SFTP-only sessions skip the shell entirely: they are their own
-    // connection to the host, independent of any terminal session.
     if (config.mode === 'sftp') {
       onProgress?.(sessionId, 'sftp');
       log('Authenticated. Opening SFTP channel…');
@@ -198,11 +278,6 @@ function connect(config, handlers = {}) {
           return;
         }
 
-        // Everything the shell prints is kept (capped) so a terminal can
-        // attach — or re-attach after a React remount — at any moment and
-        // replay the full story from the start. `seq` numbers each chunk so
-        // the renderer can tell which live chunks are already covered by a
-        // replayed history and must not be written twice.
         const session = {
           conn,
           stream,
@@ -217,9 +292,6 @@ function connect(config, handlers = {}) {
         };
         sessions.set(sessionId, session);
 
-        // Until a terminal is attached and showing output, forward whole
-        // printed lines (login banner, MOTD) to the connection log so they
-        // are visible behind the "Show logs" button while connecting.
         let lineBuffer = '';
         const logShellOutput = (text) => {
           lineBuffer += text;
@@ -231,8 +303,9 @@ function connect(config, handlers = {}) {
           }
         };
 
+        const decoder = new StringDecoder('utf8');
         stream.on('data', (chunk) => {
-          const text = chunk.toString('utf8');
+          const text = decoder.write(chunk);
           session.recording.push({ at: Date.now() - session.recordingStartedAt, data: text });
           session.seq += 1;
 
@@ -332,13 +405,6 @@ function resize(sessionId, cols, rows) {
   sessions.get(sessionId)?.stream?.setWindow(rows, cols, rows, cols);
 }
 
-// Called by the renderer once its terminal is mounted and listening.
-// Returns everything the shell has printed so far and switches to live
-// streaming. Attaching is repeatable on purpose: React (StrictMode, or any
-// future remount) may tear a terminal down and mount a fresh one, and the
-// fresh one gets the same full history to replay onto its blank screen.
-// `lastSeq` marks where that history ends so the renderer can skip live
-// chunks that are already inside it.
 function attach(sessionId) {
   const session = sessions.get(sessionId);
   if (!session) return { backlog: '', lastSeq: 0 };
@@ -346,9 +412,6 @@ function attach(sessionId) {
   return { backlog: (session.history ?? []).join(''), lastSeq: session.seq ?? 0 };
 }
 
-// SFTP is not a separate connection — it's another channel type on the
-// existing ssh2 connection. We open it lazily the first time a session
-// needs it and cache it on the session object.
 function getSftp(sessionId) {
   return new Promise((resolve, reject) => {
     const session = sessions.get(sessionId);
@@ -656,6 +719,8 @@ module.exports = {
   disconnect,
   startForward,
   stopForward,
+  installPublicKeyAsync,
+  detectOsIcon,
   sftpHome,
   sftpList,
   sftpDownload,

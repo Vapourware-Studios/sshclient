@@ -96,14 +96,18 @@ ipcMain.handle('ssh:connect', (event, config) => {
       const saved = vault.getHostSecret(config.hostId);
       if (!saved) return { error: 'Saved host not found' };
       fullConfig = { ...saved, cols: config.cols, rows: config.rows, mode: config.mode };
+      if (config.password) fullConfig.password = config.password;
     }
-    // A host can reference a Keychain key; swap the reference for the
-    // actual key material before connecting.
     if (fullConfig.keyId) {
       const key = vault.getKeySecret(fullConfig.keyId);
       if (!key) return { error: 'Key not found in Keychain' };
       fullConfig = { ...fullConfig, privateKey: key.private, publicKey: key.public };
       if (key.passphrase) fullConfig.passphrase = key.passphrase;
+    }
+    if (config.installKeyId) {
+      const installKey = vault.getKeySecret(config.installKeyId);
+      if (!installKey) return { error: 'Key to install was not found in the Keychain' };
+      fullConfig = { ...fullConfig, publicKey: installKey.public, mode: 'keycopy' };
     }
     const sessionId = ssh.connect(fullConfig, {
       onProgress: (sessionId, stage) => win?.webContents.send('ssh:progress', { sessionId, stage }),
@@ -122,6 +126,7 @@ ipcMain.handle('ssh:connect', (event, config) => {
           pendingHostKeyDecisions.set(sessionId, resolve);
           win?.webContents.send('ssh:hostkey', { sessionId, ...info });
         }),
+      onHostsUpdated: (hosts) => win?.webContents.send('hosts:changed', { hosts }),
     });
     return { sessionId };
   } catch (err) {
@@ -219,8 +224,6 @@ ipcMain.handle('serial:disconnect', (event, sessionId) => {
 });
 
 ipcMain.handle('serial:attach', (event, sessionId) => serial.attach(sessionId));
-// Lets the renderer know the starting state (the events above only cover
-// transitions that happen after the page has loaded).
 ipcMain.handle('window:isFullScreen', (event) =>
   BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
 );
@@ -244,7 +247,6 @@ ipcMain.handle('window:close', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close();
 });
 
-// Local filesystem browsing for the SFTP dual-pane view.
 ipcMain.handle('fs:home', () => ({ path: os.homedir() }));
 
 ipcMain.handle('fs:list', async (event, dirPath) => {
@@ -261,7 +263,6 @@ ipcMain.handle('fs:list', async (event, dirPath) => {
           size = st.size;
           mtime = st.mtimeMs;
         } catch {
-          // Unreadable entry (permissions, broken link) — list it anyway.
         }
         return { name: d.name, type, size, mtime };
       })
@@ -278,9 +279,6 @@ ipcMain.handle('fs:list', async (event, dirPath) => {
   }
 });
 
-// Runs one SFTP transfer in the background and streams progress to the
-// renderer as 'sftp:transfer' events. Progress is throttled so a fast
-// transfer doesn't flood IPC with thousands of tiny updates.
 function runTransfer(win, { sessionId, kind, name, destSessionId }, startFn) {
   const transferId = crypto.randomUUID();
   const send = (payload) =>
@@ -356,8 +354,6 @@ ipcMain.handle('sftp:upload', async (event, { sessionId, remoteDir }) => {
   return { started: result.filePaths.length };
 });
 
-// Download straight into a known local folder (dual-pane transfers) —
-// no save dialog involved.
 ipcMain.handle('sftp:downloadTo', async (event, { sessionId, remotePath, localDir, name }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   ssh.assertSafeSftpName(name);
@@ -371,8 +367,6 @@ ipcMain.handle('sftp:downloadTo', async (event, { sessionId, remotePath, localDi
   return { transferId };
 });
 
-// Same as sftp:upload but for drag-and-drop, where the renderer already
-// knows the local paths (via webUtils.getPathForFile in the preload).
 ipcMain.handle('sftp:uploadPaths', async (event, { sessionId, remoteDir, localPaths }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   for (const localPath of localPaths) {
@@ -503,8 +497,6 @@ for (const [channel, action] of [
   });
 }
 
-// Key generation runs in the main process so private keys are created and
-// vaulted without ever touching the renderer.
 const KEY_TYPES = {
   ed25519: [],
   ecdsa: [256, 384, 521],
@@ -554,8 +546,6 @@ function keyFingerprint(parsed) {
   );
 }
 
-// Import a key the user pasted in. The public half is derived from the
-// private key, so pasting just the private key is enough.
 ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase }) => {
   try {
     const trimmedName = String(name || '').trim();
@@ -573,8 +563,6 @@ ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase 
       throw new Error('This looks like a public key — paste the private key');
     }
 
-    // If the user pasted the public key too, check it actually belongs to
-    // this private key and keep their line (comment included).
     let pastedPublicLine;
     if (String(publicKey || '').trim()) {
       const normalized = String(publicKey).trim().split(/\s+/).join(' ');
@@ -589,7 +577,6 @@ ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase 
       pastedPublicLine = normalized;
     }
 
-    // 'ecdsa-sha2-nistp256' -> type 'ecdsa', bits 256, etc.
     let type = parsed.type;
     let bits;
     if (type === 'ssh-ed25519') type = 'ed25519';
@@ -643,13 +630,20 @@ ipcMain.handle('keys:setColor', (event, { id, color }) => {
   }
 });
 
-// Hand the private half to the UI on explicit request (the Keychain's
-// "reveal" button), so the user can copy or back up their own key.
 ipcMain.handle('keys:reveal', (event, id) => {
   try {
     const key = vault.getKeySecret(id);
     if (!key) return { error: 'Key not found' };
     return { private: key.private, hasPassphrase: Boolean(key.passphrase) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('termius:preview', async () => {
+  try {
+    const { previewTermiusImport } = require('./termiusImport');
+    return await previewTermiusImport();
   } catch (err) {
     return { error: err.message };
   }
@@ -669,8 +663,6 @@ ipcMain.handle('dialog:selectFolder', async (event) => {
   return { path: result.filePaths[0] };
 });
 
-// Custom-theme CSS. The renderer stores the file's contents (localStorage),
-// so the file itself is only read here once per load — no path is retained.
 const MAX_CUSTOM_CSS_BYTES = 512 * 1024;
 
 ipcMain.handle('theme:openCssFile', async (event) => {

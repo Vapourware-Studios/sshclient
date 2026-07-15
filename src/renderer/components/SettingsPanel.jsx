@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import { FileCode2, Moon, Sparkles } from 'lucide-react';
+import { Download, FileCode2, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import ThemePicker from '@/components/ThemePicker';
+import TermiusImportDialog from '@/components/TermiusImportDialog';
 import { useGlassSettings, GLASS_SUPPORTED } from '@/lib/glass-settings.jsx';
 import { useTheme } from '@/lib/theme-settings.jsx';
 import { CUSTOM_CSS_TEMPLATE } from '@/lib/terminal-themes';
 
-export default function SettingsPanel() {
+export default function SettingsPanel({ onHostsChange }) {
   const { enabled, intensity, setEnabled, setIntensity } = useGlassSettings();
   const { customCss, customCssName, setCustomCss } = useTheme();
   const [cssError, setCssError] = useState('');
+  const [termiusOpen, setTermiusOpen] = useState(false);
 
   async function loadCssFile() {
     setCssError('');
@@ -93,6 +95,22 @@ export default function SettingsPanel() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Download className="size-4" /> Import
+            </CardTitle>
+            <CardDescription>
+              Bring in hosts and keys from another SSH client already installed on this machine.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" size="sm" onClick={() => setTermiusOpen(true)}>
+              Import from Termius…
+            </Button>
+          </CardContent>
+        </Card>
+
         {GLASS_SUPPORTED && (
         <Card>
           <CardHeader>
@@ -129,6 +147,12 @@ export default function SettingsPanel() {
         </Card>
         )}
       </div>
+
+      <TermiusImportDialog
+        open={termiusOpen}
+        onOpenChange={setTermiusOpen}
+        onImported={onHostsChange}
+      />
     </div>
   );
 }

@@ -218,6 +218,8 @@ function listHosts() {
       privateKeyPath: data.privateKeyPath || undefined,
       keyId: data.keyId || undefined,
       color: data.color || null,
+      icon: data.icon || null,
+      lastConnectedAt: data.lastConnectedAt || null,
       hasPassword: Boolean(data.password),
       hasPassphrase: Boolean(data.passphrase),
       hasPrivateKey: Boolean(data.privateKeyPath),
@@ -288,6 +290,8 @@ function saveHost(host) {
     privateKeyPath: merged.privateKeyPath || undefined,
     keyId: merged.keyId || undefined,
     color: merged.color || undefined,
+    icon: merged.icon || undefined,
+    lastConnectedAt: merged.lastConnectedAt || undefined,
   };
   if (merged.password) payload.password = merged.password;
   if (merged.passphrase) payload.passphrase = merged.passphrase;
@@ -340,8 +344,6 @@ function decryptKeyData(row) {
   });
 }
 
-// SSH keys generated in-app. The private key never leaves the vault
-// unencrypted except when handed to ssh2 for a connection.
 function listKeys() {
   requireUnlocked();
   const rows = db.prepare('SELECT * FROM keys ORDER BY created_at ASC').all();

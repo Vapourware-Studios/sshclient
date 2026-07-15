@@ -93,8 +93,6 @@ function FilePane({
   onChangeSource,
 }) {
   const [dropReady, setDropReady] = useState(false);
-  // Drag events fire enter/leave for every child row the drag passes over;
-  // counting them is the standard way to know when the drag truly left.
   const dragDepth = useRef(0);
 
   function accepts(e) {

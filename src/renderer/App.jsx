@@ -47,8 +47,6 @@ export default function App() {
     refreshVaultStatus();
   }, []);
 
-  // A file dropped anywhere outside a real drop zone would make Electron
-  // navigate the whole window to that file — swallow stray drops globally.
   useEffect(() => {
     const prevent = (e) => e.preventDefault();
     document.addEventListener('dragover', prevent);
@@ -62,6 +60,10 @@ export default function App() {
   useEffect(() => {
     if (vaultStatus?.unlocked) refreshHosts();
   }, [vaultStatus?.unlocked]);
+
+  useEffect(() => {
+    return window.api.onHostsChanged(({ hosts }) => setHosts(hosts));
+  }, []);
 
   useEffect(() => {
     function patchTab(sessionId, patch) {
@@ -200,7 +202,8 @@ export default function App() {
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (activeTabId === tabId) {
-        setActiveTabId(next.length ? next[next.length - 1].id : null);
+        const lastRealTab = [...next].reverse().find((t) => !t.constant);
+        setActiveTabId(lastRealTab ? lastRealTab.id : 'vault');
       }
       return next;
     });
@@ -242,7 +245,6 @@ export default function App() {
     } catch {}
   }
 
-  // Types a snippet into the active terminal tab, whatever kind it is.
   function runSnippetInActiveTab(snippet) {
     const tab = tabs.find((t) => t.id === activeTabId);
     if (!tab || tab.status !== 'connected') return;
@@ -389,6 +391,7 @@ export default function App() {
               onPlayRecording={openPlayback}
               onRunOnHost={runOnHost}
               onConnectAndStartForward={connectAndStartForward}
+              onHostsChange={setHosts}
             />
 
             {terminalTabActive && (

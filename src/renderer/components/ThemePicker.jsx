@@ -2,8 +2,6 @@ import { Check } from 'lucide-react';
 import { useTheme } from '@/lib/theme-settings.jsx';
 import { DEFAULT_THEMES, THEMES } from '@/lib/terminal-themes';
 
-// Small strip of the palette's key colours, so templates can be told apart
-// at a glance without applying them.
 function Swatch({ theme }) {
   const chips = [theme.bg, theme.primary, theme.ansi[9], theme.ansi[10], theme.ansi[12], theme.fg];
   return (
@@ -15,8 +13,6 @@ function Swatch({ theme }) {
   );
 }
 
-// List of every available style, built-in defaults first. Shared between
-// the terminal slide-out panel and the Settings page.
 export default function ThemePicker({ className = '' }) {
   const { themeId, setThemeId } = useTheme();
 

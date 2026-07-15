@@ -75,8 +75,6 @@ function WindowControls() {
 export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewConnection }) {
   const [fullScreen, setFullScreen] = useState(false);
   const { enabled, intensity } = useGlassSettings();
-  // Fully opaque when Liquid Glass is off — the window itself is transparent
-  // on macOS, so any bar translucency would show the desktop through it.
   const barAlpha = glassAlpha(enabled, intensity, 1, 0);
 
   useEffect(() => {

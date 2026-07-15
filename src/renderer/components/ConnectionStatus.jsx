@@ -12,7 +12,6 @@ import {
   X,
 } from 'lucide-react';
 
-// The stages the main process reports (in order), with friendly labels.
 export const SSH_STEPS = [
   { id: 'connecting', label: 'Reaching the server' },
   { id: 'hostkey', label: 'Verifying server identity' },
@@ -20,9 +19,6 @@ export const SSH_STEPS = [
   { id: 'shell', label: 'Starting terminal session' },
 ];
 
-// Even if the real connection flies through the stages in 100ms, the UI
-// walks the steps one at a time with a minimum dwell, so you can see
-// each one complete instead of everything flashing at once.
 const STEP_DWELL_MS = 450;
 
 function usePacedIndex(targetIndex) {
@@ -37,9 +33,6 @@ function usePacedIndex(targetIndex) {
   return Math.min(index, Math.max(targetIndex, 0));
 }
 
-// A vertical checklist: done steps get a popped-in green check, the
-// active step spins with a sonar ring, pending steps sit dimmed.
-// Reused by both the SSH connecting view and the SFTP opening view.
 export function ProgressSteps({ steps, currentIndex }) {
   return (
     <div className="flex flex-col text-left">
@@ -99,9 +92,6 @@ function formatLogTime(time) {
   return `${d.toTimeString().slice(0, 8)}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
-// The raw connection log: timestamps + what ssh2 is actually doing on
-// the wire (debug lines dim, our milestones green, what the server
-// prints to the terminal blue, errors red).
 export function ConnectionLog({ logs = [] }) {
   const endRef = useRef(null);
 
