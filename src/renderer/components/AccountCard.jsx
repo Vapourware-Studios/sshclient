@@ -100,7 +100,7 @@ export default function AccountCard() {
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs">Sync server URL</Label>
-                  <Input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="http://localhost:8080" />
+                  <Input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://api.sshclient.vapourware-studios.net" />
                 </div>
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs">Sign-in page URL</Label>

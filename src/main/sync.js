@@ -8,7 +8,8 @@ const os = require('os');
 const { shell } = require('electron');
 const vault = require('./vault');
 
-const DEFAULT_API_URL = process.env.SSHCLIENT_API_URL || 'http://localhost:8080';
+const DEFAULT_API_URL =
+  process.env.SSHCLIENT_API_URL || 'https://api.sshclient.vapourware-studios.net';
 const DEFAULT_CONNECT_URL = process.env.SSHCLIENT_CONNECT_URL || 'http://localhost:5173';
 const SCRYPT_PARAMS = { N: 2 ** 17, r: 8, p: 1 };
 const SIGNIN_TTL_MS = 10 * 60 * 1000;
