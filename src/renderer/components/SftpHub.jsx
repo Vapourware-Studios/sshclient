@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toneForId, toneStyle } from '@/lib/tone';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 import {
   ArrowDownToLine,
   ArrowLeft,
@@ -93,9 +95,8 @@ function FilePane({
   onChangeSource,
 }) {
   const [dropReady, setDropReady] = useState(false);
-  // Drag events fire enter/leave for every child row the drag passes over;
-  // counting them is the standard way to know when the drag truly left.
   const dragDepth = useRef(0);
+  const { blurHostIps } = usePrivacySettings();
 
   function accepts(e) {
     return (
@@ -120,7 +121,11 @@ function FilePane({
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <TitleIcon className="size-4 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <span
+          className={`shrink-0 text-xs font-medium uppercase tracking-wider text-muted-foreground ${
+            blurHostIps && isIpAddress(title) ? 'blur-sensitive' : ''
+          }`}
+        >
           {title}
         </span>
 
@@ -452,6 +457,7 @@ function RemotePane({
 }
 
 function HostPicker({ hosts, query, onQueryChange, onPickLocal, onPickHost, onBack, canBack, connectError }) {
+  const { blurHostIps } = usePrivacySettings();
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return hosts;
@@ -527,10 +533,16 @@ function HostPicker({ hosts, query, onQueryChange, onPickLocal, onPickHost, onBa
                       <Server className="size-4" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
+                      <span
+                        className={`block truncate text-sm font-medium ${
+                          blurHostIps && isIpAddress(host.label || host.host) ? 'blur-sensitive' : ''
+                        }`}
+                      >
                         {host.label || host.host}
                       </span>
-                      <span className="block truncate text-xs text-muted-foreground">
+                      <span
+                        className={`block truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
                         ssh · {address}
                       </span>
                     </span>
@@ -547,6 +559,7 @@ function HostPicker({ hosts, query, onQueryChange, onPickLocal, onPickHost, onBa
 }
 
 function ConnectingPane({ conn, onTrust, onReject }) {
+  const { blurHostIps } = usePrivacySettings();
   return (
     <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-4 text-center">
       {conn.hostKey ? (
@@ -574,7 +587,13 @@ function ConnectingPane({ conn, onTrust, onReject }) {
       ) : (
         <>
           <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Connecting to {conn.title}…</p>
+          <p className="text-sm text-muted-foreground">
+            Connecting to{' '}
+            <span className={blurHostIps && isIpAddress(conn.title) ? 'blur-sensitive' : ''}>
+              {conn.title}
+            </span>
+            …
+          </p>
         </>
       )}
     </div>
@@ -582,13 +601,19 @@ function ConnectingPane({ conn, onTrust, onReject }) {
 }
 
 function ErrorPane({ conn, onRetry, onClose }) {
+  const { blurHostIps } = usePrivacySettings();
   return (
     <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 text-center">
       <span className="flex size-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
         <TriangleAlert className="size-6" />
       </span>
       <div>
-        <p className="text-sm font-medium">Couldn't connect to {conn.title}</p>
+        <p className="text-sm font-medium">
+          Couldn't connect to{' '}
+          <span className={blurHostIps && isIpAddress(conn.title) ? 'blur-sensitive' : ''}>
+            {conn.title}
+          </span>
+        </p>
         <p className="max-w-md text-sm text-muted-foreground">{conn.error}</p>
       </div>
       <div className="flex gap-2">

@@ -22,6 +22,10 @@ import {
 import { GridCard, ViewToggle, GRID_CLASS } from '@/components/GridCard';
 import { useViewMode } from '@/lib/view-mode';
 import { useConfirm } from '@/lib/confirm';
+import { toneForId, toneStyle } from '@/lib/tone';
+import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 import {
   Search,
   Plus,
@@ -80,20 +84,32 @@ function HostContextMenu({ host, onConnect, onEdit, onDuplicate, onDelete, child
 
 function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const titleText = host.label || host.host;
+  const { blurHostIps } = usePrivacySettings();
 
   return (
     <HostContextMenu host={host} onConnect={onConnect} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete}>
       <div
-        onClick={() => onConnect(host)}
+        onDoubleClick={() => onConnect(host)}
+        title="Double-click to connect"
         className="group flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted/50"
       >
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <Server className="size-4" />
+        <span
+          className="flex size-9 shrink-0 items-center justify-center rounded-md"
+          style={toneStyle(host.color || toneForId(host.id))}
+        >
+          <HostIcon slug={host.icon} fallback={Server} className="size-4" />
         </span>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{host.label || host.host}</p>
-          <p className="truncate text-xs text-muted-foreground">{address}</p>
+          <p
+            className={`truncate text-sm font-medium ${blurHostIps && isIpAddress(titleText) ? 'blur-sensitive' : ''}`}
+          >
+            {titleText}
+          </p>
+          <p className={`truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}>
+            {address}
+          </p>
         </div>
 
         <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
@@ -127,16 +143,25 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
 
 function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const titleText = host.label || host.host;
+  const { blurHostIps } = usePrivacySettings();
+  const badgeIcon = ({ className }) => (
+    <HostIcon slug={host.icon} fallback={Server} className={className} />
+  );
 
   return (
     <HostContextMenu host={host} onConnect={onConnect} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete}>
       <GridCard
         id={host.id}
         tone={host.color || undefined}
-        icon={Server}
-        title={host.label || host.host}
-        subtitle={`ssh · ${address}`}
-        onClick={() => onConnect(host)}
+        icon={badgeIcon}
+        title={
+          <span className={blurHostIps && isIpAddress(titleText) ? 'blur-sensitive' : ''}>
+            {titleText}
+          </span>
+        }
+        subtitle={<span className={blurHostIps ? 'blur-sensitive' : ''}>ssh · {address}</span>}
+        onDoubleClick={() => onConnect(host)}
         actions={
           <>
             <button
@@ -170,13 +195,18 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onDuplicate, onNewConn
   const [query, setQuery] = useState('');
   const [viewMode, setViewMode] = useViewMode('hosts');
 
+  const sortedHosts = useMemo(
+    () => [...hosts].sort((a, b) => (b.lastConnectedAt || 0) - (a.lastConnectedAt || 0)),
+    [hosts]
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return hosts;
-    return hosts.filter((h) =>
+    if (!q) return sortedHosts;
+    return sortedHosts.filter((h) =>
       [h.label, h.host, h.username].some((v) => v && v.toLowerCase().includes(q))
     );
-  }, [hosts, query]);
+  }, [sortedHosts, query]);
 
   const topMatch = query.trim() ? filtered[0] : null;
 
@@ -313,13 +343,14 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onDuplicate, onNewConn
 
 function KnownHostGridCard({ entry, onForget }) {
   const address = entry.port === 22 ? entry.host : `${entry.host}:${entry.port}`;
+  const { blurHostIps } = usePrivacySettings();
 
   return (
     <GridCard
       id={`${entry.host}:${entry.port}`}
       tone="chart-2"
       icon={ShieldCheck}
-      title={address}
+      title={<span className={blurHostIps ? 'blur-sensitive' : ''}>{address}</span>}
       subtitle={`SHA256:${entry.fingerprint}`}
       actions={
         <button
@@ -340,6 +371,7 @@ function KnownHostGridCard({ entry, onForget }) {
 
 function KnownHostsPanel() {
   const confirm = useConfirm();
+  const { blurHostIps } = usePrivacySettings();
   const [knownHosts, setKnownHosts] = useState([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -439,7 +471,9 @@ function KnownHostsPanel() {
                       <ShieldCheck className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
+                      <p
+                        className={`truncate text-sm font-medium ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
                         {entry.host}{entry.port !== 22 ? `:${entry.port}` : ''}
                       </p>
                       <p className="break-all font-mono text-xs text-muted-foreground">SHA256:{entry.fingerprint}</p>
@@ -496,6 +530,7 @@ export default function VaultView({
   onPlayRecording,
   onRunOnHost,
   onConnectAndStartForward,
+  onHostsChange,
   tabs,
   visible,
 }) {
@@ -518,17 +553,27 @@ export default function VaultView({
             onOpenLocalTerminal={onOpenLocalTerminal}
           />
         ) : section === 'keychain' ? (
-          <KeychainView />
+          <KeychainView onNewHost={() => onNewConnection('ssh')} />
         ) : section === 'known-hosts' ? (
           <KnownHostsPanel />
         ) : section === 'port-forwarding' ? (
-          <PortForwardingPanel tabs={tabs} hosts={hosts} onConnectAndStartForward={onConnectAndStartForward} />
+          <PortForwardingPanel
+            tabs={tabs}
+            hosts={hosts}
+            onConnectAndStartForward={onConnectAndStartForward}
+            onNewHost={() => onNewConnection('ssh')}
+          />
         ) : section === 'snippets' ? (
-          <SnippetsPanel tabs={tabs} hosts={hosts} onRunOnHost={onRunOnHost} />
+          <SnippetsPanel
+            tabs={tabs}
+            hosts={hosts}
+            onRunOnHost={onRunOnHost}
+            onNewHost={() => onNewConnection('ssh')}
+          />
         ) : section === 'history' ? (
           <HistoryPanel onPlayRecording={onPlayRecording} />
         ) : section === 'settings' ? (
-          <SettingsPanel />
+          <SettingsPanel onHostsChange={onHostsChange} />
         ) : (
           <PlaceholderPanel section={section} />
         )}

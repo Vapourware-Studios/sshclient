@@ -21,6 +21,7 @@ export default function ContentArea({
   onPlayRecording,
   onRunOnHost,
   onConnectAndStartForward,
+  onHostsChange,
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
 
@@ -38,6 +39,7 @@ export default function ContentArea({
         onPlayRecording={onPlayRecording}
         onRunOnHost={onRunOnHost}
         onConnectAndStartForward={onConnectAndStartForward}
+        onHostsChange={onHostsChange}
         tabs={tabs}
         visible={activeTab?.id === 'vault'}
       />

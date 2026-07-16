@@ -10,8 +10,6 @@ function loadSettings() {
     if (!raw) return DEFAULTS;
     const parsed = JSON.parse(raw);
 
-    // Older versions stored a dark-mode boolean plus a 'default' theme id —
-    // fold both into the two built-in styles.
     let themeId = typeof parsed.themeId === 'string' ? parsed.themeId : DEFAULTS.themeId;
     if (themeId === 'default') themeId = parsed.isDark === false ? 'default-light' : 'default-dark';
     if (!getTheme(themeId)) themeId = DEFAULTS.themeId;
@@ -27,9 +25,6 @@ function loadSettings() {
   }
 }
 
-// Adopted stylesheets sit after index.css in the cascade, so style tokens
-// and user CSS override the built-in theme without touching the DOM. The
-// custom sheet comes last: user CSS always wins over the selected style.
 const templateSheet = new CSSStyleSheet();
 const customSheet = new CSSStyleSheet();
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, templateSheet, customSheet];
@@ -54,7 +49,6 @@ export function ThemeProvider({ children }) {
     try {
       customSheet.replaceSync(settings.customCss || '');
     } catch {
-      // Broken user CSS shouldn't take the app down — drop it silently.
       customSheet.replaceSync('');
     }
   }, [settings, activeTheme]);

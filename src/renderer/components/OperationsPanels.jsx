@@ -5,12 +5,6 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SlidePanel, PanelHeader } from '@/components/SlidePanel';
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
-import {
   ContextMenu,
   ContextMenuTrigger,
   ContextMenuContent,
@@ -19,8 +13,26 @@ import {
   ContextMenuShortcut,
 } from '@/components/ui/context-menu';
 import { GridCard, ViewToggle, GRID_CLASS } from '@/components/GridCard';
+import SelectHostPanel from '@/components/SelectHostPanel';
 import { useViewMode } from '@/lib/view-mode';
-import { ArrowRightLeft, Code2, Copy, Pencil, Play, Plus, Search, Server, Square, Trash2, X } from 'lucide-react';
+import { toneForId, toneStyle } from '@/lib/tone';
+import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
+import {
+  ArrowRightLeft,
+  Code2,
+  Copy,
+  Pencil,
+  Play,
+  Plus,
+  Search,
+  Server,
+  Square,
+  Terminal,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 const selectClass =
   'h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
@@ -84,7 +96,12 @@ function EmptyState({ Icon, title, description, action }) {
   );
 }
 
-function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated, onClose }) {
+function hostSublabel(host) {
+  return `${host.username ? `${host.username}@` : ''}${host.host}:${host.port}`;
+}
+
+function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated, onClose, onNewHost }) {
+  const { blurHostIps } = usePrivacySettings();
   const connectedHostIds = new Set(sessions.map((s) => s.connectConfig?.hostId).filter(Boolean));
   const availableHosts = hosts.filter((h) => !connectedHostIds.has(h.id));
 
@@ -95,6 +112,7 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
         ? { type: 'host', id: availableHosts[0].id, label: availableHosts[0].label || availableHosts[0].host }
         : null
   );
+  const [picking, setPicking] = useState(false);
   const [spec, setSpec] = useState({
     bindHost: '127.0.0.1',
     bindPort: '8080',
@@ -130,8 +148,28 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
     onCreated({ ...result.forward, sessionId: result.sessionId, title: target.label });
   }
 
+  if (picking) {
+    return (
+      <SelectHostPanel
+        title="Select host"
+        subtitle="Forward through"
+        hosts={availableHosts}
+        sessions={sessions}
+        selectedId={target ? `${target.type}:${target.id}` : null}
+        onSelect={(item) => {
+          setTarget({ type: item.kind, id: item.id, label: item.label });
+          setPicking(false);
+        }}
+        onBack={() => setPicking(false)}
+        onNewHost={onNewHost}
+      />
+    );
+  }
+
+  const targetHost = target?.type === 'host' ? hosts.find((h) => h.id === target.id) : null;
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <PanelHeader
         title="New forward"
         description="Route a local TCP port through an SSH session — connects for you if the host isn't open yet."
@@ -146,41 +184,32 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
               No saved hosts — add one under Hosts first.
             </p>
           ) : (
-            <div className="flex max-h-52 flex-col gap-1 overflow-y-auto">
-              {sessions.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setTarget({ type: 'session', id: tab.id, label: tab.title })}
-                  className={`flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left text-sm ${
-                    target?.type === 'session' && target.id === tab.id
-                      ? 'border-primary bg-accent'
-                      : 'border-transparent hover:bg-accent/50'
-                  }`}
-                >
-                  <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
-                  <span className="min-w-0 flex-1 truncate">{tab.title}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">connected</span>
-                </button>
-              ))}
-              {availableHosts.map((host) => (
-                <button
-                  key={host.id}
-                  type="button"
-                  onClick={() =>
-                    setTarget({ type: 'host', id: host.id, label: host.label || host.host })
-                  }
-                  className={`flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left text-sm ${
-                    target?.type === 'host' && target.id === host.id
-                      ? 'border-primary bg-accent'
-                      : 'border-transparent hover:bg-accent/50'
-                  }`}
-                >
-                  <Server className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{host.label || host.host}</span>
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setPicking(true)}
+              className="flex items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm hover:bg-accent/50"
+            >
+              <span
+                className="flex size-9 shrink-0 items-center justify-center rounded-lg"
+                style={toneStyle(
+                  targetHost ? targetHost.color || toneForId(targetHost.id) : toneForId(target?.id)
+                )}
+              >
+                {target?.type === 'session' ? (
+                  <Terminal className="size-4" />
+                ) : (
+                  <HostIcon slug={targetHost?.icon} fallback={Server} className="size-4" />
+                )}
+              </span>
+              <span
+                className={`min-w-0 flex-1 truncate font-medium ${
+                  blurHostIps && target && isIpAddress(target.label) ? 'blur-sensitive' : ''
+                }`}
+              >
+                {target ? target.label : 'Select a host…'}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">Change</span>
+            </button>
           )}
         </div>
 
@@ -223,13 +252,22 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
 }
 
 function ForwardGridCard({ item, onStop }) {
+  const { blurHostIps } = usePrivacySettings();
   return (
     <GridCard
       id={item.id}
       tone="chart-4"
       icon={ArrowRightLeft}
-      title={`${item.bindHost}:${item.bindPort} → ${item.targetHost}:${item.targetPort}`}
-      subtitle={`Via ${item.title}`}
+      title={
+        <span className={blurHostIps ? 'blur-sensitive' : ''}>
+          {item.bindHost}:{item.bindPort} → {item.targetHost}:{item.targetPort}
+        </span>
+      }
+      subtitle={
+        <span className={blurHostIps && isIpAddress(item.title) ? 'blur-sensitive' : ''}>
+          Via {item.title}
+        </span>
+      }
       actions={
         <button
           onClick={(e) => {
@@ -246,12 +284,13 @@ function ForwardGridCard({ item, onStop }) {
   );
 }
 
-export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward }) {
+export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward, onNewHost }) {
   const sessions = sshTabs(tabs);
   const [forwards, setForwards] = useState([]);
   const [viewMode, setViewMode] = useViewMode('port-forwarding');
   const { isOpen, renderedPanel, open, close } = useSlideOutPanel();
   const canOpen = sessions.length > 0 || hosts.length > 0;
+  const { blurHostIps } = usePrivacySettings();
 
   async function stop(item) {
     await window.api.sshForwardStop(item.sessionId, item.id);
@@ -306,8 +345,16 @@ export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward
                 <ItemRow
                   key={item.id}
                   Icon={ArrowRightLeft}
-                  title={`${item.bindHost}:${item.bindPort} → ${item.targetHost}:${item.targetPort}`}
-                  subtitle={`Via ${item.title}`}
+                  title={
+                    <span className={blurHostIps ? 'blur-sensitive' : ''}>
+                      {item.bindHost}:{item.bindPort} → {item.targetHost}:{item.targetPort}
+                    </span>
+                  }
+                  subtitle={
+                    <span className={blurHostIps && isIpAddress(item.title) ? 'blur-sensitive' : ''}>
+                      Via {item.title}
+                    </span>
+                  }
                   actions={
                     <button onClick={() => stop(item)} title="Stop forward" className={iconButtonClass}>
                       <Square className="size-3.5" />
@@ -329,6 +376,7 @@ export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward
             onConnectAndStartForward={onConnectAndStartForward}
             onCreated={handleCreated}
             onClose={close}
+            onNewHost={onNewHost}
           />
         )}
       </SlidePanel>
@@ -336,12 +384,14 @@ export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward
   );
 }
 
-function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose }) {
+function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost }) {
   const [name, setName] = useState(editingSnippet?.name ?? '');
   const [command, setCommand] = useState(editingSnippet?.command ?? '');
   const [targets, setTargets] = useState(editingSnippet?.targets ?? []);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const { blurHostIps } = usePrivacySettings();
 
   const availableHosts = hosts.filter((h) => !targets.includes(h.id));
 
@@ -372,8 +422,21 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose }) {
     onSaved(result.snippets);
   }
 
+  if (picking) {
+    return (
+      <SelectHostPanel
+        title="Add targets"
+        subtitle={name || 'New snippet'}
+        hosts={availableHosts}
+        onSelect={(item) => setTargets((t) => [...t, item.id])}
+        onBack={() => setPicking(false)}
+        onNewHost={onNewHost}
+      />
+    );
+  }
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <PanelHeader
         title={editingSnippet ? 'Edit snippet' : 'New snippet'}
         description="Saved in the encrypted vault, ready to send to any connected terminal."
@@ -413,9 +476,26 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose }) {
                     key={hostId}
                     className="flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5"
                   >
-                    <Server className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-sm">{host.label || host.host}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">SSH</span>
+                    <span
+                      className="flex size-7 shrink-0 items-center justify-center rounded-md"
+                      style={toneStyle(host.color || toneForId(host.id))}
+                    >
+                      <HostIcon slug={host.icon} fallback={Server} className="size-3.5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className={`block truncate text-sm ${
+                          blurHostIps && isIpAddress(host.label || host.host) ? 'blur-sensitive' : ''
+                        }`}
+                      >
+                        {host.label || host.host}
+                      </span>
+                      <span
+                        className={`block truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
+                        {hostSublabel(host)}
+                      </span>
+                    </span>
                     <button
                       type="button"
                       onClick={() => setTargets((t) => t.filter((id) => id !== hostId))}
@@ -432,23 +512,15 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose }) {
           )}
 
           {availableHosts.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="sm" className="self-start">
-                  <Plus className="size-3.5" /> Add target
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {availableHosts.map((host) => (
-                  <DropdownMenuItem
-                    key={host.id}
-                    onClick={() => setTargets((t) => [...t, host.id])}
-                  >
-                    <Server className="size-4" /> {host.label || host.host}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="self-start"
+              onClick={() => setPicking(true)}
+            >
+              <Plus className="size-3.5" /> Add target
+            </Button>
           ) : hosts.length === 0 ? (
             <p className="text-xs text-muted-foreground">No saved hosts yet — add one under Hosts first.</p>
           ) : (
@@ -508,7 +580,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
         icon={Code2}
         title={item.name}
         subtitle={snippetSubtitle(item)}
-        onClick={() => onRun(item)}
+        onDoubleClick={() => onRun(item)}
         actions={
           <>
             <button
@@ -550,7 +622,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
   );
 }
 
-export function SnippetsPanel({ tabs, hosts = [], onRunOnHost }) {
+export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onNewHost }) {
   const sessions = sshTabs(tabs);
   const [items, setItems] = useState([]);
   const [sessionId, setSessionId] = useState('');
@@ -734,6 +806,7 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost }) {
             editingSnippet={renderedPanel.editingSnippet}
             onSaved={handleSaved}
             onClose={close}
+            onNewHost={onNewHost}
           />
         )}
       </SlidePanel>

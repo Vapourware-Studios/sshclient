@@ -147,5 +147,4 @@ vite.config.ts.timestamp-*
 
 .claude
 
-package-lock.json
 .DS_Store

@@ -57,8 +57,9 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       convertEol: true,
       cursorBlink: kind !== 'playback',
       disableStdin: kind === 'playback',
-      fontSize: 13,
-      fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+      fontSize: 14,
+      fontFamily: 'Consolas, ui-monospace, Menlo, monospace',
+      fontWeight: 'normal',
       theme: terminalThemeRef.current,
     });
     const fitAddon = new FitAddon();
@@ -83,15 +84,15 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     });
 
     term.open(containerRef.current);
-    fitAddon.fit();
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
-    resizeObserver.observe(containerRef.current);
-
     if (kind === 'playback') {
+      fitAddon.fit();
+      const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+      resizeObserver.observe(containerRef.current);
+
       const frames = recording?.frames ?? [];
       let writtenCount = 0;
 
@@ -131,9 +132,10 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       if (adapter.resize) window.api[adapter.resize](sessionId, cols, rows);
     });
 
-    // Live chunks that arrive while the attach below is still in flight are
-    // held back — the attach replays everything printed so far, so writing
-    // live chunks first would show them out of order (or twice).
+    fitAddon.fit();
+    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+    resizeObserver.observe(containerRef.current);
+
     let pendingLive = [];
 
     const unsubData = window.api[adapter.onData]((payload) => {
@@ -142,10 +144,6 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       else term.write(payload.data);
     });
 
-    // Everything printed before this terminal mounted (MOTD, first prompt)
-    // is kept in the main process — fetch and replay it, then flush the
-    // held-back live chunks. `lastSeq` marks where the replayed history
-    // ends: chunks numbered at or below it are already on screen.
     let disposed = false;
     window.api[adapter.attach](sessionId).then((result) => {
       if (disposed) return;
@@ -201,8 +199,6 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     return () => cancelAnimationFrame(raf);
   }, [kind, playing, duration]);
 
-  // Restyle live terminals when the theme template changes — no re-mount,
-  // so scrollback and the running session are untouched.
   useEffect(() => {
     if (termRef.current) termRef.current.options.theme = terminalTheme;
   }, [terminalTheme]);

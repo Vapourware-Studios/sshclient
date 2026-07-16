@@ -11,8 +11,9 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 
-// The stages the main process reports (in order), with friendly labels.
 export const SSH_STEPS = [
   { id: 'connecting', label: 'Reaching the server' },
   { id: 'hostkey', label: 'Verifying server identity' },
@@ -20,9 +21,6 @@ export const SSH_STEPS = [
   { id: 'shell', label: 'Starting terminal session' },
 ];
 
-// Even if the real connection flies through the stages in 100ms, the UI
-// walks the steps one at a time with a minimum dwell, so you can see
-// each one complete instead of everything flashing at once.
 const STEP_DWELL_MS = 450;
 
 function usePacedIndex(targetIndex) {
@@ -37,9 +35,6 @@ function usePacedIndex(targetIndex) {
   return Math.min(index, Math.max(targetIndex, 0));
 }
 
-// A vertical checklist: done steps get a popped-in green check, the
-// active step spins with a sonar ring, pending steps sit dimmed.
-// Reused by both the SSH connecting view and the SFTP opening view.
 export function ProgressSteps({ steps, currentIndex }) {
   return (
     <div className="flex flex-col text-left">
@@ -94,14 +89,18 @@ export function ProgressSteps({ steps, currentIndex }) {
   );
 }
 
+function HostTitle({ title }) {
+  const { blurHostIps } = usePrivacySettings();
+  return (
+    <span className={blurHostIps && isIpAddress(title) ? 'blur-sensitive' : ''}>{title}</span>
+  );
+}
+
 function formatLogTime(time) {
   const d = new Date(time);
   return `${d.toTimeString().slice(0, 8)}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
-// The raw connection log: timestamps + what ssh2 is actually doing on
-// the wire (debug lines dim, our milestones green, what the server
-// prints to the terminal blue, errors red).
 export function ConnectionLog({ logs = [] }) {
   const endRef = useRef(null);
 
@@ -150,15 +149,19 @@ export function ConnectingView({ title, stage, logs, onCancel }) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 bg-background px-6 text-center animate-view-in">
-      <div className="relative flex size-20 items-center justify-center">
-        <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo" />
-        <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo [animation-delay:1.2s]" />
-        <span className="absolute inset-3 rounded-full bg-primary/10 animate-breathe" />
-        <Server className="relative size-6 text-primary" />
+      <div className="flex flex-col items-center gap-4">
+        <div className="flex size-16 items-center justify-center rounded-full bg-primary/10">
+          <Server className="size-7 text-primary" />
+        </div>
+        <div className="relative h-1.5 w-40 overflow-hidden rounded-full bg-muted">
+          <span className="absolute inset-y-0 left-0 w-10 rounded-full bg-primary animate-bounce-bar" />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
-        <p className="text-sm font-medium">{title}</p>
+        <p className="text-sm font-medium">
+          <HostTitle title={title} />
+        </p>
         <p className="text-xs text-muted-foreground">Establishing secure connection</p>
       </div>
 
@@ -198,7 +201,11 @@ export function HostKeyPromptView({ title, info, onTrust, onReject }) {
 
       <div className="flex w-full max-w-sm flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
         <p className="text-sm font-medium">
-          {changed ? `Host key for ${title} has changed!` : `Unknown host: ${title}`}
+          {changed ? (
+            <>Host key for <HostTitle title={title} /> has changed!</>
+          ) : (
+            <>Unknown host: <HostTitle title={title} /></>
+          )}
         </p>
         <p className="text-xs text-muted-foreground">
           {changed
@@ -239,7 +246,9 @@ export function ConnectErrorView({ title, message, logs, onRetry, onClose }) {
       </div>
 
       <div className="flex flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
-        <p className="text-sm font-medium">Couldn't connect to {title}</p>
+        <p className="text-sm font-medium">
+          Couldn't connect to <HostTitle title={title} />
+        </p>
         <p className="max-w-sm text-xs text-muted-foreground">{message}</p>
       </div>
 

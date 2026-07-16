@@ -15,14 +15,12 @@ export function log(level, message, data = null) {
     logs.pop();
   }
 
-  // DevTools
   const consoleFn = level === "error" ? "error" : level === "warn" ? "warn" : "log";
   console[consoleFn](
     `[${entry.time}] [${level.toUpperCase()}] ${message}`,
     data ?? ""
   );
 
-  // Main process (terminal)
   if (window.api?.log) {
     window.api.log(entry);
   }

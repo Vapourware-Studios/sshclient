@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useGlassSettings, glassAlpha } from '@/lib/glass-settings.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 
 const NO_DRAG = { WebkitAppRegion: 'no-drag' };
 
@@ -75,9 +77,8 @@ function WindowControls() {
 export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewConnection }) {
   const [fullScreen, setFullScreen] = useState(false);
   const { enabled, intensity } = useGlassSettings();
-  // Fully opaque when Liquid Glass is off — the window itself is transparent
-  // on macOS, so any bar translucency would show the desktop through it.
   const barAlpha = glassAlpha(enabled, intensity, 1, 0);
+  const { blurHostIps } = usePrivacySettings();
 
   useEffect(() => {
     if (!IS_MAC || typeof window.api.onFullScreenChange !== 'function') return;
@@ -125,7 +126,11 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
               <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
             )}
 
-            <span className="max-w-32 truncate">{tab.title}</span>
+            <span
+              className={`max-w-32 truncate ${blurHostIps && isIpAddress(tab.title) ? 'blur-sensitive' : ''}`}
+            >
+              {tab.title}
+            </span>
             <X
               className="size-3.5 shrink-0 hover:text-destructive"
               onClick={(e) => {

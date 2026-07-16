@@ -1,19 +1,24 @@
 import { useState } from 'react';
-import { FileCode2, Moon, Sparkles } from 'lucide-react';
+import { Download, EyeOff, FileCode2, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
+import AccountCard from '@/components/AccountCard';
 import ThemePicker from '@/components/ThemePicker';
+import TermiusImportDialog from '@/components/TermiusImportDialog';
 import { useGlassSettings, GLASS_SUPPORTED } from '@/lib/glass-settings.jsx';
 import { useTheme } from '@/lib/theme-settings.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
 import { CUSTOM_CSS_TEMPLATE } from '@/lib/terminal-themes';
 
-export default function SettingsPanel() {
+export default function SettingsPanel({ onHostsChange }) {
   const { enabled, intensity, setEnabled, setIntensity } = useGlassSettings();
   const { customCss, customCssName, setCustomCss } = useTheme();
+  const { blurHostIps, setBlurHostIps } = usePrivacySettings();
   const [cssError, setCssError] = useState('');
+  const [termiusOpen, setTermiusOpen] = useState(false);
 
   async function loadCssFile() {
     setCssError('');
@@ -39,6 +44,8 @@ export default function SettingsPanel() {
           <h2 className="text-lg font-semibold">Settings</h2>
           <p className="text-sm text-muted-foreground">App preferences.</p>
         </div>
+
+        <AccountCard />
 
         <Card>
           <CardHeader>
@@ -93,6 +100,43 @@ export default function SettingsPanel() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Download className="size-4" /> Import
+            </CardTitle>
+            <CardDescription>
+              Bring in hosts and keys from another SSH client already installed on this machine.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" size="sm" onClick={() => setTermiusOpen(true)}>
+              Import from Termius…
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <EyeOff className="size-4" /> Privacy
+            </CardTitle>
+            <CardDescription>
+              Blur host addresses across the app until you hover over them. This is handy if you're
+              screen sharing or sharign screenshots, but it can make it harder to identify hosts at a glance.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+              <Checkbox
+                checked={blurHostIps}
+                onCheckedChange={(v) => setBlurHostIps(Boolean(v))}
+              />
+              Blur host IPs
+            </label>
+          </CardContent>
+        </Card>
+
         {GLASS_SUPPORTED && (
         <Card>
           <CardHeader>
@@ -129,6 +173,12 @@ export default function SettingsPanel() {
         </Card>
         )}
       </div>
+
+      <TermiusImportDialog
+        open={termiusOpen}
+        onOpenChange={setTermiusOpen}
+        onImported={onHostsChange}
+      />
     </div>
   );
 }

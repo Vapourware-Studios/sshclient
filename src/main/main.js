@@ -8,8 +8,28 @@ const ssh = require('./ssh');
 const localTerm = require('./localTerm');
 const serial = require('./serial');
 const vault = require('./vault');
+const sync = require('./sync');
 const updater = require('./updater');
 const isMac = process.platform === 'darwin';
+
+// Deep links (sshclient://signed-in) come back from the browser sign-in flow.
+// Single-instance so a second launch on Win/Linux forwards its URL here.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+app.on('second-instance', (event, argv) => {
+  const url = argv.find((arg) => arg.startsWith('sshclient://'));
+  if (url) sync.handleDeepLink(url);
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  sync.handleDeepLink(url);
+});
 let liquidGlass = null;
 if (isMac) {
   try {
@@ -96,15 +116,19 @@ ipcMain.handle('ssh:connect', (event, config) => {
     if (config?.hostId) {
       const saved = vault.getHostSecret(config.hostId);
       if (!saved) return { error: 'Saved host not found' };
-      fullConfig = { ...saved, cols: config.cols, rows: config.rows, mode: config.mode };
+      fullConfig = { ...config, ...saved, cols: config.cols, rows: config.rows, mode: config.mode };
+      if (config.password) fullConfig.password = config.password;
     }
-    // A host can reference a Keychain key; swap the reference for the
-    // actual key material before connecting.
     if (fullConfig.keyId) {
       const key = vault.getKeySecret(fullConfig.keyId);
       if (!key) return { error: 'Key not found in Keychain' };
       fullConfig = { ...fullConfig, privateKey: key.private, publicKey: key.public };
       if (key.passphrase) fullConfig.passphrase = key.passphrase;
+    }
+    if (config.installKeyId) {
+      const installKey = vault.getKeySecret(config.installKeyId);
+      if (!installKey) return { error: 'Key to install was not found in the Keychain' };
+      fullConfig = { ...fullConfig, publicKey: installKey.public, mode: 'keycopy' };
     }
     const sessionId = ssh.connect(fullConfig, {
       onProgress: (sessionId, stage) => win?.webContents.send('ssh:progress', { sessionId, stage }),
@@ -123,6 +147,7 @@ ipcMain.handle('ssh:connect', (event, config) => {
           pendingHostKeyDecisions.set(sessionId, resolve);
           win?.webContents.send('ssh:hostkey', { sessionId, ...info });
         }),
+      onHostsUpdated: (hosts) => win?.webContents.send('hosts:changed', { hosts }),
     });
     return { sessionId };
   } catch (err) {
@@ -220,8 +245,6 @@ ipcMain.handle('serial:disconnect', (event, sessionId) => {
 });
 
 ipcMain.handle('serial:attach', (event, sessionId) => serial.attach(sessionId));
-// Lets the renderer know the starting state (the events above only cover
-// transitions that happen after the page has loaded).
 ipcMain.handle('window:isFullScreen', (event) =>
   BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
 );
@@ -245,7 +268,6 @@ ipcMain.handle('window:close', (event) => {
   BrowserWindow.fromWebContents(event.sender)?.close();
 });
 
-// Local filesystem browsing for the SFTP dual-pane view.
 ipcMain.handle('fs:home', () => ({ path: os.homedir() }));
 
 ipcMain.handle('fs:list', async (event, dirPath) => {
@@ -262,7 +284,6 @@ ipcMain.handle('fs:list', async (event, dirPath) => {
           size = st.size;
           mtime = st.mtimeMs;
         } catch {
-          // Unreadable entry (permissions, broken link) — list it anyway.
         }
         return { name: d.name, type, size, mtime };
       })
@@ -279,9 +300,6 @@ ipcMain.handle('fs:list', async (event, dirPath) => {
   }
 });
 
-// Runs one SFTP transfer in the background and streams progress to the
-// renderer as 'sftp:transfer' events. Progress is throttled so a fast
-// transfer doesn't flood IPC with thousands of tiny updates.
 function runTransfer(win, { sessionId, kind, name, destSessionId }, startFn) {
   const transferId = crypto.randomUUID();
   const send = (payload) =>
@@ -357,8 +375,6 @@ ipcMain.handle('sftp:upload', async (event, { sessionId, remoteDir }) => {
   return { started: result.filePaths.length };
 });
 
-// Download straight into a known local folder (dual-pane transfers) —
-// no save dialog involved.
 ipcMain.handle('sftp:downloadTo', async (event, { sessionId, remotePath, localDir, name }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   ssh.assertSafeSftpName(name);
@@ -372,8 +388,6 @@ ipcMain.handle('sftp:downloadTo', async (event, { sessionId, remotePath, localDi
   return { transferId };
 });
 
-// Same as sftp:upload but for drag-and-drop, where the renderer already
-// knows the local paths (via webUtils.getPathForFile in the preload).
 ipcMain.handle('sftp:uploadPaths', async (event, { sessionId, remoteDir, localPaths }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   for (const localPath of localPaths) {
@@ -424,6 +438,7 @@ ipcMain.handle('vault:status', () => ({
 ipcMain.handle('vault:setup', (event, password) => {
   try {
     vault.setup(password);
+    sync.onVaultUnlocked();
     return { ok: true };
   } catch (err) {
     return { error: err.message };
@@ -433,6 +448,7 @@ ipcMain.handle('vault:setup', (event, password) => {
 ipcMain.handle('vault:unlock', (event, password) => {
   try {
     vault.unlock(password);
+    sync.onVaultUnlocked();
     return { ok: true };
   } catch (err) {
     return { error: err.message };
@@ -440,8 +456,61 @@ ipcMain.handle('vault:unlock', (event, password) => {
 });
 
 ipcMain.handle('vault:lock', () => {
+  sync.onVaultLocked();
   vault.lock();
   return { ok: true };
+});
+
+ipcMain.handle('account:status', () => {
+  try {
+    return sync.status();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:signIn', () => {
+  try {
+    sync.startSignIn();
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:completeCrypto', async (event, password) => {
+  try {
+    await sync.completeCryptoWithPassword(password);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:signOut', async () => {
+  try {
+    await sync.signOut();
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:syncNow', async () => {
+  try {
+    return await sync.syncNow();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:setUrls', (event, urls) => {
+  try {
+    sync.setUrls(urls || {});
+    return sync.status();
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
 ipcMain.handle('hosts:list', () => {
@@ -454,7 +523,9 @@ ipcMain.handle('hosts:list', () => {
 
 ipcMain.handle('hosts:save', (event, host) => {
   try {
-    return { hosts: vault.saveHost(host) };
+    const hosts = vault.saveHost(host);
+    sync.scheduleSync();
+    return { hosts };
   } catch (err) {
     return { error: err.message };
   }
@@ -462,7 +533,9 @@ ipcMain.handle('hosts:save', (event, host) => {
 
 ipcMain.handle('hosts:duplicate', (event, id) => {
   try {
-    return { hosts: vault.duplicateHost(id) };
+    const hosts = vault.duplicateHost(id);
+    sync.scheduleSync();
+    return { hosts };
   } catch (err) {
     return { error: err.message };
   }
@@ -470,7 +543,9 @@ ipcMain.handle('hosts:duplicate', (event, id) => {
 
 ipcMain.handle('hosts:delete', (event, id) => {
   try {
-    return { hosts: vault.deleteHost(id) };
+    const hosts = vault.deleteHost(id);
+    sync.scheduleSync();
+    return { hosts };
   } catch (err) {
     return { error: err.message };
   }
@@ -500,12 +575,14 @@ for (const [channel, action] of [
   ['history:delete', (id) => ({ history: vault.deleteSessionHistory(id) })],
 ]) {
   ipcMain.handle(channel, (event, value) => {
-    try { return action(value); } catch (err) { return { error: err.message }; }
+    try {
+      const result = action(value);
+      if (!channel.endsWith(':list')) sync.scheduleSync();
+      return result;
+    } catch (err) { return { error: err.message }; }
   });
 }
 
-// Key generation runs in the main process so private keys are created and
-// vaulted without ever touching the renderer.
 const KEY_TYPES = {
   ed25519: [],
   ecdsa: [256, 384, 521],
@@ -533,16 +610,16 @@ ipcMain.handle('keys:generate', async (event, { name, type, bits }) => {
 
     const parsed = sshUtils.parseKey(pair.private);
 
-    return {
-      keys: vault.saveKey({
-        name: trimmed,
-        type,
-        bits: opts.bits,
-        private: pair.private,
-        public: pair.public.trim(),
-        fingerprint: keyFingerprint(parsed),
-      }),
-    };
+    const keys = vault.saveKey({
+      name: trimmed,
+      type,
+      bits: opts.bits,
+      private: pair.private,
+      public: pair.public.trim(),
+      fingerprint: keyFingerprint(parsed),
+    });
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -555,8 +632,6 @@ function keyFingerprint(parsed) {
   );
 }
 
-// Import a key the user pasted in. The public half is derived from the
-// private key, so pasting just the private key is enough.
 ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase }) => {
   try {
     const trimmedName = String(name || '').trim();
@@ -574,8 +649,6 @@ ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase 
       throw new Error('This looks like a public key — paste the private key');
     }
 
-    // If the user pasted the public key too, check it actually belongs to
-    // this private key and keep their line (comment included).
     let pastedPublicLine;
     if (String(publicKey || '').trim()) {
       const normalized = String(publicKey).trim().split(/\s+/).join(' ');
@@ -590,7 +663,6 @@ ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase 
       pastedPublicLine = normalized;
     }
 
-    // 'ecdsa-sha2-nistp256' -> type 'ecdsa', bits 256, etc.
     let type = parsed.type;
     let bits;
     if (type === 'ssh-ed25519') type = 'ed25519';
@@ -604,17 +676,17 @@ ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase 
     const publicLine =
       pastedPublicLine ?? `${parsed.type} ${parsed.getPublicSSH().toString('base64')} ${comment}`;
 
-    return {
-      keys: vault.saveKey({
-        name: trimmedName,
-        type,
-        bits,
-        private: material,
-        public: publicLine,
-        passphrase: passphrase || undefined,
-        fingerprint: keyFingerprint(parsed),
-      }),
-    };
+    const keys = vault.saveKey({
+      name: trimmedName,
+      type,
+      bits,
+      private: material,
+      public: publicLine,
+      passphrase: passphrase || undefined,
+      fingerprint: keyFingerprint(parsed),
+    });
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -630,7 +702,9 @@ ipcMain.handle('keys:list', () => {
 
 ipcMain.handle('keys:delete', (event, id) => {
   try {
-    return { keys: vault.deleteKey(id) };
+    const keys = vault.deleteKey(id);
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -638,19 +712,28 @@ ipcMain.handle('keys:delete', (event, id) => {
 
 ipcMain.handle('keys:setColor', (event, { id, color }) => {
   try {
-    return { keys: vault.setKeyColor(id, color) };
+    const keys = vault.setKeyColor(id, color);
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
 });
 
-// Hand the private half to the UI on explicit request (the Keychain's
-// "reveal" button), so the user can copy or back up their own key.
 ipcMain.handle('keys:reveal', (event, id) => {
   try {
     const key = vault.getKeySecret(id);
     if (!key) return { error: 'Key not found' };
     return { private: key.private, hasPassphrase: Boolean(key.passphrase) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('termius:preview', async () => {
+  try {
+    const { previewTermiusImport } = require('./termiusImport');
+    return await previewTermiusImport();
   } catch (err) {
     return { error: err.message };
   }
@@ -670,8 +753,6 @@ ipcMain.handle('dialog:selectFolder', async (event) => {
   return { path: result.filePaths[0] };
 });
 
-// Custom-theme CSS. The renderer stores the file's contents (localStorage),
-// so the file itself is only read here once per load — no path is retained.
 const MAX_CUSTOM_CSS_BYTES = 512 * 1024;
 
 ipcMain.handle('theme:openCssFile', async (event) => {
@@ -721,9 +802,30 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin') {
     app.dock.setIcon(path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'));
   }
+
+  // Register sshclient:// so the browser can hand sign-in back to the app.
+  // In dev (`electron .`) the executable path + entry point must be explicit.
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('sshclient', process.execPath, [path.resolve(process.argv[1])]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient('sshclient');
+  }
+
+  sync.setNotifier((channel, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(channel, payload);
+    }
+  });
+
   vault.init(app.getPath('userData'));
   createWindow();
   updater.init();
+
+  // Cold-start deep link (Win/Linux pass it in argv).
+  const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));
+  if (deepLink) sync.handleDeepLink(deepLink);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
