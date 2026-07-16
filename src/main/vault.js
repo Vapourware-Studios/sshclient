@@ -57,6 +57,11 @@ function init(userDataDir) {
       id TEXT PRIMARY KEY, data_iv TEXT NOT NULL, data_auth_tag TEXT NOT NULL,
       data_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sync_state (
+      type TEXT NOT NULL, id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL, server_version INTEGER NOT NULL,
+      PRIMARY KEY (type, id)
+    );
   `);
 }
 
@@ -493,6 +498,163 @@ function deleteSessionHistory(id) {
   return listEncrypted('session_history');
 }
 
+// ---------------------------------------------------------------------------
+// Sync support. The sync engine (sync.js) treats the vault as the source of
+// truth and needs: raw enumeration of every record's decrypted payload,
+// id-preserving upserts for records arriving from the server, and small
+// encrypted meta blobs (device token, sync DEK) that live in vault_meta so
+// they get the same at-rest protection as everything else.
+
+const SYNC_TABLES = {
+  host: { table: 'hosts', hasUpdatedAt: true },
+  key: { table: 'keys', hasUpdatedAt: false },
+  snippet: { table: 'snippets', hasUpdatedAt: true },
+  session_history: { table: 'session_history', hasUpdatedAt: false },
+};
+
+function knownHostSyncId(host, port) {
+  return crypto.createHash('sha256').update(`${host}:${port}`).digest('hex').slice(0, 32);
+}
+
+function syncEnumerate() {
+  requireUnlocked();
+  const out = [];
+  for (const [type, { table }] of Object.entries(SYNC_TABLES)) {
+    const rows = db.prepare(`SELECT * FROM ${table}`).all();
+    for (const row of rows) {
+      const data = decryptJSON(derivedKey, {
+        iv: row.data_iv,
+        authTag: row.data_auth_tag,
+        ciphertext: row.data_ciphertext,
+      });
+      const payload = { ...data, createdAt: row.created_at };
+      if (row.updated_at !== undefined) payload.updatedAt = row.updated_at;
+      out.push({ type, id: row.id, payload });
+    }
+  }
+  for (const kh of listKnownHosts()) {
+    out.push({ type: 'known_host', id: knownHostSyncId(kh.host, kh.port), payload: kh });
+  }
+  return out;
+}
+
+function syncApply(type, id, payload) {
+  requireUnlocked();
+  if (type === 'known_host') {
+    db.prepare(
+      `INSERT INTO known_hosts (host, port, fingerprint, first_seen) VALUES (?, ?, ?, ?)
+       ON CONFLICT(host, port) DO UPDATE SET fingerprint = excluded.fingerprint`
+    ).run(payload.host, payload.port, payload.fingerprint, payload.firstSeen || Date.now());
+    return;
+  }
+  const spec = SYNC_TABLES[type];
+  if (!spec) throw new Error(`Unknown sync record type: ${type}`);
+
+  const { createdAt, updatedAt, ...data } = payload;
+  const enc = encryptJSON(derivedKey, data);
+  const created = createdAt || Date.now();
+
+  if (spec.hasUpdatedAt) {
+    db.prepare(
+      `INSERT INTO ${spec.table} (id, data_iv, data_auth_tag, data_ciphertext, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         data_iv = excluded.data_iv, data_auth_tag = excluded.data_auth_tag,
+         data_ciphertext = excluded.data_ciphertext, updated_at = excluded.updated_at`
+    ).run(id, enc.iv, enc.authTag, enc.ciphertext, created, updatedAt || created);
+  } else {
+    db.prepare(
+      `INSERT INTO ${spec.table} (id, data_iv, data_auth_tag, data_ciphertext, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         data_iv = excluded.data_iv, data_auth_tag = excluded.data_auth_tag,
+         data_ciphertext = excluded.data_ciphertext`
+    ).run(id, enc.iv, enc.authTag, enc.ciphertext, created);
+  }
+}
+
+function syncDeleteLocal(type, id) {
+  requireUnlocked();
+  if (type === 'known_host') {
+    // known_host sync ids are hashes; find the matching row.
+    for (const kh of listKnownHosts()) {
+      if (knownHostSyncId(kh.host, kh.port) === id) {
+        db.prepare('DELETE FROM known_hosts WHERE host = ? AND port = ?').run(kh.host, kh.port);
+        return;
+      }
+    }
+    return;
+  }
+  const spec = SYNC_TABLES[type];
+  if (!spec) throw new Error(`Unknown sync record type: ${type}`);
+  db.prepare(`DELETE FROM ${spec.table} WHERE id = ?`).run(id);
+}
+
+function syncStateAll() {
+  return db.prepare('SELECT type, id, payload_hash AS payloadHash, server_version AS serverVersion FROM sync_state').all();
+}
+
+function syncStateSet(type, id, payloadHash, serverVersion) {
+  db.prepare(
+    `INSERT INTO sync_state (type, id, payload_hash, server_version) VALUES (?, ?, ?, ?)
+     ON CONFLICT(type, id) DO UPDATE SET payload_hash = excluded.payload_hash, server_version = excluded.server_version`
+  ).run(type, id, payloadHash, serverVersion);
+}
+
+function syncStateDelete(type, id) {
+  db.prepare('DELETE FROM sync_state WHERE type = ? AND id = ?').run(type, id);
+}
+
+function syncStateClear() {
+  db.exec('DELETE FROM sync_state');
+}
+
+/** Store a JSON blob in vault_meta, encrypted with the vault key. */
+function metaSetSecret(key, obj) {
+  requireUnlocked();
+  if (obj === null) {
+    db.prepare('DELETE FROM vault_meta WHERE key = ?').run(key);
+    return;
+  }
+  setMeta(key, JSON.stringify(encryptJSON(derivedKey, obj)));
+}
+
+function metaGetSecret(key) {
+  requireUnlocked();
+  const raw = getMeta(key);
+  if (!raw) return null;
+  try {
+    return decryptJSON(derivedKey, JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/** The local vault salt — reused as the KDF salt for the sync KEK. */
+function getSalt() {
+  const salt = getMeta('salt');
+  return salt ? Buffer.from(salt, 'base64') : null;
+}
+
+/**
+ * Wrap/unwrap small payloads with the in-memory vault key. Used by the sync
+ * engine to wrap the sync DEK for upload: a device that knows the master
+ * password can re-derive this key from the uploaded salt and unwrap it.
+ */
+function wrapWithVaultKey(obj) {
+  requireUnlocked();
+  return encryptJSON(derivedKey, obj);
+}
+
+function unwrapWithVaultKey(record) {
+  requireUnlocked();
+  return decryptJSON(derivedKey, record);
+}
+
+function unwrapWithKey(key, record) {
+  return decryptJSON(key, record);
+}
+
 function trustHostKey(host, port, fingerprint) {
   db.prepare(
     `INSERT INTO known_hosts (host, port, fingerprint, first_seen) VALUES (?, ?, ?, ?)
@@ -528,4 +690,20 @@ module.exports = {
   listSessionHistory: () => listEncrypted('session_history'),
   saveSessionHistory,
   deleteSessionHistory,
+  syncEnumerate,
+  syncApply,
+  syncDeleteLocal,
+  syncStateAll,
+  syncStateSet,
+  syncStateDelete,
+  syncStateClear,
+  metaSetSecret,
+  metaGetSecret,
+  getSalt,
+  getMeta,
+  setMeta,
+  wrapWithVaultKey,
+  unwrapWithVaultKey,
+  unwrapWithKey,
+  deriveKey,
 };

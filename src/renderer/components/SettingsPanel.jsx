@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
+import AccountCard from '@/components/AccountCard';
 import ThemePicker from '@/components/ThemePicker';
 import TermiusImportDialog from '@/components/TermiusImportDialog';
 import { useGlassSettings, GLASS_SUPPORTED } from '@/lib/glass-settings.jsx';
@@ -41,6 +42,8 @@ export default function SettingsPanel({ onHostsChange }) {
           <h2 className="text-lg font-semibold">Settings</h2>
           <p className="text-sm text-muted-foreground">App preferences.</p>
         </div>
+
+        <AccountCard />
 
         <Card>
           <CardHeader>

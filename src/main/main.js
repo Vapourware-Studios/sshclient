@@ -8,7 +8,27 @@ const ssh = require('./ssh');
 const localTerm = require('./localTerm');
 const serial = require('./serial');
 const vault = require('./vault');
+const sync = require('./sync');
 const isMac = process.platform === 'darwin';
+
+// Deep links (sshclient://signed-in) come back from the browser sign-in flow.
+// Single-instance so a second launch on Win/Linux forwards its URL here.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+app.on('second-instance', (event, argv) => {
+  const url = argv.find((arg) => arg.startsWith('sshclient://'));
+  if (url) sync.handleDeepLink(url);
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  sync.handleDeepLink(url);
+});
 let liquidGlass = null;
 if (isMac) {
   try {
@@ -417,6 +437,7 @@ ipcMain.handle('vault:status', () => ({
 ipcMain.handle('vault:setup', (event, password) => {
   try {
     vault.setup(password);
+    sync.onVaultUnlocked();
     return { ok: true };
   } catch (err) {
     return { error: err.message };
@@ -426,6 +447,7 @@ ipcMain.handle('vault:setup', (event, password) => {
 ipcMain.handle('vault:unlock', (event, password) => {
   try {
     vault.unlock(password);
+    sync.onVaultUnlocked();
     return { ok: true };
   } catch (err) {
     return { error: err.message };
@@ -433,8 +455,61 @@ ipcMain.handle('vault:unlock', (event, password) => {
 });
 
 ipcMain.handle('vault:lock', () => {
+  sync.onVaultLocked();
   vault.lock();
   return { ok: true };
+});
+
+ipcMain.handle('account:status', () => {
+  try {
+    return sync.status();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:signIn', () => {
+  try {
+    sync.startSignIn();
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:completeCrypto', async (event, password) => {
+  try {
+    await sync.completeCryptoWithPassword(password);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:signOut', async () => {
+  try {
+    await sync.signOut();
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:syncNow', async () => {
+  try {
+    return await sync.syncNow();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('account:setUrls', (event, urls) => {
+  try {
+    sync.setUrls(urls || {});
+    return sync.status();
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
 ipcMain.handle('hosts:list', () => {
@@ -447,7 +522,9 @@ ipcMain.handle('hosts:list', () => {
 
 ipcMain.handle('hosts:save', (event, host) => {
   try {
-    return { hosts: vault.saveHost(host) };
+    const hosts = vault.saveHost(host);
+    sync.scheduleSync();
+    return { hosts };
   } catch (err) {
     return { error: err.message };
   }
@@ -455,7 +532,9 @@ ipcMain.handle('hosts:save', (event, host) => {
 
 ipcMain.handle('hosts:duplicate', (event, id) => {
   try {
-    return { hosts: vault.duplicateHost(id) };
+    const hosts = vault.duplicateHost(id);
+    sync.scheduleSync();
+    return { hosts };
   } catch (err) {
     return { error: err.message };
   }
@@ -463,7 +542,9 @@ ipcMain.handle('hosts:duplicate', (event, id) => {
 
 ipcMain.handle('hosts:delete', (event, id) => {
   try {
-    return { hosts: vault.deleteHost(id) };
+    const hosts = vault.deleteHost(id);
+    sync.scheduleSync();
+    return { hosts };
   } catch (err) {
     return { error: err.message };
   }
@@ -493,7 +574,11 @@ for (const [channel, action] of [
   ['history:delete', (id) => ({ history: vault.deleteSessionHistory(id) })],
 ]) {
   ipcMain.handle(channel, (event, value) => {
-    try { return action(value); } catch (err) { return { error: err.message }; }
+    try {
+      const result = action(value);
+      if (!channel.endsWith(':list')) sync.scheduleSync();
+      return result;
+    } catch (err) { return { error: err.message }; }
   });
 }
 
@@ -524,16 +609,16 @@ ipcMain.handle('keys:generate', async (event, { name, type, bits }) => {
 
     const parsed = sshUtils.parseKey(pair.private);
 
-    return {
-      keys: vault.saveKey({
-        name: trimmed,
-        type,
-        bits: opts.bits,
-        private: pair.private,
-        public: pair.public.trim(),
-        fingerprint: keyFingerprint(parsed),
-      }),
-    };
+    const keys = vault.saveKey({
+      name: trimmed,
+      type,
+      bits: opts.bits,
+      private: pair.private,
+      public: pair.public.trim(),
+      fingerprint: keyFingerprint(parsed),
+    });
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -590,17 +675,17 @@ ipcMain.handle('keys:import', (event, { name, privateKey, publicKey, passphrase 
     const publicLine =
       pastedPublicLine ?? `${parsed.type} ${parsed.getPublicSSH().toString('base64')} ${comment}`;
 
-    return {
-      keys: vault.saveKey({
-        name: trimmedName,
-        type,
-        bits,
-        private: material,
-        public: publicLine,
-        passphrase: passphrase || undefined,
-        fingerprint: keyFingerprint(parsed),
-      }),
-    };
+    const keys = vault.saveKey({
+      name: trimmedName,
+      type,
+      bits,
+      private: material,
+      public: publicLine,
+      passphrase: passphrase || undefined,
+      fingerprint: keyFingerprint(parsed),
+    });
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -616,7 +701,9 @@ ipcMain.handle('keys:list', () => {
 
 ipcMain.handle('keys:delete', (event, id) => {
   try {
-    return { keys: vault.deleteKey(id) };
+    const keys = vault.deleteKey(id);
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -624,7 +711,9 @@ ipcMain.handle('keys:delete', (event, id) => {
 
 ipcMain.handle('keys:setColor', (event, { id, color }) => {
   try {
-    return { keys: vault.setKeyColor(id, color) };
+    const keys = vault.setKeyColor(id, color);
+    sync.scheduleSync();
+    return { keys };
   } catch (err) {
     return { error: err.message };
   }
@@ -712,8 +801,29 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin') {
     app.dock.setIcon(path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'));
   }
+
+  // Register sshclient:// so the browser can hand sign-in back to the app.
+  // In dev (`electron .`) the executable path + entry point must be explicit.
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('sshclient', process.execPath, [path.resolve(process.argv[1])]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient('sshclient');
+  }
+
+  sync.setNotifier((channel, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(channel, payload);
+    }
+  });
+
   vault.init(app.getPath('userData'));
   createWindow();
+
+  // Cold-start deep link (Win/Linux pass it in argv).
+  const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));
+  if (deepLink) sync.handleDeepLink(deepLink);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

@@ -66,6 +66,16 @@ contextBridge.exposeInMainWorld('api', {
   vaultUnlock: (masterPassword) => ipcRenderer.invoke('vault:unlock', masterPassword),
   vaultLock: () => ipcRenderer.invoke('vault:lock'),
 
+  accountStatus: () => ipcRenderer.invoke('account:status'),
+  accountSignIn: () => ipcRenderer.invoke('account:signIn'),
+  accountCompleteCrypto: (password) => ipcRenderer.invoke('account:completeCrypto', password),
+  accountSignOut: () => ipcRenderer.invoke('account:signOut'),
+  accountSyncNow: () => ipcRenderer.invoke('account:syncNow'),
+  accountSetUrls: (urls) => ipcRenderer.invoke('account:setUrls', urls),
+  onAccountChanged: (callback) => subscribe('account:changed', callback),
+  onKeysChanged: (callback) => subscribe('keys:changed', callback),
+  onSyncApplied: (callback) => subscribe('sync:applied', callback),
+
   hostsList: () => ipcRenderer.invoke('hosts:list'),
   hostsSave: (host) => ipcRenderer.invoke('hosts:save', host),
   hostsDuplicate: (id) => ipcRenderer.invoke('hosts:duplicate', id),
