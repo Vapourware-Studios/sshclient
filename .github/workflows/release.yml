@@ -1,97 +1,97 @@
 name: Release
 
-# Builds automatically when a commit on main changes package.json,
-
-# or manually when triggered from the GitHub Actions interface.
-
+# Builds automatically when package.json changes on main,
+# or manually through the GitHub Actions interface.
 on:
-push:
-branches: [main]
-paths:
-- package.json
-workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+  workflow_dispatch:
 
 permissions:
-contents: write
+  contents: write
 
 jobs:
-check-version:
-runs-on: ubuntu-latest
-outputs:
-changed: ${{ steps.check.outputs.changed }}
-steps:
-- uses: actions/checkout@v4
-with:
-fetch-depth: 2
+  check-version:
+    runs-on: ubuntu-latest
 
-```
-  - id: check
-    run: |
-      # Manual workflow runs should always build.
-      if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-        echo "changed=true" >> "$GITHUB_OUTPUT"
-        exit 0
-      fi
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
 
-      CURRENT=$(node -p "require('./package.json').version")
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch the complete history so github.event.before is available.
+          fetch-depth: 0
 
-      if git rev-parse HEAD~1 >/dev/null 2>&1; then
-        PREVIOUS=$(git show HEAD~1:package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
-      else
-        PREVIOUS=""
-      fi
+      - id: check
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      if [ "$CURRENT" != "$PREVIOUS" ]; then
-        echo "changed=true" >> "$GITHUB_OUTPUT"
-      else
-        echo "changed=false" >> "$GITHUB_OUTPUT"
-      fi
-```
+          # Manual runs always proceed with a build.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-build:
-needs: check-version
-if: needs.check-version.outputs.changed == 'true'
-strategy:
-fail-fast: false
-matrix:
-include:
-- os: windows-latest
-flag: --win
-- os: macos-latest
-flag: --mac
-- os: ubuntu-latest
-flag: --linux
+          CURRENT=$(node -p "require('./package.json').version")
+          BEFORE="${{ github.event.before }}"
 
-```
-runs-on: ${{ matrix.os }}
+          # A push event can contain multiple commits. Compare against the
+          # repository state before the entire push rather than only HEAD~1.
+          if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+            PREVIOUS=""
+          else
+            PREVIOUS=$(
+              git show "${BEFORE}:package.json" 2>/dev/null |
+                node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version" \
+                2>/dev/null || true
+            )
+          fi
 
-steps:
-  - uses: actions/checkout@v4
+          echo "Current version:  $CURRENT"
+          echo "Previous version: $PREVIOUS"
 
-  - uses: actions/setup-node@v4
-    with:
-      node-version: 20
+          if [[ "$CURRENT" != "$PREVIOUS" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
-  - run: npm i
-  - run: npm run build
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
 
-  # Publishes straight to a public GitHub Release tagged v<version>.
-  #
-  # Windows note: this build is NOT code-signed (no Authenticode cert).
-  # Windows Defender/SmartScreen may still flag or warn on an unsigned
-  # installer from a publisher with no reputation yet — there is no
-  # reliable way to fully avoid that without signing. What this config
-  # does do, as legitimate false-positive mitigation:
-  #   - NSIS installer (not a `portable` exe, which heuristics flag harder)
-  #   - "compression": "normal" — no aggressive/UPX-style packing, which
-  #     raises entropy and is itself a common heuristic trigger
-  #   - consistent publisherName/appId/productName metadata across builds
-  # The durable fix is a code-signing certificate (or Microsoft's Trusted
-  # Signing service) plus, ideally, submitting the installer to
-  # https://www.microsoft.com/wdsi/filesubmission after each release to
-  # build SmartScreen reputation — both are manual/account-holder steps,
-  # not something this workflow can do on its own.
-  - run: npx electron-builder ${{ matrix.flag }} --publish always
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            flag: --win
+          - os: macos-latest
+            flag: --mac
+          - os: ubuntu-latest
+            flag: --linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Use npm ci when package-lock.json is committed.
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Build and publish release
+        run: npx electron-builder ${{ matrix.flag }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
