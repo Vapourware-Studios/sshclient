@@ -10,11 +10,14 @@ internet, forever. These rules are absolute. When in doubt, don't commit.
   personal email addresses — not in code, comments, docs, examples, commit
   messages, or commit author fields. Nowhere.
 - The only identities allowed are GitHub usernames and the org name:
-  `Vapourware-Studios` (org), `chank-op`, `Mr_chank`.
-- **Every commit MUST be authored** `Vapourware-Studios <chank@vapourware-studios.net>`.
-  The repo-local git config pins this — never override it with a global or
-  one-off identity, and verify with `git log --format='%an <%ae>'` after
-  committing.
+  `Vapourware-Studios` (org), `chank-op`, `Mr_chank`, and any other
+  contributor's GitHub username.
+- **Every commit MUST be authored with the contributor's GitHub username and
+  their GitHub-provided private noreply email**
+  (`<id>+<username>@users.noreply.github.com`, found under GitHub Settings →
+  Emails), never a real name or personal address. The repo-local git config
+  pins this per contributor — never override it with a global or one-off
+  identity, and verify with `git log --format='%an <%ae>'` after committing.
 
 ## 2. NO AI co-authoring
 
