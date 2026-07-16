@@ -38,7 +38,9 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "publisherName": "Vapourware-Studios"
+      "signtoolOptions": {
+        "publisherName": "Vapourware-Studios"
+      }
     },
     "nsis": {
       "oneClick": true,
