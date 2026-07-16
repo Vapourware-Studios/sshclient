@@ -48,8 +48,8 @@ function SnippetList({ onRunSnippet }) {
         {filtered.map((snippet) => (
           <button
             key={snippet.id}
-            onClick={() => onRunSnippet(snippet)}
-            title="Run in this terminal"
+            onDoubleClick={() => onRunSnippet(snippet)}
+            title="Double-click to run in this terminal"
             className="group flex w-full items-center justify-between gap-2 rounded-md border border-transparent px-3 py-2 text-left text-sm hover:bg-accent"
           >
             <span className="min-w-0">

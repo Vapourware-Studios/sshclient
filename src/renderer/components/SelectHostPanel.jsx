@@ -37,7 +37,7 @@ export default function SelectHostPanel({
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <div className="flex items-start gap-3 border-b p-4">
         <button
           type="button"

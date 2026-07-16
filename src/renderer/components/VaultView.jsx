@@ -86,7 +86,8 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   return (
     <HostContextMenu host={host} onConnect={onConnect} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete}>
       <div
-        onClick={() => onConnect(host)}
+        onDoubleClick={() => onConnect(host)}
+        title="Double-click to connect"
         className="group flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted/50"
       >
         <span
@@ -144,7 +145,7 @@ function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
         icon={badgeIcon}
         title={host.label || host.host}
         subtitle={`ssh · ${address}`}
-        onClick={() => onConnect(host)}
+        onDoubleClick={() => onConnect(host)}
         actions={
           <>
             <button

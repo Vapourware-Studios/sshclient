@@ -140,11 +140,13 @@ export function ConnectingView({ title, stage, logs, onCancel }) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 bg-background px-6 text-center animate-view-in">
-      <div className="relative flex size-20 items-center justify-center">
-        <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo" />
-        <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo [animation-delay:1.2s]" />
-        <span className="absolute inset-3 rounded-full bg-primary/10 animate-breathe" />
-        <Server className="relative size-6 text-primary" />
+      <div className="flex flex-col items-center gap-4">
+        <div className="flex size-16 items-center justify-center rounded-full bg-primary/10">
+          <Server className="size-7 text-primary" />
+        </div>
+        <div className="relative h-1.5 w-40 overflow-hidden rounded-full bg-muted">
+          <span className="absolute inset-y-0 left-0 w-10 rounded-full bg-primary animate-bounce-bar" />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1 animate-rise-in [animation-delay:0.08s]">

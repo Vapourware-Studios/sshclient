@@ -166,7 +166,7 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
   const targetHost = target?.type === 'host' ? hosts.find((h) => h.id === target.id) : null;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <PanelHeader
         title="New forward"
         description="Route a local TCP port through an SSH session — connects for you if the host isn't open yet."
@@ -410,7 +410,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <PanelHeader
         title={editingSnippet ? 'Edit snippet' : 'New snippet'}
         description="Saved in the encrypted vault, ready to send to any connected terminal."
@@ -546,7 +546,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
         icon={Code2}
         title={item.name}
         subtitle={snippetSubtitle(item)}
-        onClick={() => onRun(item)}
+        onDoubleClick={() => onRun(item)}
         actions={
           <>
             <button
