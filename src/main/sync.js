@@ -10,7 +10,7 @@ const vault = require('./vault');
 
 const DEFAULT_API_URL =
   process.env.SSHCLIENT_API_URL || 'https://api.sshclient.vapourware-studios.net';
-const DEFAULT_CONNECT_URL = process.env.SSHCLIENT_CONNECT_URL || 'http://localhost:5173';
+const DEFAULT_CONNECT_URL = process.env.SSHCLIENT_CONNECT_URL || 'https://sshclient.vapourware-studios.net/';
 const SCRYPT_PARAMS = { N: 2 ** 17, r: 8, p: 1 };
 const SIGNIN_TTL_MS = 10 * 60 * 1000;
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -72,6 +72,30 @@ async function api(path, { method = 'GET', token, body } = {}) {
 function getAccount() {
   if (!vault.isUnlocked()) return null;
   return vault.metaGetSecret('sync.account');
+}
+
+async function changeMasterPassword(currentPassword, newPassword) {
+  const account = getAccount();
+  vault.changePassword(currentPassword, newPassword);
+
+  if (account) {
+    const wrapped = vault.wrapWithVaultKey({ dek: account.dek });
+    await api('/v1/crypto', {
+      method: 'PUT',
+      token: account.token,
+      body: {
+        kdf: 'scrypt',
+        kdf_salt: vault.getSalt().toString('base64'),
+        kdf_params: SCRYPT_PARAMS,
+        wrapped_dek: {
+          iv: wrapped.iv,
+          auth_tag: wrapped.authTag,
+          ciphertext: wrapped.ciphertext,
+        },
+        replace: true,
+      },
+    });
+  }
 }
 
 function status() {
@@ -472,6 +496,7 @@ module.exports = {
   startSignIn,
   handleDeepLink,
   completeCryptoWithPassword,
+  changeMasterPassword,
   syncNow,
   scheduleSync,
   signOut,

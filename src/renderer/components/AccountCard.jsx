@@ -104,7 +104,7 @@ export default function AccountCard() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <Label className="text-xs">Sign-in page URL</Label>
-                  <Input value={connectUrl} onChange={(e) => setConnectUrl(e.target.value)} placeholder="http://localhost:5173" />
+                  <Input value={connectUrl} onChange={(e) => setConnectUrl(e.target.value)} placeholder="https://sshclient.vapourware-studios.net" />
                 </div>
               </div>
             )}

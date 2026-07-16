@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('api', {
   vaultSetup: (masterPassword) => ipcRenderer.invoke('vault:setup', masterPassword),
   vaultUnlock: (masterPassword) => ipcRenderer.invoke('vault:unlock', masterPassword),
   vaultLock: () => ipcRenderer.invoke('vault:lock'),
+  vaultChangePassword: (currentPassword, newPassword) =>
+    ipcRenderer.invoke('vault:changePassword', currentPassword, newPassword),
 
   accountStatus: () => ipcRenderer.invoke('account:status'),
   accountSignIn: () => ipcRenderer.invoke('account:signIn'),
