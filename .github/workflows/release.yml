@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   check-version:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
       changed: ${{ steps.check.outputs.changed }}
@@ -69,7 +69,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: blacksmith-4vcpu-windows-2025
             flag: --win
           - os: macos-latest
             flag: --mac
