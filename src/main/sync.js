@@ -76,26 +76,34 @@ function getAccount() {
 
 async function changeMasterPassword(currentPassword, newPassword) {
   const account = getAccount();
-  vault.changePassword(currentPassword, newPassword);
+  const { currentKey, newKey, newSalt } = vault.preparePasswordChange(currentPassword, newPassword);
 
-  if (account) {
-    const wrapped = vault.wrapWithVaultKey({ dek: account.dek });
-    await api('/v1/crypto', {
-      method: 'PUT',
-      token: account.token,
-      body: {
-        kdf: 'scrypt',
-        kdf_salt: vault.getSalt().toString('base64'),
-        kdf_params: SCRYPT_PARAMS,
-        wrapped_dek: {
-          iv: wrapped.iv,
-          auth_tag: wrapped.authTag,
-          ciphertext: wrapped.ciphertext,
+  try {
+    if (account) {
+      const wrapped = vault.wrapWithKey(newKey, { dek: account.dek });
+      await api('/v1/crypto', {
+        method: 'PUT',
+        token: account.token,
+        body: {
+          kdf: 'scrypt',
+          kdf_salt: newSalt.toString('base64'),
+          kdf_params: SCRYPT_PARAMS,
+          wrapped_dek: {
+            iv: wrapped.iv,
+            auth_tag: wrapped.authTag,
+            ciphertext: wrapped.ciphertext,
+          },
+          replace: true,
         },
-        replace: true,
-      },
-    });
+      });
+    }
+  } catch (err) {
+    currentKey.fill(0);
+    newKey.fill(0);
+    throw err;
   }
+
+  vault.commitPasswordChange(currentKey, newKey, newSalt);
 }
 
 function status() {
