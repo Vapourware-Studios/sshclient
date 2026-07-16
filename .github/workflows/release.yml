@@ -23,8 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Fetch the complete history so github.event.before is available.
           fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
 
       - id: check
         shell: bash
@@ -47,8 +51,7 @@ jobs:
           else
             PREVIOUS=$(
               git show "${BEFORE}:package.json" 2>/dev/null |
-                node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version" \
-                2>/dev/null || true
+                node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version"                 2>/dev/null || true
             )
           fi
 
@@ -71,8 +74,10 @@ jobs:
         include:
           - os: blacksmith-4vcpu-windows-2025
             flag: --win
+
           - os: blacksmith-6vcpu-macos-latest
             flag: --mac
+
           - os: blacksmith-2vcpu-ubuntu-2404
             flag: --linux
 
@@ -83,13 +88,54 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22.12.0"
           cache: npm
 
-      # Use npm ci when package-lock.json is committed.
-      - run: npm i
+      - name: Install MSVC Spectre libraries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
 
-      - run: npm run build
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+
+          if (!(Test-Path $vswhere)) {
+            throw "vswhere.exe was not found"
+          }
+
+          $installPath = & $vswhere `
+            -latest `
+            -products Microsoft.VisualStudio.Product.BuildTools `
+            -property installationPath
+
+          if (!$installPath) {
+            throw "Visual Studio Build Tools installation was not found"
+          }
+
+          Write-Host "Build Tools installation: $installPath"
+
+          $bootstrapper = Join-Path $env:RUNNER_TEMP "vs_buildtools.exe"
+
+          Invoke-WebRequest `
+            -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" `
+            -OutFile $bootstrapper
+
+          & $bootstrapper modify `
+            --installPath "$installPath" `
+            --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre `
+            --quiet `
+            --norestart `
+            --wait
+
+          if ($LASTEXITCODE -notin @(0, 3010)) {
+            throw "Visual Studio component installation failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
 
       - name: Build and publish release
         run: npx electron-builder ${{ matrix.flag }} --publish always
