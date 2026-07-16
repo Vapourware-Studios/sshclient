@@ -11,6 +11,7 @@ const sessions = new Map();
 const pending = new Map();
 
 const MAX_HISTORY_CHARS = 200000;
+const MAX_RECORDING_CHARS = 2000000;
 
 function stripControlSequences(text) {
   return text
@@ -287,6 +288,7 @@ function connect(config, handlers = {}) {
           seq: 0,
           attached: false,
           recording: [],
+          recordingLength: 0,
           recordingStartedAt: Date.now(),
           forwards: new Map(),
         };
@@ -304,9 +306,21 @@ function connect(config, handlers = {}) {
         };
 
         const decoder = new StringDecoder('utf8');
-        stream.on('data', (chunk) => {
-          const text = decoder.write(chunk);
+        let outBuffer = '';
+        let flushScheduled = false;
+
+        const flush = () => {
+          flushScheduled = false;
+          if (!outBuffer) return;
+          const text = outBuffer;
+          outBuffer = '';
+
           session.recording.push({ at: Date.now() - session.recordingStartedAt, data: text });
+          session.recordingLength += text.length;
+          while (session.recording.length > 1 && session.recordingLength > MAX_RECORDING_CHARS) {
+            session.recordingLength -= session.recording[0].data.length;
+            session.recording.shift();
+          }
           session.seq += 1;
 
           session.history.push(text);
@@ -321,9 +335,18 @@ function connect(config, handlers = {}) {
           } else {
             logShellOutput(text);
           }
+        };
+
+        stream.on('data', (chunk) => {
+          outBuffer += decoder.write(chunk);
+          if (!flushScheduled) {
+            flushScheduled = true;
+            setImmediate(flush);
+          }
         });
 
         stream.on('close', () => {
+          flush();
           for (const server of session.forwards.values()) server.close();
           onRecording?.(sessionId, {
             host: connectConfig.host,
@@ -356,6 +379,7 @@ function connect(config, handlers = {}) {
   });
 
   conn.connect(connectConfig);
+  conn.setNoDelay(true);
 
   return sessionId;
 }

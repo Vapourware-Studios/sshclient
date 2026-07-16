@@ -17,6 +17,8 @@ import SelectHostPanel from '@/components/SelectHostPanel';
 import { useViewMode } from '@/lib/view-mode';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 import {
   ArrowRightLeft,
   Code2,
@@ -99,6 +101,7 @@ function hostSublabel(host) {
 }
 
 function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated, onClose, onNewHost }) {
+  const { blurHostIps } = usePrivacySettings();
   const connectedHostIds = new Set(sessions.map((s) => s.connectConfig?.hostId).filter(Boolean));
   const availableHosts = hosts.filter((h) => !connectedHostIds.has(h.id));
 
@@ -166,7 +169,7 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
   const targetHost = target?.type === 'host' ? hosts.find((h) => h.id === target.id) : null;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <PanelHeader
         title="New forward"
         description="Route a local TCP port through an SSH session — connects for you if the host isn't open yet."
@@ -198,7 +201,11 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
                   <HostIcon slug={targetHost?.icon} fallback={Server} className="size-4" />
                 )}
               </span>
-              <span className="min-w-0 flex-1 truncate font-medium">
+              <span
+                className={`min-w-0 flex-1 truncate font-medium ${
+                  blurHostIps && target && isIpAddress(target.label) ? 'blur-sensitive' : ''
+                }`}
+              >
                 {target ? target.label : 'Select a host…'}
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">Change</span>
@@ -245,13 +252,22 @@ function NewForwardPanel({ sessions, hosts, onConnectAndStartForward, onCreated,
 }
 
 function ForwardGridCard({ item, onStop }) {
+  const { blurHostIps } = usePrivacySettings();
   return (
     <GridCard
       id={item.id}
       tone="chart-4"
       icon={ArrowRightLeft}
-      title={`${item.bindHost}:${item.bindPort} → ${item.targetHost}:${item.targetPort}`}
-      subtitle={`Via ${item.title}`}
+      title={
+        <span className={blurHostIps ? 'blur-sensitive' : ''}>
+          {item.bindHost}:{item.bindPort} → {item.targetHost}:{item.targetPort}
+        </span>
+      }
+      subtitle={
+        <span className={blurHostIps && isIpAddress(item.title) ? 'blur-sensitive' : ''}>
+          Via {item.title}
+        </span>
+      }
       actions={
         <button
           onClick={(e) => {
@@ -274,6 +290,7 @@ export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward
   const [viewMode, setViewMode] = useViewMode('port-forwarding');
   const { isOpen, renderedPanel, open, close } = useSlideOutPanel();
   const canOpen = sessions.length > 0 || hosts.length > 0;
+  const { blurHostIps } = usePrivacySettings();
 
   async function stop(item) {
     await window.api.sshForwardStop(item.sessionId, item.id);
@@ -328,8 +345,16 @@ export function PortForwardingPanel({ tabs, hosts = [], onConnectAndStartForward
                 <ItemRow
                   key={item.id}
                   Icon={ArrowRightLeft}
-                  title={`${item.bindHost}:${item.bindPort} → ${item.targetHost}:${item.targetPort}`}
-                  subtitle={`Via ${item.title}`}
+                  title={
+                    <span className={blurHostIps ? 'blur-sensitive' : ''}>
+                      {item.bindHost}:{item.bindPort} → {item.targetHost}:{item.targetPort}
+                    </span>
+                  }
+                  subtitle={
+                    <span className={blurHostIps && isIpAddress(item.title) ? 'blur-sensitive' : ''}>
+                      Via {item.title}
+                    </span>
+                  }
                   actions={
                     <button onClick={() => stop(item)} title="Stop forward" className={iconButtonClass}>
                       <Square className="size-3.5" />
@@ -366,6 +391,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
+  const { blurHostIps } = usePrivacySettings();
 
   const availableHosts = hosts.filter((h) => !targets.includes(h.id));
 
@@ -410,7 +436,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <PanelHeader
         title={editingSnippet ? 'Edit snippet' : 'New snippet'}
         description="Saved in the encrypted vault, ready to send to any connected terminal."
@@ -457,8 +483,16 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
                       <HostIcon slug={host.icon} fallback={Server} className="size-3.5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{host.label || host.host}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
+                      <span
+                        className={`block truncate text-sm ${
+                          blurHostIps && isIpAddress(host.label || host.host) ? 'blur-sensitive' : ''
+                        }`}
+                      >
+                        {host.label || host.host}
+                      </span>
+                      <span
+                        className={`block truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
                         {hostSublabel(host)}
                       </span>
                     </span>
@@ -546,7 +580,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
         icon={Code2}
         title={item.name}
         subtitle={snippetSubtitle(item)}
-        onClick={() => onRun(item)}
+        onDoubleClick={() => onRun(item)}
         actions={
           <>
             <button

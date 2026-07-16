@@ -15,6 +15,8 @@ import { ProgressSteps } from '@/components/ConnectionStatus';
 import SelectHostPanel from '@/components/SelectHostPanel';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 
 const STEPS = [
   { id: 'connecting', label: 'Reaching the server' },
@@ -24,6 +26,7 @@ const STEPS = [
 ];
 
 export default function CopyKeyToHostDialog({ keyItem, open, onOpenChange, onNewHost }) {
+  const { blurHostIps } = usePrivacySettings();
   const [hosts, setHosts] = useState([]);
   const [hostId, setHostId] = useState('');
   const [password, setPassword] = useState('');
@@ -162,7 +165,13 @@ export default function CopyKeyToHostDialog({ keyItem, open, onOpenChange, onNew
                 >
                   <HostIcon slug={selectedHost?.icon} fallback={Server} className="size-4" />
                 </span>
-                <span className="min-w-0 flex-1 truncate font-medium">
+                <span
+                  className={`min-w-0 flex-1 truncate font-medium ${
+                    blurHostIps && selectedHost && isIpAddress(selectedHost.label || selectedHost.host)
+                      ? 'blur-sensitive'
+                      : ''
+                  }`}
+                >
                   {selectedHost ? selectedHost.label || selectedHost.host : 'Select a host…'}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">Change</span>
@@ -219,7 +228,19 @@ export default function CopyKeyToHostDialog({ keyItem, open, onOpenChange, onNew
             <span className="flex size-12 items-center justify-center rounded-full bg-emerald-500/10">
               <Check className="size-6 text-emerald-500" />
             </span>
-            <p className="text-sm">Public key installed on {selectedHost?.label || selectedHost?.host}.</p>
+            <p className="text-sm">
+              Public key installed on{' '}
+              <span
+                className={
+                  blurHostIps && isIpAddress(selectedHost?.label || selectedHost?.host)
+                    ? 'blur-sensitive'
+                    : ''
+                }
+              >
+                {selectedHost?.label || selectedHost?.host}
+              </span>
+              .
+            </p>
           </div>
         )}
 

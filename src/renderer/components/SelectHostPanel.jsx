@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 
 function hostAddress(host) {
   return `${host.username ? `${host.username}@` : ''}${host.host}${
@@ -23,6 +25,7 @@ export default function SelectHostPanel({
 }) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
+  const { blurHostIps } = usePrivacySettings();
 
   const filteredSessions = useMemo(
     () => sessions.filter((s) => !q || s.title.toLowerCase().includes(q)),
@@ -37,7 +40,7 @@ export default function SelectHostPanel({
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col animate-slide-in-right">
       <div className="flex items-start gap-3 border-b p-4">
         <button
           type="button"
@@ -126,8 +129,16 @@ export default function SelectHostPanel({
                         <HostIcon slug={host.icon} fallback={Server} className="size-4" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{host.label || host.host}</p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p
+                          className={`truncate font-medium ${
+                            blurHostIps && isIpAddress(host.label || host.host) ? 'blur-sensitive' : ''
+                          }`}
+                        >
+                          {host.label || host.host}
+                        </p>
+                        <p
+                          className={`truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}
+                        >
                           ssh · {hostAddress(host)}
                         </p>
                       </div>

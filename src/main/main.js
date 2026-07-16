@@ -115,7 +115,7 @@ ipcMain.handle('ssh:connect', (event, config) => {
     if (config?.hostId) {
       const saved = vault.getHostSecret(config.hostId);
       if (!saved) return { error: 'Saved host not found' };
-      fullConfig = { ...saved, cols: config.cols, rows: config.rows, mode: config.mode };
+      fullConfig = { ...config, ...saved, cols: config.cols, rows: config.rows, mode: config.mode };
       if (config.password) fullConfig.password = config.password;
     }
     if (fullConfig.keyId) {

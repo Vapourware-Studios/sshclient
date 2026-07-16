@@ -24,6 +24,8 @@ import { useViewMode } from '@/lib/view-mode';
 import { useConfirm } from '@/lib/confirm';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 import {
   Search,
   Plus,
@@ -82,11 +84,14 @@ function HostContextMenu({ host, onConnect, onEdit, onDuplicate, onDelete, child
 
 function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const titleText = host.label || host.host;
+  const { blurHostIps } = usePrivacySettings();
 
   return (
     <HostContextMenu host={host} onConnect={onConnect} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete}>
       <div
-        onClick={() => onConnect(host)}
+        onDoubleClick={() => onConnect(host)}
+        title="Double-click to connect"
         className="group flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted/50"
       >
         <span
@@ -97,8 +102,14 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
         </span>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{host.label || host.host}</p>
-          <p className="truncate text-xs text-muted-foreground">{address}</p>
+          <p
+            className={`truncate text-sm font-medium ${blurHostIps && isIpAddress(titleText) ? 'blur-sensitive' : ''}`}
+          >
+            {titleText}
+          </p>
+          <p className={`truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}>
+            {address}
+          </p>
         </div>
 
         <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
@@ -132,6 +143,8 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
 
 function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const titleText = host.label || host.host;
+  const { blurHostIps } = usePrivacySettings();
   const badgeIcon = ({ className }) => (
     <HostIcon slug={host.icon} fallback={Server} className={className} />
   );
@@ -142,9 +155,13 @@ function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
         id={host.id}
         tone={host.color || undefined}
         icon={badgeIcon}
-        title={host.label || host.host}
-        subtitle={`ssh · ${address}`}
-        onClick={() => onConnect(host)}
+        title={
+          <span className={blurHostIps && isIpAddress(titleText) ? 'blur-sensitive' : ''}>
+            {titleText}
+          </span>
+        }
+        subtitle={<span className={blurHostIps ? 'blur-sensitive' : ''}>ssh · {address}</span>}
+        onDoubleClick={() => onConnect(host)}
         actions={
           <>
             <button
@@ -326,13 +343,14 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onDuplicate, onNewConn
 
 function KnownHostGridCard({ entry, onForget }) {
   const address = entry.port === 22 ? entry.host : `${entry.host}:${entry.port}`;
+  const { blurHostIps } = usePrivacySettings();
 
   return (
     <GridCard
       id={`${entry.host}:${entry.port}`}
       tone="chart-2"
       icon={ShieldCheck}
-      title={address}
+      title={<span className={blurHostIps ? 'blur-sensitive' : ''}>{address}</span>}
       subtitle={`SHA256:${entry.fingerprint}`}
       actions={
         <button
@@ -353,6 +371,7 @@ function KnownHostGridCard({ entry, onForget }) {
 
 function KnownHostsPanel() {
   const confirm = useConfirm();
+  const { blurHostIps } = usePrivacySettings();
   const [knownHosts, setKnownHosts] = useState([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -452,7 +471,9 @@ function KnownHostsPanel() {
                       <ShieldCheck className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
+                      <p
+                        className={`truncate text-sm font-medium ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
                         {entry.host}{entry.port !== 22 ? `:${entry.port}` : ''}
                       </p>
                       <p className="break-all font-mono text-xs text-muted-foreground">SHA256:{entry.fingerprint}</p>

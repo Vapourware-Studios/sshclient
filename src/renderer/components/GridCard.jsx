@@ -32,7 +32,7 @@ export function ViewToggle({ mode, onChange }) {
 }
 
 export const GridCard = forwardRef(function GridCard(
-  { id, icon: Icon, title, subtitle, onClick, actions, className = '', tone, ...rest },
+  { id, icon: Icon, title, subtitle, onClick, onDoubleClick, actions, className = '', tone, ...rest },
   ref
 ) {
   const resolvedTone = tone ?? toneForId(id ?? title);
@@ -41,8 +41,9 @@ export const GridCard = forwardRef(function GridCard(
     <div
       ref={ref}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className={`group flex items-center gap-3 rounded-xl border bg-card p-3 transition-colors ${
-        onClick ? 'cursor-pointer hover:bg-accent/40' : ''
+        onClick || onDoubleClick ? 'cursor-pointer hover:bg-accent/40' : ''
       } ${className}`}
       {...rest}
     >

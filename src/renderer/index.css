@@ -222,6 +222,16 @@
   }
 }
 
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
 
 /* A highlight sweeping across text (used on the active step label). */
 @keyframes shimmer {
@@ -253,6 +263,15 @@
   }
 }
 
+@keyframes bounce-bar {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(120px);
+  }
+}
+
 @layer utilities {
   .animate-halo {
     animation: halo 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
@@ -272,9 +291,15 @@
   .animate-view-in {
     animation: view-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
+  .animate-slide-in-right {
+    animation: slide-in-right 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
   .animate-connector {
     transform-origin: top;
     animation: connector-grow 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-bounce-bar {
+    animation: bounce-bar 1.1s linear infinite alternate;
   }
   .shimmer-text {
     background: linear-gradient(
@@ -308,5 +333,14 @@
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
+  }
+  .blur-sensitive {
+    filter: blur(5px);
+    transition: filter 0.15s ease;
+  }
+  .blur-sensitive:hover,
+  .blur-sensitive:focus-within {
+    filter: none;
+    transition-delay: 0.5s;
   }
 }
