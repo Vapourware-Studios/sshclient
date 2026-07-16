@@ -119,8 +119,8 @@ export default function SettingsPanel({ onHostsChange }) {
               <EyeOff className="size-4" /> Privacy
             </CardTitle>
             <CardDescription>
-              Blur host addresses across the app until you hover over them — handy if you're
-              screen sharing.
+              Blur host addresses across the app until you hover over them. This is handy if you're
+              screen sharing or sharign screenshots, but it can make it harder to identify hosts at a glance.
             </CardDescription>
           </CardHeader>
           <CardContent>

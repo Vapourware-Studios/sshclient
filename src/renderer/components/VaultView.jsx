@@ -25,6 +25,7 @@ import { useConfirm } from '@/lib/confirm';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
 import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 import {
   Search,
   Plus,
@@ -83,6 +84,7 @@ function HostContextMenu({ host, onConnect, onEdit, onDuplicate, onDelete, child
 
 function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const titleText = host.label || host.host;
   const { blurHostIps } = usePrivacySettings();
 
   return (
@@ -100,7 +102,11 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
         </span>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{host.label || host.host}</p>
+          <p
+            className={`truncate text-sm font-medium ${blurHostIps && isIpAddress(titleText) ? 'blur-sensitive' : ''}`}
+          >
+            {titleText}
+          </p>
           <p className={`truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}>
             {address}
           </p>
@@ -137,6 +143,7 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
 
 function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const titleText = host.label || host.host;
   const { blurHostIps } = usePrivacySettings();
   const badgeIcon = ({ className }) => (
     <HostIcon slug={host.icon} fallback={Server} className={className} />
@@ -148,7 +155,11 @@ function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
         id={host.id}
         tone={host.color || undefined}
         icon={badgeIcon}
-        title={host.label || host.host}
+        title={
+          <span className={blurHostIps && isIpAddress(titleText) ? 'blur-sensitive' : ''}>
+            {titleText}
+          </span>
+        }
         subtitle={<span className={blurHostIps ? 'blur-sensitive' : ''}>ssh · {address}</span>}
         onDoubleClick={() => onConnect(host)}
         actions={
@@ -332,13 +343,14 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onDuplicate, onNewConn
 
 function KnownHostGridCard({ entry, onForget }) {
   const address = entry.port === 22 ? entry.host : `${entry.host}:${entry.port}`;
+  const { blurHostIps } = usePrivacySettings();
 
   return (
     <GridCard
       id={`${entry.host}:${entry.port}`}
       tone="chart-2"
       icon={ShieldCheck}
-      title={address}
+      title={<span className={blurHostIps ? 'blur-sensitive' : ''}>{address}</span>}
       subtitle={`SHA256:${entry.fingerprint}`}
       actions={
         <button
@@ -359,6 +371,7 @@ function KnownHostGridCard({ entry, onForget }) {
 
 function KnownHostsPanel() {
   const confirm = useConfirm();
+  const { blurHostIps } = usePrivacySettings();
   const [knownHosts, setKnownHosts] = useState([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -458,7 +471,9 @@ function KnownHostsPanel() {
                       <ShieldCheck className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">
+                      <p
+                        className={`truncate text-sm font-medium ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
                         {entry.host}{entry.port !== 22 ? `:${entry.port}` : ''}
                       </p>
                       <p className="break-all font-mono text-xs text-muted-foreground">SHA256:{entry.fingerprint}</p>

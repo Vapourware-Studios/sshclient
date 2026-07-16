@@ -11,6 +11,8 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { isIpAddress } from '@/lib/ip';
 
 export const SSH_STEPS = [
   { id: 'connecting', label: 'Reaching the server' },
@@ -87,6 +89,13 @@ export function ProgressSteps({ steps, currentIndex }) {
   );
 }
 
+function HostTitle({ title }) {
+  const { blurHostIps } = usePrivacySettings();
+  return (
+    <span className={blurHostIps && isIpAddress(title) ? 'blur-sensitive' : ''}>{title}</span>
+  );
+}
+
 function formatLogTime(time) {
   const d = new Date(time);
   return `${d.toTimeString().slice(0, 8)}.${String(d.getMilliseconds()).padStart(3, '0')}`;
@@ -150,7 +159,9 @@ export function ConnectingView({ title, stage, logs, onCancel }) {
       </div>
 
       <div className="flex flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
-        <p className="text-sm font-medium">{title}</p>
+        <p className="text-sm font-medium">
+          <HostTitle title={title} />
+        </p>
         <p className="text-xs text-muted-foreground">Establishing secure connection</p>
       </div>
 
@@ -190,7 +201,11 @@ export function HostKeyPromptView({ title, info, onTrust, onReject }) {
 
       <div className="flex w-full max-w-sm flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
         <p className="text-sm font-medium">
-          {changed ? `Host key for ${title} has changed!` : `Unknown host: ${title}`}
+          {changed ? (
+            <>Host key for <HostTitle title={title} /> has changed!</>
+          ) : (
+            <>Unknown host: <HostTitle title={title} /></>
+          )}
         </p>
         <p className="text-xs text-muted-foreground">
           {changed
@@ -231,7 +246,9 @@ export function ConnectErrorView({ title, message, logs, onRetry, onClose }) {
       </div>
 
       <div className="flex flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
-        <p className="text-sm font-medium">Couldn't connect to {title}</p>
+        <p className="text-sm font-medium">
+          Couldn't connect to <HostTitle title={title} />
+        </p>
         <p className="max-w-sm text-xs text-muted-foreground">{message}</p>
       </div>
 

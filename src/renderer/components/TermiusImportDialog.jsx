@@ -3,6 +3,7 @@ import { Loader2, Download, KeyRound, ScrollText, TriangleAlert } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 
 export default function TermiusImportDialog({ open, onOpenChange, onImported }) {
+  const { blurHostIps } = usePrivacySettings();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [connections, setConnections] = useState([]);
@@ -244,7 +246,9 @@ export default function TermiusImportDialog({ open, onOpenChange, onImported }) 
                           />
                           <div className="min-w-0 flex-1">
                             <div className="truncate font-medium">{conn.name}</div>
-                            <div className="truncate text-xs text-muted-foreground">
+                            <div
+                              className={`truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}
+                            >
                               {conn.username || '(no username)'}@{conn.host || '(no host)'}:
                               {conn.port}
                             </div>
