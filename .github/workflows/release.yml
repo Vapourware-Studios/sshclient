@@ -87,7 +87,7 @@ jobs:
           cache: npm
 
       # Use npm ci when package-lock.json is committed.
-      - run: npm ci
+      - run: npm i
 
       - run: npm run build
 
