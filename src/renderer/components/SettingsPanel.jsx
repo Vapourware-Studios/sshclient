@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, FileCode2, Moon } from 'lucide-react';
+import { Download, EyeOff, FileCode2, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,11 +9,13 @@ import ThemePicker from '@/components/ThemePicker';
 import TermiusImportDialog from '@/components/TermiusImportDialog';
 import { useGlassSettings, GLASS_SUPPORTED } from '@/lib/glass-settings.jsx';
 import { useTheme } from '@/lib/theme-settings.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
 import { CUSTOM_CSS_TEMPLATE } from '@/lib/terminal-themes';
 
 export default function SettingsPanel({ onHostsChange }) {
   const { enabled, intensity, setEnabled, setIntensity } = useGlassSettings();
   const { customCss, customCssName, setCustomCss } = useTheme();
+  const { blurHostIps, setBlurHostIps } = usePrivacySettings();
   const [cssError, setCssError] = useState('');
   const [termiusOpen, setTermiusOpen] = useState(false);
 
@@ -108,6 +110,27 @@ export default function SettingsPanel({ onHostsChange }) {
             <Button variant="outline" size="sm" onClick={() => setTermiusOpen(true)}>
               Import from Termius…
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <EyeOff className="size-4" /> Privacy
+            </CardTitle>
+            <CardDescription>
+              Blur host addresses across the app until you hover over them — handy if you're
+              screen sharing.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+              <Checkbox
+                checked={blurHostIps}
+                onCheckedChange={(v) => setBlurHostIps(Boolean(v))}
+              />
+              Blur host IPs
+            </label>
           </CardContent>
         </Card>
 

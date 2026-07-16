@@ -334,4 +334,13 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+  .blur-sensitive {
+    filter: blur(5px);
+    transition: filter 0.15s ease;
+  }
+  .blur-sensitive:hover,
+  .blur-sensitive:focus-within {
+    filter: none;
+    transition-delay: 0.5s;
+  }
 }

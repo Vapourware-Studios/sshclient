@@ -24,6 +24,7 @@ import { useViewMode } from '@/lib/view-mode';
 import { useConfirm } from '@/lib/confirm';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
 import {
   Search,
   Plus,
@@ -82,6 +83,7 @@ function HostContextMenu({ host, onConnect, onEdit, onDuplicate, onDelete, child
 
 function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const { blurHostIps } = usePrivacySettings();
 
   return (
     <HostContextMenu host={host} onConnect={onConnect} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete}>
@@ -99,7 +101,9 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{host.label || host.host}</p>
-          <p className="truncate text-xs text-muted-foreground">{address}</p>
+          <p className={`truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}>
+            {address}
+          </p>
         </div>
 
         <div className="hidden shrink-0 items-center gap-1 group-hover:flex">
@@ -133,6 +137,7 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
 
 function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
   const address = hostAddress(host);
+  const { blurHostIps } = usePrivacySettings();
   const badgeIcon = ({ className }) => (
     <HostIcon slug={host.icon} fallback={Server} className={className} />
   );
@@ -144,7 +149,7 @@ function HostGridCard({ host, onConnect, onEdit, onDuplicate, onDelete }) {
         tone={host.color || undefined}
         icon={badgeIcon}
         title={host.label || host.host}
-        subtitle={`ssh · ${address}`}
+        subtitle={<span className={blurHostIps ? 'blur-sensitive' : ''}>ssh · {address}</span>}
         onDoubleClick={() => onConnect(host)}
         actions={
           <>

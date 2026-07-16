@@ -17,6 +17,7 @@ import SelectHostPanel from '@/components/SelectHostPanel';
 import { useViewMode } from '@/lib/view-mode';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
+import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
 import {
   ArrowRightLeft,
   Code2,
@@ -366,6 +367,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
+  const { blurHostIps } = usePrivacySettings();
 
   const availableHosts = hosts.filter((h) => !targets.includes(h.id));
 
@@ -458,7 +460,9 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{host.label || host.host}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
+                      <span
+                        className={`block truncate text-xs text-muted-foreground ${blurHostIps ? 'blur-sensitive' : ''}`}
+                      >
                         {hostSublabel(host)}
                       </span>
                     </span>
