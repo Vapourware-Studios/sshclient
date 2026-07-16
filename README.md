@@ -1,6 +1,6 @@
 # SSH Client
 
-A modern, Termius-like SSH and SFTP desktop client for macOS, built from scratch with Electron, React, and xterm.js — as a project to genuinely learn JavaScript.
+A modern, Termius-like SSH and SFTP desktop client for macOS, Windows, and Linux, built from scratch with Electron, React, and xterm.js — as a project to genuinely learn JavaScript.
 
 > **v0.1.0 · alpha · GPL-3.0**
 
@@ -78,10 +78,43 @@ npm run dev
 ### Build a distributable
 
 ```bash
-npm run dist:mac   # creates a signed .dmg in dist/
+npm run dist:mac    # .dmg (ad-hoc signed, not notarized — see Releases below)
+npm run dist:win    # NSIS installer, unsigned
+npm run dist:linux  # AppImage
 ```
 
-**Requirements:** Node 20+, macOS (other platforms untested).
+**Requirements:** Node 20+. Developed primarily on macOS; Windows and Linux builds are produced by CI (see below) and haven't been hand-tested on real hardware.
+
+---
+
+## Releases & auto-update
+
+Pushing a commit to `main` that changes the `version` field in `package.json`
+triggers [`.github/workflows/release.yml`](.github/workflows/release.yml),
+which builds installers for macOS, Windows, and Linux and publishes them as a
+public GitHub Release tagged `v<version>`. Ordinary commits (no version bump)
+never trigger a build.
+
+None of these builds are code-signed — there's no Authenticode certificate or
+Apple Developer ID behind this project. The Windows build applies legitimate
+false-positive mitigations (NSIS installer rather than a raw portable exe,
+normal/non-aggressive compression, consistent publisher metadata), but
+Windows Defender/SmartScreen may still warn on an unsigned installer from a
+publisher with no reputation yet — there's no reliable way around that short
+of actually signing. If you hit a false positive, the durable fix is a
+certificate (or Microsoft's Trusted Signing service); in the meantime you can
+report it at https://www.microsoft.com/wdsi/filesubmission.
+
+In-app update checks (`src/main/updater.js`) only run in packaged builds:
+
+- **Windows / Linux** — [`electron-updater`](https://www.electron.build/auto-update)
+  checks GitHub Releases directly and installs updates automatically.
+- **macOS** — updates are expected to come through Homebrew. The app checks
+  the latest GitHub release, and if it's newer, opens a Terminal window with
+  `brew upgrade --cask sshclient` typed in (not auto-run — you review and
+  press Enter yourself, since `brew` can prompt for sudo). Once the installed
+  cask version catches up, the app prompts you to restart. If Homebrew isn't
+  found, it falls back to a "download page" prompt instead.
 
 ---
 
@@ -89,13 +122,16 @@ npm run dist:mac   # creates a signed .dmg in dist/
 
 ```
 sshclient/
+├── .github/workflows/
+│   └── release.yml        ← Version-bump-gated build → GitHub Release
 ├── src/
 │   ├── main/              ← Node.js / main process
 │   │   ├── main.js        ←   Electron bootstrap, all IPC handlers
 │   │   ├── ssh.js         ←   SSH2 wrapper: terminal, SFTP, recordings
 │   │   ├── vault.js       ←   Encrypted host + key storage
 │   │   ├── localTerm.js   ←   PTY-backed local shell
-│   │   └── serial.js      ←   Serial port adapter
+│   │   ├── serial.js      ←   Serial port adapter
+│   │   └── updater.js     ←   Auto-update: electron-updater (Win/Linux), brew flow (mac)
 │   ├── preload/
 │   │   └── preload.js     ← Bridge: exposes window.api to the renderer
 │   └── renderer/          ← React UI (sandboxed Chrome page)

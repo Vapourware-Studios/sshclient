@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('api', {
   onLocalClosed: (callback) => subscribe('local:closed', callback),
   onLocalError: (callback) => subscribe('local:error', callback),
 
+  onUpdateStart: (callback) => subscribe('update:start', callback),
+
   serialList: () => ipcRenderer.invoke('serial:list'),
   serialConnect: (config) => ipcRenderer.invoke('serial:connect', config),
   serialWrite: (sessionId, data) => ipcRenderer.invoke('serial:write', { sessionId, data }),

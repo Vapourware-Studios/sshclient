@@ -9,6 +9,7 @@ const localTerm = require('./localTerm');
 const serial = require('./serial');
 const vault = require('./vault');
 const sync = require('./sync');
+const updater = require('./updater');
 const isMac = process.platform === 'darwin';
 
 // Deep links (sshclient://signed-in) come back from the browser sign-in flow.
@@ -820,6 +821,7 @@ app.whenReady().then(() => {
 
   vault.init(app.getPath('userData'));
   createWindow();
+  updater.init();
 
   // Cold-start deep link (Win/Linux pass it in argv).
   const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));

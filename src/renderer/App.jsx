@@ -124,6 +124,30 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsub = window.api.onUpdateStart(async ({ targetVersion }) => {
+      try {
+        setConnectError(null);
+        const result = await window.api.localConnect({});
+        if (result.error) {
+          setConnectError(result.error);
+          return;
+        }
+        const tab = {
+          id: result.sessionId,
+          title: `Update to ${targetVersion}`,
+          type: 'local',
+          status: 'connected',
+          connectConfig: {},
+        };
+        setTabs((prev) => [...prev, tab]);
+        setActiveTabId(tab.id);
+        window.api.localWrite(result.sessionId, 'brew upgrade --cask sshclient');
+      } catch {}
+    });
+    return unsub;
+  }, []);
+
   async function refreshVaultStatus() {
     setVaultStatus(await window.api.vaultStatus());
   }
