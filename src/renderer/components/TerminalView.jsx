@@ -57,8 +57,9 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       convertEol: true,
       cursorBlink: kind !== 'playback',
       disableStdin: kind === 'playback',
-      fontSize: 13,
-      fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+      fontSize: 14,
+      fontFamily: 'Consolas, ui-monospace, Menlo, monospace',
+      fontWeight: 'normal',
       theme: terminalThemeRef.current,
     });
     const fitAddon = new FitAddon();
