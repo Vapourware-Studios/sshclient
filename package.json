@@ -33,7 +33,9 @@
       "repo": "sshclient"
     },
     "mac": {
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false
     },
     "win": {
       "target": "nsis",
