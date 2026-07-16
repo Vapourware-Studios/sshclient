@@ -509,7 +509,6 @@ const SYNC_TABLES = {
   host: { table: 'hosts', hasUpdatedAt: true },
   key: { table: 'keys', hasUpdatedAt: false },
   snippet: { table: 'snippets', hasUpdatedAt: true },
-  session_history: { table: 'session_history', hasUpdatedAt: false },
 };
 
 function knownHostSyncId(host, port) {

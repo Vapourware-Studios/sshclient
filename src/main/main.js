@@ -92,6 +92,7 @@ function createWindow() {
 
   if (process.argv.includes('--dev')) {
     win.loadURL('http://localhost:5173');
+    win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, '..', '..', 'dist', 'renderer', 'index.html'));
   }

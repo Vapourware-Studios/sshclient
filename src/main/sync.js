@@ -15,6 +15,7 @@ const SCRYPT_PARAMS = { N: 2 ** 17, r: 8, p: 1 };
 const SIGNIN_TTL_MS = 10 * 60 * 1000;
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const PUSH_BATCH_SIZE = 200;
+const MAX_RECORD_BYTES = 128 * 1024;
 
 // In-flight browser sign-in (verifier never leaves this process).
 let pendingSignIn = null;
@@ -58,7 +59,10 @@ async function api(path, { method = 'GET', token, body } = {}) {
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(json.error || `Sync server error (${res.status})`);
+    const message = json.record_id
+      ? `${json.error} (record_id: ${json.record_id})`
+      : json.error || `Sync server error (${res.status})`;
+    const err = new Error(message);
     err.status = res.status;
     throw err;
   }
@@ -308,6 +312,7 @@ async function syncNow() {
     while (hasMore) {
       const page = await api(`/v1/sync/records?since=${since}`, { token: account.token });
       for (const remote of page.records) {
+        if (remote.type === 'session_history') continue;
         const key = `${remote.type}:${remote.id}`;
         const known = state.get(key);
         if (known && known.serverVersion >= remote.version) continue;
@@ -350,13 +355,19 @@ async function syncNow() {
 
     // -- push ---------------------------------------------------------------
     const outgoing = [];
+    let oversized = 0;
     for (const [key, item] of local) {
       const known = state.get(key);
       if (known && known.payloadHash === item.hash) continue;
+      const encrypted = encryptRecord(dek, item.type, item.id, item.payload);
+      if (Buffer.byteLength(encrypted.ciphertext, 'base64') > MAX_RECORD_BYTES) {
+        oversized += 1;
+        continue;
+      }
       outgoing.push({
         type: item.type,
         id: item.id,
-        ...encryptRecord(dek, item.type, item.id, item.payload),
+        ...encrypted,
         _hash: item.hash,
       });
     }
@@ -389,7 +400,9 @@ async function syncNow() {
     }
 
     lastSyncAt = Date.now();
-    lastError = null;
+    lastError = oversized > 0
+      ? `${oversized} record(s) too large to sync (over ${MAX_RECORD_BYTES / 1024} KiB) and were skipped`
+      : null;
 
     if (changedTypes.has('host')) notify('hosts:changed', { hosts: vault.listHosts() });
     if (changedTypes.has('key')) notify('keys:changed', { keys: vault.listKeys() });
