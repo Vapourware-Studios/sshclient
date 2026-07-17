@@ -462,6 +462,15 @@ ipcMain.handle('vault:lock', () => {
   return { ok: true };
 });
 
+ipcMain.handle('vault:changePassword', async (event, currentPassword, newPassword) => {
+  try {
+    await sync.changeMasterPassword(currentPassword, newPassword);
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 ipcMain.handle('account:status', () => {
   try {
     return sync.status();

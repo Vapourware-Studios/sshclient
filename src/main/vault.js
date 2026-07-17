@@ -201,6 +201,84 @@ function unlock(masterPassword) {
   migrateLegacyHosts();
 }
 
+function reencryptTable(table, oldKey, newKey) {
+  const rows = db.prepare(`SELECT id, data_iv, data_auth_tag, data_ciphertext FROM ${table}`).all();
+  for (const row of rows) {
+    const data = decryptJSON(oldKey, {
+      iv: row.data_iv,
+      authTag: row.data_auth_tag,
+      ciphertext: row.data_ciphertext,
+    });
+    const enc = encryptJSON(newKey, data);
+    db.prepare(
+      `UPDATE ${table} SET data_iv = ?, data_auth_tag = ?, data_ciphertext = ? WHERE id = ?`
+    ).run(enc.iv, enc.authTag, enc.ciphertext, row.id);
+  }
+}
+
+function preparePasswordChange(currentPassword, newPassword) {
+  requireUnlocked();
+  if (!newPassword || newPassword.length < 8) {
+    throw new Error('Master password must be at least 8 characters');
+  }
+
+  const salt = getSalt();
+  const currentKey = deriveKey(currentPassword, salt);
+  try {
+    decryptJSON(currentKey, JSON.parse(getMeta('verifier')));
+  } catch {
+    throw new Error('Incorrect current password');
+  }
+
+  const newSalt = crypto.randomBytes(16);
+  const newKey = deriveKey(newPassword, newSalt);
+  return { currentKey, newKey, newSalt };
+}
+
+function commitPasswordChange(currentKey, newKey, newSalt) {
+  requireUnlocked();
+
+  db.exec('BEGIN');
+  try {
+    for (const table of ['hosts', 'keys', 'snippets', 'session_history']) {
+      reencryptTable(table, currentKey, newKey);
+    }
+
+    for (const row of db.prepare('SELECT key, value FROM vault_meta').all()) {
+      if (row.key === 'salt' || row.key === 'verifier') continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(row.value);
+      } catch {
+        continue;
+      }
+      if (!parsed || !parsed.iv || !parsed.authTag || !parsed.ciphertext) continue;
+      let obj;
+      try {
+        obj = decryptJSON(currentKey, parsed);
+      } catch {
+        continue;
+      }
+      setMeta(row.key, JSON.stringify(encryptJSON(newKey, obj)));
+    }
+
+    const newVerifier = encryptJSON(newKey, { check: 'vault-ok' });
+    setMeta('salt', newSalt.toString('base64'));
+    setMeta('verifier', JSON.stringify(newVerifier));
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+
+  currentKey.fill(0);
+  derivedKey = newKey;
+}
+
+function wrapWithKey(key, obj) {
+  return encryptJSON(key, obj);
+}
+
 function decryptHostData(row) {
   return decryptJSON(derivedKey, {
     iv: row.data_iv,
@@ -669,6 +747,8 @@ module.exports = {
   setup,
   unlock,
   lock,
+  preparePasswordChange,
+  commitPasswordChange,
   listHosts,
   saveHost,
   duplicateHost,
@@ -702,6 +782,7 @@ module.exports = {
   getMeta,
   setMeta,
   wrapWithVaultKey,
+  wrapWithKey,
   unwrapWithVaultKey,
   unwrapWithKey,
   deriveKey,

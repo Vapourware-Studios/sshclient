@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Download, EyeOff, FileCode2, Moon } from 'lucide-react';
+import { Download, EyeOff, FileCode2, KeyRound, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import AccountCard from '@/components/AccountCard';
@@ -19,6 +20,35 @@ export default function SettingsPanel({ onHostsChange }) {
   const { blurHostIps, setBlurHostIps } = usePrivacySettings();
   const [cssError, setCssError] = useState('');
   const [termiusOpen, setTermiusOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+
+  async function changePassword() {
+    setPasswordError('');
+    setPasswordSuccess('');
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match');
+      return;
+    }
+    setPasswordBusy(true);
+    try {
+      const result = await window.api.vaultChangePassword(currentPassword, newPassword);
+      if (result?.error) {
+        setPasswordError(result.error);
+        return;
+      }
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordSuccess('Master password changed.');
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
 
   async function loadCssFile() {
     setCssError('');
@@ -46,6 +76,61 @@ export default function SettingsPanel({ onHostsChange }) {
         </div>
 
         <AccountCard />
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="size-4" /> Master Password
+            </CardTitle>
+            <CardDescription>
+              Changes the password used to encrypt hosts, keys, and snippets on this
+              device. If sync is enabled, other devices will need the new password
+              next time they link.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="current-master-password">Current password</Label>
+              <Input
+                id="current-master-password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                disabled={passwordBusy}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="new-master-password">New password</Label>
+              <Input
+                id="new-master-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                disabled={passwordBusy}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="confirm-master-password">Confirm new password</Label>
+              <Input
+                id="confirm-master-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={passwordBusy}
+              />
+            </div>
+            {passwordError && <p className="text-xs text-destructive">{passwordError}</p>}
+            {passwordSuccess && <p className="text-xs text-muted-foreground">{passwordSuccess}</p>}
+            <Button
+              size="sm"
+              onClick={changePassword}
+              disabled={passwordBusy || !currentPassword || !newPassword || !confirmPassword}
+              className="self-start"
+            >
+              {passwordBusy ? 'Changing…' : 'Change password'}
+            </Button>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
