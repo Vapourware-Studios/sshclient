@@ -204,3 +204,43 @@ jobs:
         run: npx electron-builder ${{ matrix.flag }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # electron-builder uploads every platform's artifacts to a draft release.
+  # Publishing that draft before all platforms have uploaded makes the
+  # remaining uploads fail silently ("existing type not compatible with
+  # publishing type"), so the draft is only published here, after every
+  # build job has finished.
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Publish draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+
+          RELEASE_ID=$(
+            gh api "repos/${{ github.repository }}/releases" \
+              --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id"
+          )
+
+          if [[ -z "$RELEASE_ID" ]]; then
+            echo "No draft release found for $TAG; nothing to publish."
+            exit 0
+          fi
+
+          gh api --method PATCH \
+            "repos/${{ github.repository }}/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=true
+
+          echo "Published $TAG"
