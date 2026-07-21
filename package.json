@@ -23,6 +23,10 @@
     "directories": {
       "output": "release"
     },
+    "protocols": {
+      "name": "SSH Client",
+      "schemes": ["sshclient"]
+    },
     "asarUnpack": [
       "**/*.node"
     ],
