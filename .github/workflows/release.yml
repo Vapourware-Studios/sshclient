@@ -244,3 +244,56 @@ jobs:
             -F draft=false -f make_latest=true
 
           echo "Published $TAG"
+
+  update-tap:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    steps:
+      - name: Check out sshclient
+        uses: actions/checkout@v4
+
+      - name: Check out homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: Vapourware-Studios/homebrew-tap
+          token: ${{ secrets.TAP_REPO_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update cask
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          ASSET="SSH-Client-${VERSION}-arm64.dmg"
+
+          gh release download "$TAG" -R "${{ github.repository }}" -p "$ASSET" -O "$ASSET"
+          SHA256=$(shasum -a 256 "$ASSET" | cut -d' ' -f1)
+
+          CASK="homebrew-tap/Casks/sshclient.rb"
+          sed -i "s/version \".*\"/version \"$VERSION\"/" "$CASK"
+          sed -i "s/sha256 \".*\"/sha256 \"$SHA256\"/" "$CASK"
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Commit and push
+        shell: bash
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet; then
+            echo "Cask already up to date; nothing to push."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/sshclient.rb
+          git commit -m "sshclient ${VERSION}"
+          git push
