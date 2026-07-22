@@ -440,6 +440,7 @@ ipcMain.handle('vault:setup', (event, password) => {
   try {
     vault.setup(password);
     sync.onVaultUnlocked();
+    updater.init();
     return { ok: true };
   } catch (err) {
     return { error: err.message };
@@ -450,6 +451,7 @@ ipcMain.handle('vault:unlock', (event, password) => {
   try {
     vault.unlock(password);
     sync.onVaultUnlocked();
+    updater.init();
     return { ok: true };
   } catch (err) {
     return { error: err.message };
@@ -831,7 +833,6 @@ app.whenReady().then(() => {
 
   vault.init(app.getPath('userData'));
   createWindow();
-  updater.init();
 
   // Cold-start deep link (Win/Linux pass it in argv).
   const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));
