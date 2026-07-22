@@ -17,7 +17,9 @@ function connect(config = {}, handlers = {}) {
   const shell = config.shell || defaultShell();
   const cwd = config.cwd || os.homedir();
 
-  const term = pty.spawn(shell, [], {
+  const shellArgs = process.platform === 'win32' ? [] : ['-l'];
+
+  const term = pty.spawn(shell, shellArgs, {
     name: 'xterm-256color',
     cols: config.cols || 80,
     rows: config.rows || 24,

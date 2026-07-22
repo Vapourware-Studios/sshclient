@@ -144,8 +144,11 @@ function initWindowsLinuxUpdater() {
   autoUpdater.checkForUpdatesAndNotify().catch(() => {});
 }
 
+let checked = false;
+
 function init() {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged || checked) return;
+  checked = true;
   if (process.platform === 'darwin') {
     initMacUpdater().catch(() => {});
   } else {
