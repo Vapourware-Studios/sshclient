@@ -272,6 +272,20 @@ jobs:
 
           VERSION=$(node -p "require('./package.json').version")
           TAG="v$VERSION"
+          CASK="homebrew-tap/Casks/sshclient.rb"
+
+          # The concurrency group only stops two update-tap jobs from running at
+          # the same time — it doesn't guarantee they run in version order. A
+          # slower older release can finish its build after a newer one and
+          # reach this step second, so refuse to overwrite the tap with
+          # anything that isn't strictly newer than what's already there.
+          TAP_VERSION=$(grep -m1 '^  version "' "$CASK" | sed -E 's/.*"(.*)".*/\1/')
+          NEWEST=$(printf '%s\n%s\n' "$TAP_VERSION" "$VERSION" | sort -V | tail -1)
+          if [[ "$NEWEST" != "$VERSION" || "$TAP_VERSION" == "$VERSION" ]]; then
+            echo "Tap is already at $TAP_VERSION (>= $VERSION); skipping to avoid a rollback."
+            echo "SKIP_TAP_UPDATE=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
 
           ASSET=$(gh release view "$TAG" -R "${{ github.repository }}" --json assets \
             --jq '.assets[].name | select(test("-arm64\\.dmg$"))')
@@ -283,13 +297,13 @@ jobs:
           gh release download "$TAG" -R "${{ github.repository }}" -p "$ASSET" -O "$ASSET"
           SHA256=$(shasum -a 256 "$ASSET" | cut -d' ' -f1)
 
-          CASK="homebrew-tap/Casks/sshclient.rb"
           sed -i "s/^  version \".*\"/  version \"$VERSION\"/" "$CASK"
           sed -i "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" "$CASK"
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Commit and push
+        if: env.SKIP_TAP_UPDATE != 'true'
         shell: bash
         working-directory: homebrew-tap
         run: |
