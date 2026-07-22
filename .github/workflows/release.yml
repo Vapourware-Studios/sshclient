@@ -249,6 +249,8 @@ jobs:
     name: Update Homebrew tap
     needs: publish
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    concurrency:
+      group: homebrew-tap-push
 
     steps:
       - name: Check out sshclient
@@ -270,14 +272,20 @@ jobs:
 
           VERSION=$(node -p "require('./package.json').version")
           TAG="v$VERSION"
-          ASSET="SSH-Client-${VERSION}-arm64.dmg"
+
+          ASSET=$(gh release view "$TAG" -R "${{ github.repository }}" --json assets \
+            --jq '.assets[].name | select(test("-arm64\\.dmg$"))')
+          if [[ -z "$ASSET" || $(wc -l <<< "$ASSET") -ne 1 ]]; then
+            echo "::error::expected exactly one *-arm64.dmg asset on $TAG, found: $ASSET" >&2
+            exit 1
+          fi
 
           gh release download "$TAG" -R "${{ github.repository }}" -p "$ASSET" -O "$ASSET"
           SHA256=$(shasum -a 256 "$ASSET" | cut -d' ' -f1)
 
           CASK="homebrew-tap/Casks/sshclient.rb"
-          sed -i "s/version \".*\"/version \"$VERSION\"/" "$CASK"
-          sed -i "s/sha256 \".*\"/sha256 \"$SHA256\"/" "$CASK"
+          sed -i "s/^  version \".*\"/  version \"$VERSION\"/" "$CASK"
+          sed -i "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" "$CASK"
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
