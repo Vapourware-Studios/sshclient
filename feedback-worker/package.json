@@ -1,0 +1,15 @@
+{
+  "name": "sshclient-feedback-worker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Cloudflare Worker that relays in-app feedback from the sshclient desktop app to a Discord channel via webhook.",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
