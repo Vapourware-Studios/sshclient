@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Bug, Lightbulb, Loader2, MessageSquare, Send, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -30,6 +30,13 @@ export default function FeedbackDialog({ open, onOpenChange, initialCategory = '
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+
+  // The dialog is mounted once and reused across prompts (crash, milestone,
+  // manual button, ...) — re-sync the category each time it opens instead of
+  // only seeding it from the prop at first mount.
+  useEffect(() => {
+    if (open) setCategory(initialCategory);
+  }, [open, initialCategory]);
 
   function reset() {
     setCategory(initialCategory);
