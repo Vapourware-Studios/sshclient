@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('sftp:downloadTo', { sessionId, remotePath, localDir, name }),
   sftpTransferRemote: (sourceSessionId, sourcePath, destSessionId, destDir, name) =>
     ipcRenderer.invoke('sftp:transferRemote', { sourceSessionId, sourcePath, destSessionId, destDir, name }),
+  sftpMkdir: (sessionId, dirPath, name) => ipcRenderer.invoke('sftp:mkdir', { sessionId, dirPath, name }),
+  sftpRename: (sessionId, dirPath, oldName, newName) =>
+    ipcRenderer.invoke('sftp:rename', { sessionId, dirPath, oldName, newName }),
+  sftpDelete: (sessionId, path, isDir) => ipcRenderer.invoke('sftp:delete', { sessionId, path, isDir }),
   onSftpTransfer: (callback) => subscribe('sftp:transfer', callback),
 
   localConnect: (config) => ipcRenderer.invoke('local:connect', config),
@@ -60,6 +64,9 @@ contextBridge.exposeInMainWorld('api', {
 
   fsHome: () => ipcRenderer.invoke('fs:home'),
   fsList: (path) => ipcRenderer.invoke('fs:list', path),
+  fsMkdir: (dirPath, name) => ipcRenderer.invoke('fs:mkdir', { dirPath, name }),
+  fsRename: (dirPath, oldName, newName) => ipcRenderer.invoke('fs:rename', { dirPath, oldName, newName }),
+  fsDelete: (path) => ipcRenderer.invoke('fs:delete', { path }),
 
   pathForFile: (file) => webUtils.getPathForFile(file),
 
@@ -109,6 +116,10 @@ contextBridge.exposeInMainWorld('api', {
 
   themeOpenCssFile: () => ipcRenderer.invoke('theme:openCssFile'),
   themeSaveCssTemplate: (contents) => ipcRenderer.invoke('theme:saveCssTemplate', contents),
+
+  feedbackSubmit: (payload) => ipcRenderer.invoke('feedback:submit', payload),
+  feedbackOptOut: () => ipcRenderer.invoke('feedback:optOut'),
+  onFeedbackPrompt: (callback) => subscribe('feedback:prompt', callback),
 
   windowIsFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
   windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
