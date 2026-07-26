@@ -29,7 +29,7 @@ Well why NOT? We are free, open source, we dont take your money. And if you dont
 
 Windows/Linux
 
-[![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://shieldcn.dev/badge/Download-Windows-blue.svg?logo=windows11&size=lg)
+[![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://github.com/vapourware-studios/sshclient/releases)
 
 Mac OS
 
@@ -39,7 +39,7 @@ brew install --cask vapourware-studios/tap/sshclient
 
 or
 
-[![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://shieldcn.dev/badge/Download-Windows-blue.svg?logo=windows11&size=lg)
+[![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://github.com/vapourware-studios/sshclient/releases)
 
 - You are done!
 
