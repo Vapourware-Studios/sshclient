@@ -61,7 +61,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
     "@vitejs/plugin-react": "^6.0.3",
-    "concurrently": "^10.0.3",
+    "concurrently": "^10.0.4",
     "electron": "^43.1.0",
     "electron-builder": "^26.2.0",
     "tailwindcss": "^4.3.2",
