@@ -1,179 +1,102 @@
-# SSH Client
+<p align="center">
+  <a href="https://github.com/vapourware-studios/sshclient/releases"><img alt="release" src="https://shieldcn.dev/github/vapourware-studios/sshclient/release.svg?variant=ghost&amp;split=true" /></a>
+  <a href="https://github.com/vapourware-studios/sshclient/issues"><img alt="issues" src="https://shieldcn.dev/github/vapourware-studios/sshclient/issues.svg" /></a>
+  <a href="https://github.com/vapourware-studios/sshclient/graphs/contributors"><img alt="contributors" src="https://shieldcn.dev/github/vapourware-studios/sshclient/contributors.svg" /></a>
+  <a href="https://github.com/vapourware-studios/sshclient"><img alt="license" src="https://shieldcn.dev/github/vapourware-studios/sshclient/license.svg?theme=green&amp;logo=github" /></a>
+</p>
 
-A modern, Termius-like SSH and SFTP desktop client for macOS, Windows, and Linux, built from scratch with Electron, React, and xterm.js — as a project to genuinely learn JavaScript.
+<p align="center">
+  <img alt="badge" src="build/icon.png" />
+</p>
 
-> **v0.1.0 · alpha · GPL-3.0**
+## Overview
 
----
+**SSH Client** is a fast, reliable and open source ssh client. It allows you to use **remote access clients**, store and generate **ssh keys**, save **command snippets**, **port forward** connections from your hosts and allow you to use inbuilt **SFTP**
 
-## Features
+## FREE FOREVER CLOUD SYNC
 
-### Terminal
-- SSH connections with password, private-key file, or keychain-based auth
-- Multi-tab interface — open as many sessions as you need
-- xterm.js terminal with full colour, resize, and scroll support
-- Local shell tab (PTY-backed)
-- Serial port terminal
-- Session recording and scrubbable playback
+We provide a free forever **secure** cloud storage for all your **hosts**, **keys**, and **code snippets**.
 
-### SFTP File Browser
-- Dual-pane manager: local filesystem on one side, remote on the other
-- Drag-and-drop transfers (and safety lock to prevent accidental drops)
-- Remote-to-remote transfers between open sessions
-- Progress tracking per transfer
+If you dont trust us with our data. Well thats fair... that's why we open source our backend. You want to host it yourself, sure go for it!  
 
-### Vault (encrypted host & key storage)
-- SQLite database encrypted with scrypt + AES-256-GCM
-- Master-password protection
-- Save, edit, duplicate, and delete SSH hosts
-- Colour labels for organisation
-- Known-host fingerprint tracking and change detection
+## Why us?
 
-### SSH Key Manager
-- Generate RSA (2048 / 3072 / 4096), ECDSA (256 / 384 / 521), and Ed25519 keys
-- Import existing keys with optional passphrase
-- SHA-256 fingerprint display
-- Colour tagging
-
-### Customisation
-- Multiple built-in terminal colour themes
-- Custom CSS theme support
-- Font-size controls
-- Saved command snippets
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Shell | Electron 43 |
-| UI | React 19, Vite 8, Tailwind CSS 4 |
-| Components | shadcn/ui (New York), Radix UI, Lucide |
-| Terminal | xterm.js 6 + addon-fit |
-| SSH / SFTP | ssh2 1.17 |
-| Local PTY | node-pty |
-| Serial | SerialPort 13 |
-| Storage | Node built-in SQLite + AES-256-GCM |
-
----
+Well why NOT? We are free, open source, we dont take your money. And if you dont like something, your wish is just a **PR** away!
 
 ## Getting started
 
-```bash
-# 1. Clone
-git clone https://github.com/Vapourware-Studios/sshclient.git
-cd sshclient
+- Install the app
 
-# 2. Install dependencies (first time only)
-npm install
+Windows/Linux
 
-# 3a. Open the app (production build)
-npm start
+[![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://shieldcn.dev/badge/Download-Windows-blue.svg?logo=windows11&size=lg)
 
-# 3b. Development mode (hot-reload UI)
-npm run dev
-```
-
-### Build a distributable
+Mac OS
 
 ```bash
-npm run dist:mac    # .dmg (ad-hoc signed, not notarized — see Releases below)
-npm run dist:win    # NSIS installer, unsigned
-npm run dist:linux  # AppImage
+brew install --cask vapourware-studios/tap/sshclient
 ```
 
-**Requirements:** Node 20+. Developed primarily on macOS; Windows and Linux builds are produced by CI (see below) and haven't been hand-tested on real hardware.
+or
 
----
+[![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://shieldcn.dev/badge/Download-Windows-blue.svg?logo=windows11&size=lg)
 
-## Releases & auto-update
+- You are done!
 
-Pushing a commit to `main` that changes the `version` field in `package.json`
-triggers [`.github/workflows/release.yml`](.github/workflows/release.yml),
-which builds installers for macOS, Windows, and Linux and publishes them as a
-public GitHub Release tagged `v<version>`. Ordinary commits (no version bump)
-never trigger a build.
+## Contributing
 
-None of these builds are code-signed — there's no Authenticode certificate or
-Apple Developer ID behind this project. The Windows build applies legitimate
-false-positive mitigations (NSIS installer rather than a raw portable exe,
-normal/non-aggressive compression, consistent publisher metadata), but
-Windows Defender/SmartScreen may still warn on an unsigned installer from a
-publisher with no reputation yet — there's no reliable way around that short
-of actually signing. If you hit a false positive, the durable fix is a
-certificate (or Microsoft's Trusted Signing service); in the meantime you can
-report it at https://www.microsoft.com/wdsi/filesubmission.
+Contributions are welcome — open an issue or PR and help make SSH Client better.
 
-In-app update checks (`src/main/updater.js`) only run in packaged builds:
+### Getting started
 
-- **Windows / Linux** — [`electron-updater`](https://www.electron.build/auto-update)
-  checks GitHub Releases directly and installs updates automatically.
-- **macOS** — updates are expected to come through Homebrew. The app checks
-  the latest GitHub release, and if it's newer, opens a Terminal window with
-  `brew upgrade --cask sshclient` typed in (not auto-run — you review and
-  press Enter yourself, since `brew` can prompt for sudo). Once the installed
-  cask version catches up, the app prompts you to restart. If Homebrew isn't
-  found, it falls back to a "download page" prompt instead.
+1. Fork the repo and clone your fork
+2. Install dependencies: `npm install`
+3. Run the app in dev mode: `npm run dev`
+4. Create a branch for your change: `git checkout -b feat/my-change`
 
----
+### Before you open a PR
 
-## Project layout
+- Keep changes focused — one feature or fix per PR
+- Follow the existing code style
+- Test that the app builds and runs: `npm run build`
+- Reference any related issue in your PR description
 
-```
-sshclient/
-├── .github/workflows/
-│   └── release.yml        ← Version-bump-gated build → GitHub Release
-├── src/
-│   ├── main/              ← Node.js / main process
-│   │   ├── main.js        ←   Electron bootstrap, all IPC handlers
-│   │   ├── ssh.js         ←   SSH2 wrapper: terminal, SFTP, recordings
-│   │   ├── vault.js       ←   Encrypted host + key storage
-│   │   ├── localTerm.js   ←   PTY-backed local shell
-│   │   ├── serial.js      ←   Serial port adapter
-│   │   └── updater.js     ←   Auto-update: electron-updater (Win/Linux), brew flow (mac)
-│   ├── preload/
-│   │   └── preload.js     ← Bridge: exposes window.api to the renderer
-│   └── renderer/          ← React UI (sandboxed Chrome page)
-│       ├── App.jsx        ←   Tab/session management, top-level state
-│       ├── index.css      ←   Tailwind + theme tokens (ONE stylesheet)
-│       └── components/    ←   Feature panels + shadcn/ui building blocks
-├── ROADMAP.md             ← Phase plan, lessons, and ssh2 deep-dive
-├── LICENSE                ← GPL-3.0-only
-└── package.json
-```
+### Reporting bugs
 
----
+Found something broken? [Open an issue](https://github.com/Vapourware-Studios/sshclient/issues) with steps to reproduce, your OS, and the app version.
 
-## Docs & learning notes
+<p align="center">
+  <a href="https://github.com/vapourware-studios/sshclient/graphs/contributors"><img alt="contributors" src="https://shieldcn.dev/contributors/vapourware-studios/sshclient.svg?title=Our+Contributors&amp;bots=true&amp;mode=dark" /></a>
+</p>
 
-`ROADMAP.md` is the heart of this project: a phase-by-phase JavaScript curriculum tied directly to the features being built. It includes official documentation links (Electron, xterm.js, ssh2, React, MDN) and **Appendix A** — the ssh2 library explained protocol-level, line by line.
+## contact
 
-shadcn/ui components are not a hidden library — every component is a readable `.jsx` file in `src/renderer/components/ui/`. Add more with:
+feedback: please fill in the form in the settings tab of your application
 
-```bash
-npx shadcn@latest add <component-name>
-```
+contact us: [website](https://vapourware-studios.net/contact/) or email us at hello@vapourware-studios.net
 
----
+## Roadmap
 
-## Status
+| Feature | Status |
+|---|---|
+| SSH terminal — multi-tab, xterm.js, scrollback | ![Done][done] |
+| Dual-pane SFTP with drag-and-drop | ![Done][done] |
+| Encrypted vault (scrypt + AES-256-GCM) | ![Done][done] |
+| In-app key generation (RSA / ECDSA / Ed25519) | ![Done][done] |
+| Local port forwarding (`-L`) | ![Done][done] |
+| Serial terminal + session recording | ![Done][done] |
+| Termius host/key import | ![Done][done] |
+| Encrypted cross-device sync | ![Done][done] |
+| Remote & dynamic forwarding (`-R` / SOCKS) | ![In Progress][wip] |
+| `known_hosts` import (UI stubbed) | ![In Progress][wip] |
+| Intel (x64) Mac builds | ![In Progress][wip] |
+| Hardware-tested Windows / Linux builds | ![In Progress][wip] |
+| Code-signed & notarized builds | ![In Progress][wip] |
+| OpenSSH `~/.ssh/config` + PuTTY import | ![Planned][plan] |
+| ProxyJump / bastion chains | ![Planned][plan] |
 
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Electron backbone + IPC + React/Vite/Tailwind | ✅ Done |
-| 1 | JavaScript fundamentals | ✅ Done |
-| 2 | SSH terminal | ✅ Done |
-| 3 | Vault (encrypted storage) | ✅ Done |
-| 4 | SFTP browser | ✅ Done |
-| 5 | Key management | ✅ Done |
-| 6 | Serial port + local terminal | ✅ Done |
-| 7 | React (pulled forward to Phase 0) | ✅ Done |
-
-Active work: UI polish, session playback improvements, theme system.
-
----
-
-## License
-
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+<!-- status badges -->
+[done]: https://shieldcn.dev/badge/Done-green.svg
+[wip]:  https://shieldcn.dev/badge/In_Progress-yellow.svg
+[plan]: https://shieldcn.dev/badge/Planned-blue.svg
+[idea]: https://shieldcn.dev/badge/Idea-slate.svg?variant=outline
