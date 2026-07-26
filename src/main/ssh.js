@@ -720,6 +720,54 @@ async function sftpTransferRemoteDir(sourceSessionId, sourceDir, destSessionId, 
   }
 }
 
+function sftpUnlink(sftp, remotePath) {
+  return new Promise((resolve, reject) => {
+    sftp.unlink(remotePath, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+function sftpRmdir(sftp, remotePath) {
+  return new Promise((resolve, reject) => {
+    sftp.rmdir(remotePath, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function removeRemoteRecursive(sftp, remotePath) {
+  const stat = await new Promise((resolve, reject) => {
+    sftp.lstat(remotePath, (err, st) => (err ? reject(err) : resolve(st)));
+  });
+
+  if (!stat.isDirectory()) return sftpUnlink(sftp, remotePath);
+
+  const items = await new Promise((resolve, reject) => {
+    sftp.readdir(remotePath, (err, list) => (err ? reject(err) : resolve(list)));
+  });
+  for (const item of items) {
+    const name = assertSafeSftpName(item.filename);
+    await removeRemoteRecursive(sftp, joinRemotePath(remotePath, name));
+  }
+  return sftpRmdir(sftp, remotePath);
+}
+
+async function sftpDelete(sessionId, remotePath, isDir) {
+  const sftp = await getSftp(sessionId);
+  return isDir ? removeRemoteRecursive(sftp, remotePath) : sftpUnlink(sftp, remotePath);
+}
+
+async function sftpRename(sessionId, oldPath, newPath) {
+  const sftp = await getSftp(sessionId);
+  return new Promise((resolve, reject) => {
+    sftp.rename(oldPath, newPath, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+async function sftpMkdir(sessionId, remotePath) {
+  const sftp = await getSftp(sessionId);
+  return new Promise((resolve, reject) => {
+    sftp.mkdir(remotePath, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
 function disconnect(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
@@ -754,6 +802,9 @@ module.exports = {
   sftpUploadDir,
   sftpDownloadDir,
   sftpTransferRemoteDir,
+  sftpDelete,
+  sftpRename,
+  sftpMkdir,
   assertSafeSftpName,
   joinRemotePath,
   resolveLocalChild,

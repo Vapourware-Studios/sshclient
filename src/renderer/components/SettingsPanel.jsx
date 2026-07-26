@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Download, EyeOff, FileCode2, KeyRound, Moon } from 'lucide-react';
+import { Download, EyeOff, FileCode2, KeyRound, MessageSquare, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,6 +9,7 @@ import { Slider } from '@/components/ui/slider';
 import AccountCard from '@/components/AccountCard';
 import ThemePicker from '@/components/ThemePicker';
 import TermiusImportDialog from '@/components/TermiusImportDialog';
+import FeedbackDialog from '@/components/FeedbackDialog';
 import { useGlassSettings, GLASS_SUPPORTED } from '@/lib/glass-settings.jsx';
 import { useTheme } from '@/lib/theme-settings.jsx';
 import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
@@ -20,6 +21,7 @@ export default function SettingsPanel({ onHostsChange }) {
   const { blurHostIps, setBlurHostIps } = usePrivacySettings();
   const [cssError, setCssError] = useState('');
   const [termiusOpen, setTermiusOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -70,9 +72,19 @@ export default function SettingsPanel({ onHostsChange }) {
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mx-auto flex max-w-lg flex-col gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">Settings</h2>
-          <p className="text-sm text-muted-foreground">App preferences.</p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">Settings</h2>
+            <p className="text-sm text-muted-foreground">App preferences.</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground"
+            onClick={() => setFeedbackOpen(true)}
+          >
+            <MessageSquare className="size-3.5" /> Feedback
+          </Button>
         </div>
 
         <AccountCard />
@@ -264,6 +276,7 @@ export default function SettingsPanel({ onHostsChange }) {
         onOpenChange={setTermiusOpen}
         onImported={onHostsChange}
       />
+      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
     </div>
   );
 }

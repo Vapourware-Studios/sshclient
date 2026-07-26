@@ -6,6 +6,7 @@ import TabBar from '@/components/TabBar';
 import ContentArea from '@/components/ContentArea';
 import TerminalStylePanel from '@/components/TerminalStylePanel';
 import { SlidePanel } from '@/components/SlidePanel';
+import FeedbackPromptToast from '@/components/FeedbackPromptToast';
 import { useConfirm } from '@/lib/confirm';
 
 const MIN_CONNECTING_MS = 2000;
@@ -373,7 +374,10 @@ export default function App() {
 
   if (!vaultStatus.unlocked) {
     return (
-      <Unlock vaultExists={vaultStatus.exists} onUnlocked={refreshVaultStatus} />
+      <>
+        <Unlock vaultExists={vaultStatus.exists} onUnlocked={refreshVaultStatus} />
+        <FeedbackPromptToast />
+      </>
     );
   }
 
@@ -454,6 +458,7 @@ export default function App() {
           />
         </div>
       </main>
+      <FeedbackPromptToast />
     </div>
   );
 }

@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sshclient-feedback-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-23",
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    { "pattern": "feedback.vapourware-studios.net", "custom_domain": true }
+  ],
+  // Native Cloudflare Rate Limiting bindings. No dashboard setup needed —
+  // `namespace_id` here is just an arbitrary unique id for this binding
+  // within the account, not a resource you have to create first.
+  "ratelimits": [
+    {
+      // Per-sender cap: blocks a single machine from flooding the channel.
+      "name": "FEEDBACK_LIMITER_IP",
+      "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      // Site-wide cap: blocks a botnet spread across many IPs from doing
+      // the same thing in aggregate. Binding periods top out at 60s, so
+      // this throttles *rate*, not a daily total.
+      "name": "FEEDBACK_LIMITER_GLOBAL",
+      "namespace_id": "1002",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ]
+}

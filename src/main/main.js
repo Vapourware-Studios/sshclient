@@ -10,7 +10,13 @@ const serial = require('./serial');
 const vault = require('./vault');
 const sync = require('./sync');
 const updater = require('./updater');
+const feedbackPrompt = require('./feedbackPrompt');
 const isMac = process.platform === 'darwin';
+
+const FEEDBACK_URL =
+  process.env.SSHCLIENT_FEEDBACK_URL || 'https://feedback.vapourware-studios.net/feedback';
+const FEEDBACK_MAX_LEN = 4000;
+const FEEDBACK_CATEGORIES = ['bug', 'idea', 'other'];
 
 // Deep links (sshclient://signed-in) come back from the browser sign-in flow.
 // Single-instance so a second launch on Win/Linux forwards its URL here.
@@ -30,6 +36,23 @@ app.on('open-url', (event, url) => {
   event.preventDefault();
   sync.handleDeepLink(url);
 });
+
+// Record a crash marker so the *next* launch can ask what happened —
+// there's no time to show UI from inside a dying process. uncaughtException
+// still exits (preserves existing crash behavior, just persists first);
+// render-process-gone (renderer/GPU crash) doesn't need to, Electron
+// already handles the window itself.
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught exception:', err);
+  feedbackPrompt.recordCrash();
+  app.exit(1);
+});
+app.on('render-process-gone', (event, webContents, details) => {
+  if (details.reason === 'clean-exit') return;
+  console.error('[main] renderer process gone:', details.reason);
+  feedbackPrompt.recordCrash();
+});
+
 let liquidGlass = null;
 if (isMac) {
   try {
@@ -133,7 +156,11 @@ ipcMain.handle('ssh:connect', (event, config) => {
     }
     const sessionId = ssh.connect(fullConfig, {
       onProgress: (sessionId, stage) => win?.webContents.send('ssh:progress', { sessionId, stage }),
-      onReady: (sessionId) => win?.webContents.send('ssh:ready', { sessionId }),
+      onReady: (sessionId) => {
+        win?.webContents.send('ssh:ready', { sessionId });
+        const reason = feedbackPrompt.recordConnection();
+        if (reason) win?.webContents.send('feedback:prompt', { reason });
+      },
       onData: (sessionId, data, seq) => win?.webContents.send('ssh:data', { sessionId, data, seq }),
       onClose: (sessionId) => win?.webContents.send('ssh:closed', { sessionId }),
       onError: (sessionId, err) =>
@@ -301,6 +328,49 @@ ipcMain.handle('fs:list', async (event, dirPath) => {
   }
 });
 
+function assertSafeLocalName(name) {
+  if (
+    typeof name !== 'string' ||
+    name === '' ||
+    name === '.' ||
+    name === '..' ||
+    name.includes('/') ||
+    name.includes('\\')
+  ) {
+    throw new Error('Unsafe file name');
+  }
+  return name;
+}
+
+ipcMain.handle('fs:mkdir', async (event, { dirPath, name }) => {
+  try {
+    assertSafeLocalName(name);
+    await fsp.mkdir(path.join(dirPath, name));
+    return {};
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('fs:rename', async (event, { dirPath, oldName, newName }) => {
+  try {
+    assertSafeLocalName(newName);
+    await fsp.rename(path.join(dirPath, oldName), path.join(dirPath, newName));
+    return {};
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('fs:delete', async (event, { path: targetPath }) => {
+  try {
+    await fsp.rm(targetPath, { recursive: true });
+    return {};
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 function runTransfer(win, { sessionId, kind, name, destSessionId }, startFn) {
   const transferId = crypto.randomUUID();
   const send = (payload) =>
@@ -323,7 +393,11 @@ function runTransfer(win, { sessionId, kind, name, destSessionId }, startFn) {
 
   send({ transferred: 0, total: 0 });
   startFn(onStep)
-    .then(() => send({ done: true }))
+    .then(() => {
+      send({ done: true });
+      const reason = feedbackPrompt.recordSftpTransfer();
+      if (reason) win?.webContents.send('feedback:prompt', { reason });
+    })
     .catch((err) => send({ error: err.message }));
 
   return transferId;
@@ -430,6 +504,36 @@ ipcMain.handle(
     return { transferId };
   }
 );
+
+ipcMain.handle('sftp:mkdir', async (event, { sessionId, dirPath, name }) => {
+  try {
+    ssh.assertSafeSftpName(name);
+    await ssh.sftpMkdir(sessionId, joinRemote(dirPath, name));
+    return {};
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('sftp:rename', async (event, { sessionId, dirPath, oldName, newName }) => {
+  try {
+    ssh.assertSafeSftpName(oldName);
+    ssh.assertSafeSftpName(newName);
+    await ssh.sftpRename(sessionId, joinRemote(dirPath, oldName), joinRemote(dirPath, newName));
+    return {};
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('sftp:delete', async (event, { sessionId, path: remotePath, isDir }) => {
+  try {
+    await ssh.sftpDelete(sessionId, remotePath, isDir);
+    return {};
+  } catch (err) {
+    return { error: err.message };
+  }
+});
 
 ipcMain.handle('vault:status', () => ({
   exists: vault.exists(),
@@ -799,6 +903,57 @@ ipcMain.handle('theme:saveCssTemplate', async (event, contents) => {
   }
 });
 
+ipcMain.handle(
+  'feedback:submit',
+  async (event, { message, category, contactEmail, includeDiagnostics } = {}) => {
+    const trimmed = String(message ?? '').trim();
+    if (!trimmed) return { error: 'Feedback message is empty' };
+    if (trimmed.length > FEEDBACK_MAX_LEN) {
+      return { error: `Feedback is too long (${FEEDBACK_MAX_LEN} characters max)` };
+    }
+
+    const payload = {
+      message: trimmed,
+      category: FEEDBACK_CATEGORIES.includes(category) ? category : 'other',
+      contactEmail: contactEmail ? String(contactEmail).trim().slice(0, 320) : undefined,
+      includeDiagnostics: Boolean(includeDiagnostics),
+      diagnostics: includeDiagnostics
+        ? {
+            appVersion: app.getVersion(),
+            platform: process.platform,
+            osVersion: os.release(),
+            arch: process.arch,
+            electronVersion: process.versions.electron,
+            chromeVersion: process.versions.chrome,
+            nodeVersion: process.versions.node,
+            locale: app.getLocale(),
+            packaged: app.isPackaged,
+          }
+        : undefined,
+    };
+
+    try {
+      const res = await fetch(FEEDBACK_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: json.error || `Feedback server error (${res.status})` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+);
+
+ipcMain.handle('feedback:optOut', () => {
+  feedbackPrompt.optOut();
+});
+
 function buildMenu() {
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(
@@ -832,7 +987,17 @@ app.whenReady().then(() => {
   });
 
   vault.init(app.getPath('userData'));
+  feedbackPrompt.init(app.getPath('userData'));
   createWindow();
+
+  // Give the window a few seconds to settle before possibly popping a
+  // feedback toast on top of it — never on the very first paint.
+  setTimeout(() => {
+    const reason = feedbackPrompt.checkStartupTriggers(app.getVersion());
+    if (!reason) return;
+    const win = BrowserWindow.getAllWindows()[0];
+    win?.webContents.send('feedback:prompt', { reason });
+  }, 5000);
 
   // Cold-start deep link (Win/Linux pass it in argv).
   const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));

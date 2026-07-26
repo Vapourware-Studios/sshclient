@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { useConfirm } from '@/lib/confirm';
 import { isIpAddress } from '@/lib/ip';
 import {
   ArrowDownToLine,
@@ -13,16 +21,19 @@ import {
   ChevronRight,
   File,
   Folder,
+  FolderPlus,
   FolderUp,
   HardDrive,
   Home,
   Link as LinkIcon,
   Loader2,
+  Pencil,
   RefreshCw,
   Repeat,
   Search,
   Server,
   ShieldQuestion,
+  Trash2,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -56,6 +67,14 @@ function parentOf(path) {
 
 function joinPath(dir, name) {
   return (dir === '/' ? '' : dir) + '/' + name;
+}
+
+function uniqueName(entries, base) {
+  const names = new Set(entries.map((e) => e.name));
+  if (!names.has(base)) return base;
+  let i = 2;
+  while (names.has(`${base} ${i}`)) i += 1;
+  return `${base} ${i}`;
 }
 
 function crumbsOf(path) {
@@ -93,10 +112,39 @@ function FilePane({
   onDropEntry,
   onDropFiles,
   onChangeSource,
+  fileOps,
 }) {
   const [dropReady, setDropReady] = useState(false);
   const dragDepth = useRef(0);
   const { blurHostIps } = usePrivacySettings();
+  const [renaming, setRenaming] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  useEffect(() => {
+    setRenaming(null);
+  }, [path]);
+
+  function startRename(entry) {
+    setRenaming(entry.name);
+    setRenameValue(entry.name);
+  }
+
+  function commitRename(entry) {
+    setRenaming((current) => {
+      if (current !== entry.name) return current;
+      const value = renameValue.trim();
+      if (value && value !== entry.name) fileOps?.onRename(entry, value);
+      return null;
+    });
+  }
+
+  async function handleNewFolder() {
+    const created = await fileOps?.onMkdir();
+    if (created) {
+      setRenaming(created);
+      setRenameValue(created);
+    }
+  }
 
   function accepts(e) {
     return (
@@ -156,6 +204,17 @@ function FilePane({
           {loading && <Loader2 className="ml-2 size-3.5 shrink-0 animate-spin text-muted-foreground" />}
         </div>
 
+        {fileOps && (
+          <button
+            onClick={handleNewFolder}
+            title="New folder"
+            disabled={!path}
+            className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          >
+            <FolderPlus className="size-4" />
+          </button>
+        )}
+
         <button
           onClick={onRefresh}
           title="Refresh"
@@ -203,52 +262,107 @@ function FilePane({
         }`}
       >
         {entries.length === 0 && !loading && (
-          <p className="px-4 py-6 text-center text-xs text-muted-foreground">This folder is empty</p>
-        )}
-        {entries.map((entry, i) => (
-          <div
-            key={entry.name}
-            draggable={Boolean(dragExtra)}
-            onDragStart={(e) => {
-              if (!dragExtra) return;
-              e.dataTransfer.effectAllowed = 'copy';
-              e.dataTransfer.setData(
-                DRAG_TYPE,
-                JSON.stringify({ name: entry.name, path: joinPath(path, entry.name), ...dragExtra })
-              );
-            }}
-            onDoubleClick={() => entry.type !== 'file' && onNavigate(joinPath(path, entry.name))}
-            className="group flex cursor-default items-center gap-2.5 px-3 py-1.5 text-sm animate-rise-in hover:bg-accent"
-            style={{ animationDelay: `${Math.min(i, 20) * 15}ms` }}
-          >
-            <EntryIcon type={entry.type} />
-            {entry.type === 'dir' ? (
-              <button
-                onClick={() => onNavigate(joinPath(path, entry.name))}
-                className="min-w-0 flex-1 truncate text-left hover:underline"
-              >
-                {entry.name}
-              </button>
-            ) : (
-              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-            )}
-            <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
-              {entry.type === 'dir' ? '' : formatSize(entry.size)}
-            </span>
-            <span className="hidden w-24 shrink-0 text-right text-xs text-muted-foreground xl:block">
-              {formatDate(entry.mtime)}
-            </span>
-            {onAction && ActionIcon && (
-              <button
-                onClick={() => onAction(entry)}
-                title={actionTitle}
-                className="invisible shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:visible"
-              >
-                <ActionIcon className="size-3.5" />
-              </button>
-            )}
+          <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+            <Folder className="size-8 text-muted-foreground/30" />
+            <p className="text-xs text-muted-foreground">This folder is empty</p>
           </div>
-        ))}
+        )}
+        {entries.map((entry, i) => {
+          const isRenaming = renaming === entry.name;
+
+          const row = (
+            <div
+              draggable={Boolean(dragExtra) && !isRenaming}
+              onDragStart={(e) => {
+                if (!dragExtra) return;
+                e.dataTransfer.effectAllowed = 'copy';
+                e.dataTransfer.setData(
+                  DRAG_TYPE,
+                  JSON.stringify({ name: entry.name, path: joinPath(path, entry.name), ...dragExtra })
+                );
+              }}
+              onDoubleClick={() => !isRenaming && entry.type !== 'file' && onNavigate(joinPath(path, entry.name))}
+              className="group mx-1 flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm animate-rise-in transition-colors hover:bg-accent"
+              style={{ animationDelay: `${Math.min(i, 20) * 15}ms` }}
+            >
+              <EntryIcon type={entry.type} />
+              {isRenaming ? (
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onFocus={(e) => e.target.select()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename(entry);
+                    if (e.key === 'Escape') setRenaming(null);
+                  }}
+                  onBlur={() => commitRename(entry)}
+                  className="min-w-0 flex-1 rounded border bg-background px-1.5 py-0.5 text-sm outline-none ring-1 ring-primary/50"
+                />
+              ) : entry.type === 'dir' ? (
+                <button
+                  onClick={() => onNavigate(joinPath(path, entry.name))}
+                  className="min-w-0 flex-1 truncate text-left hover:underline"
+                >
+                  {entry.name}
+                </button>
+              ) : (
+                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+              )}
+              {!isRenaming && (
+                <>
+                  <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
+                    {entry.type === 'dir' ? '' : formatSize(entry.size)}
+                  </span>
+                  <span className="hidden w-24 shrink-0 text-right text-xs text-muted-foreground xl:block">
+                    {formatDate(entry.mtime)}
+                  </span>
+                </>
+              )}
+              {onAction && ActionIcon && !isRenaming && (
+                <button
+                  onClick={() => onAction(entry)}
+                  title={actionTitle}
+                  className="invisible shrink-0 rounded p-1 text-muted-foreground hover:text-foreground group-hover:visible"
+                >
+                  <ActionIcon className="size-3.5" />
+                </button>
+              )}
+            </div>
+          );
+
+          if (!fileOps || isRenaming) return <div key={entry.name}>{row}</div>;
+
+          return (
+            <ContextMenu key={entry.name}>
+              <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+              <ContextMenuContent>
+                {onAction && ActionIcon && (
+                  <>
+                    <ContextMenuItem onClick={() => onAction(entry)}>
+                      <ActionIcon className="size-4" /> {actionTitle}
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                  </>
+                )}
+                <ContextMenuItem onClick={() => startRename(entry)}>
+                  <Pencil className="size-4" /> Rename
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem variant="destructive" onClick={() => fileOps.onDelete(entry)}>
+                  <Trash2 className="size-4" /> Delete
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          );
+        })}
+      </div>
+
+      <div className="flex shrink-0 items-center justify-between border-t px-3 py-1 text-[11px] text-muted-foreground">
+        <span>
+          {entries.length} item{entries.length === 1 ? '' : 's'}
+        </span>
       </div>
     </div>
   );
@@ -321,6 +435,7 @@ function LocalPane({ refreshTick, onPathChange, onChangeSource, actionTitle, Act
   const [error, setError] = useState(null);
   const pathRef = useRef(null);
   pathRef.current = path;
+  const confirm = useConfirm();
 
   async function loadDir(nextPath) {
     setLoading(true);
@@ -356,6 +471,39 @@ function LocalPane({ refreshTick, onPathChange, onChangeSource, actionTitle, Act
     if (refreshTick > 0 && pathRef.current) loadDir(pathRef.current);
   }, [refreshTick]);
 
+  async function handleDelete(entry) {
+    const ok = await confirm({
+      title: `Delete "${entry.name}"?`,
+      description:
+        entry.type === 'dir'
+          ? 'This folder and everything inside it will be deleted permanently.'
+          : 'This file will be deleted permanently.',
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    const result = await window.api.fsDelete(joinPath(path, entry.name));
+    if (result.error) setError(result.error);
+    else loadDir(path);
+  }
+
+  async function handleRename(entry, newName) {
+    const result = await window.api.fsRename(path, entry.name, newName);
+    if (result.error) setError(result.error);
+    else loadDir(path);
+  }
+
+  async function handleMkdir() {
+    const name = uniqueName(entries, 'New Folder');
+    const result = await window.api.fsMkdir(path, name);
+    if (result.error) {
+      setError(result.error);
+      return null;
+    }
+    await loadDir(path);
+    return name;
+  }
+
   return (
     <FilePane
       title="Local"
@@ -375,6 +523,7 @@ function LocalPane({ refreshTick, onPathChange, onChangeSource, actionTitle, Act
         window.api.sftpDownloadTo(payload.sessionId, payload.path, pathRef.current, payload.name);
       }}
       onChangeSource={onChangeSource}
+      fileOps={path ? { onDelete: handleDelete, onRename: handleRename, onMkdir: handleMkdir } : null}
     />
   );
 }
@@ -395,6 +544,7 @@ function RemotePane({
   const [error, setError] = useState(null);
   const pathRef = useRef(null);
   pathRef.current = path;
+  const confirm = useConfirm();
 
   async function loadDir(nextPath) {
     setLoading(true);
@@ -425,6 +575,39 @@ function RemotePane({
     if (refreshTick > 0 && pathRef.current) loadDir(pathRef.current);
   }, [refreshTick]);
 
+  async function handleDelete(entry) {
+    const ok = await confirm({
+      title: `Delete "${entry.name}"?`,
+      description:
+        entry.type === 'dir'
+          ? 'This folder and everything inside it will be deleted permanently.'
+          : 'This file will be deleted permanently.',
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    const result = await window.api.sftpDelete(sessionId, joinPath(path, entry.name), entry.type === 'dir');
+    if (result.error) setError(result.error);
+    else loadDir(path);
+  }
+
+  async function handleRename(entry, newName) {
+    const result = await window.api.sftpRename(sessionId, path, entry.name, newName);
+    if (result.error) setError(result.error);
+    else loadDir(path);
+  }
+
+  async function handleMkdir() {
+    const name = uniqueName(entries, 'New Folder');
+    const result = await window.api.sftpMkdir(sessionId, path, name);
+    if (result.error) {
+      setError(result.error);
+      return null;
+    }
+    await loadDir(path);
+    return name;
+  }
+
   return (
     <FilePane
       title={title}
@@ -452,6 +635,7 @@ function RemotePane({
         window.api.sftpUploadPaths(sessionId, pathRef.current, files.map((f) => window.api.pathForFile(f)))
       }
       onChangeSource={onChangeSource}
+      fileOps={path ? { onDelete: handleDelete, onRename: handleRename, onMkdir: handleMkdir } : null}
     />
   );
 }
