@@ -62,6 +62,28 @@ contextBridge.exposeInMainWorld('api', {
   onSerialClosed: (callback) => subscribe('serial:closed', callback),
   onSerialError: (callback) => subscribe('serial:error', callback),
 
+  // Sharing a terminal. The owner's side is keyed by the terminal's session
+  // id; a viewer's side is keyed by the share id, which doubles as the id of
+  // the tab it is watched in.
+  shareStart: (sessionId, kind) => ipcRenderer.invoke('share:start', { sessionId, kind }),
+  shareStop: (sessionId) => ipcRenderer.invoke('share:stop', sessionId),
+  shareList: () => ipcRenderer.invoke('share:list'),
+  shareGrant: (sessionId, memberId) => ipcRenderer.invoke('share:grant', { sessionId, memberId }),
+  shareRevoke: (sessionId) => ipcRenderer.invoke('share:revoke', sessionId),
+  shareKick: (sessionId, memberId) => ipcRenderer.invoke('share:kick', { sessionId, memberId }),
+  shareLeave: (shareId) => ipcRenderer.invoke('share:leave', shareId),
+  shareAttach: (shareId) => ipcRenderer.invoke('share:attach', shareId),
+  shareRequestControl: (shareId) => ipcRenderer.invoke('share:requestControl', shareId),
+  shareReleaseControl: (shareId) => ipcRenderer.invoke('share:releaseControl', shareId),
+  shareInput: (shareId, data) => ipcRenderer.invoke('share:input', { shareId, data }),
+  onShareOwner: (callback) => subscribe('share:owner', callback),
+  onShareViewer: (callback) => subscribe('share:viewer', callback),
+  onShareInvite: (callback) => subscribe('share:invite', callback),
+  onShareEvent: (callback) => subscribe('share:event', callback),
+  onShareData: (callback) => subscribe('share:data', callback),
+  onShareSize: (callback) => subscribe('share:size', callback),
+  onShareClosed: (callback) => subscribe('share:closed', callback),
+
   fsHome: () => ipcRenderer.invoke('fs:home'),
   fsList: (path) => ipcRenderer.invoke('fs:list', path),
   fsMkdir: (dirPath, name) => ipcRenderer.invoke('fs:mkdir', { dirPath, name }),

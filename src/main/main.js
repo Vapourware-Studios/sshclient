@@ -9,6 +9,7 @@ const localTerm = require('./localTerm');
 const serial = require('./serial');
 const vault = require('./vault');
 const sync = require('./sync');
+const share = require('./share');
 const updater = require('./updater');
 const feedbackPrompt = require('./feedbackPrompt');
 const isMac = process.platform === 'darwin';
@@ -18,14 +19,21 @@ const FEEDBACK_URL =
 const FEEDBACK_MAX_LEN = 4000;
 const FEEDBACK_CATEGORIES = ['bug', 'idea', 'other'];
 
-// Deep links (sshclient://signed-in) come back from the browser sign-in flow.
+// Deep links come back from the browser: sshclient://signed-in from the
+// sign-in flow, sshclient://join from a share link.
 // Single-instance so a second launch on Win/Linux forwards its URL here.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
+
+function routeDeepLink(url) {
+  if (url.startsWith('sshclient://join')) share.handleJoinLink(url);
+  else sync.handleDeepLink(url);
+}
+
 app.on('second-instance', (event, argv) => {
   const url = argv.find((arg) => arg.startsWith('sshclient://'));
-  if (url) sync.handleDeepLink(url);
+  if (url) routeDeepLink(url);
   const win = BrowserWindow.getAllWindows()[0];
   if (win) {
     if (win.isMinimized()) win.restore();
@@ -34,7 +42,7 @@ app.on('second-instance', (event, argv) => {
 });
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  sync.handleDeepLink(url);
+  routeDeepLink(url);
 });
 
 // Record a crash marker so the *next* launch can ask what happened —
@@ -161,8 +169,14 @@ ipcMain.handle('ssh:connect', (event, config) => {
         const reason = feedbackPrompt.recordConnection();
         if (reason) win?.webContents.send('feedback:prompt', { reason });
       },
-      onData: (sessionId, data, seq) => win?.webContents.send('ssh:data', { sessionId, data, seq }),
-      onClose: (sessionId) => win?.webContents.send('ssh:closed', { sessionId }),
+      onData: (sessionId, data, seq) => {
+        win?.webContents.send('ssh:data', { sessionId, data, seq });
+        share.publishOutput(sessionId, data);
+      },
+      onClose: (sessionId) => {
+        win?.webContents.send('ssh:closed', { sessionId });
+        share.onSessionClosed(sessionId);
+      },
       onError: (sessionId, err) =>
         win?.webContents.send('ssh:error', { sessionId, message: err.message }),
       onLog: (sessionId, line, level) =>
@@ -197,6 +211,7 @@ ipcMain.handle('ssh:write', (event, { sessionId, data }) => {
 
 ipcMain.handle('ssh:resize', (event, { sessionId, cols, rows }) => {
   ssh.resize(sessionId, cols, rows);
+  share.publishSize(sessionId, cols, rows);
 });
 
 ipcMain.handle('ssh:disconnect', (event, sessionId) => {
@@ -216,8 +231,14 @@ ipcMain.handle('local:connect', (event, config) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   try {
     const sessionId = localTerm.connect(config, {
-      onData: (sessionId, data, seq) => win?.webContents.send('local:data', { sessionId, data, seq }),
-      onClose: (sessionId) => win?.webContents.send('local:closed', { sessionId }),
+      onData: (sessionId, data, seq) => {
+        win?.webContents.send('local:data', { sessionId, data, seq });
+        share.publishOutput(sessionId, data);
+      },
+      onClose: (sessionId) => {
+        win?.webContents.send('local:closed', { sessionId });
+        share.onSessionClosed(sessionId);
+      },
       onError: (sessionId, err) =>
         win?.webContents.send('local:error', { sessionId, message: err.message }),
     });
@@ -233,6 +254,7 @@ ipcMain.handle('local:write', (event, { sessionId, data }) => {
 
 ipcMain.handle('local:resize', (event, { sessionId, cols, rows }) => {
   localTerm.resize(sessionId, cols, rows);
+  share.publishSize(sessionId, cols, rows);
 });
 
 ipcMain.handle('local:disconnect', (event, sessionId) => {
@@ -253,8 +275,14 @@ ipcMain.handle('serial:connect', async (event, config) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   try {
     const sessionId = await serial.connect(config, {
-      onData: (sessionId, data, seq) => win?.webContents.send('serial:data', { sessionId, data, seq }),
-      onClose: (sessionId) => win?.webContents.send('serial:closed', { sessionId }),
+      onData: (sessionId, data, seq) => {
+        win?.webContents.send('serial:data', { sessionId, data, seq });
+        share.publishOutput(sessionId, data);
+      },
+      onClose: (sessionId) => {
+        win?.webContents.send('serial:closed', { sessionId });
+        share.onSessionClosed(sessionId);
+      },
       onError: (sessionId, err) =>
         win?.webContents.send('serial:error', { sessionId, message: err.message }),
     });
@@ -273,6 +301,40 @@ ipcMain.handle('serial:disconnect', (event, sessionId) => {
 });
 
 ipcMain.handle('serial:attach', (event, sessionId) => serial.attach(sessionId));
+
+// --- terminal sharing -------------------------------------------------------
+
+ipcMain.handle('share:start', async (event, { sessionId, kind }) => {
+  try {
+    return await share.startShare(sessionId, kind);
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('share:stop', (event, sessionId) => share.stopShare(sessionId));
+ipcMain.handle('share:list', () => ({ shares: share.listShares(), viewing: share.listViewers() }));
+ipcMain.handle('share:grant', (event, { sessionId, memberId }) => {
+  share.grantControl(sessionId, memberId);
+});
+ipcMain.handle('share:revoke', (event, sessionId) => {
+  share.revokeControl(sessionId);
+});
+ipcMain.handle('share:kick', (event, { sessionId, memberId }) => {
+  share.kick(sessionId, memberId);
+});
+
+ipcMain.handle('share:leave', (event, shareId) => share.leaveShare(shareId));
+ipcMain.handle('share:attach', (event, shareId) => share.viewerAttach(shareId));
+ipcMain.handle('share:requestControl', (event, shareId) => {
+  share.requestControl(shareId);
+});
+ipcMain.handle('share:releaseControl', (event, shareId) => {
+  share.releaseControl(shareId);
+});
+ipcMain.handle('share:input', (event, { shareId, data }) => {
+  share.sendInput(shareId, data);
+});
 ipcMain.handle('window:isFullScreen', (event) =>
   BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false
 );
@@ -564,6 +626,9 @@ ipcMain.handle('vault:unlock', (event, password) => {
 
 ipcMain.handle('vault:lock', () => {
   sync.onVaultLocked();
+  // Locking up means locking others out too: a share outlives the tab it came
+  // from otherwise, streaming to people the user just walked away from.
+  share.onVaultLocked();
   vault.lock();
   return { ok: true };
 });
@@ -980,11 +1045,18 @@ app.whenReady().then(() => {
     app.setAsDefaultProtocolClient('sshclient');
   }
 
-  sync.setNotifier((channel, payload) => {
+  const broadcast = (channel, payload) => {
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(channel, payload);
     }
+  };
+
+  sync.setNotifier((channel, payload) => {
+    broadcast(channel, payload);
+    // A share link that arrived before the app was signed in waits for this.
+    if (channel === 'account:changed') share.onAccountChanged();
   });
+  share.setNotifier(broadcast);
 
   vault.init(app.getPath('userData'));
   feedbackPrompt.init(app.getPath('userData'));
@@ -1016,5 +1088,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  share.shutdown('quit');
   vault.shutdown();
 });

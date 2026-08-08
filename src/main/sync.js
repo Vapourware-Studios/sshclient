@@ -499,6 +499,7 @@ function onVaultLocked() {
 module.exports = {
   setNotifier,
   status,
+  getAccount,
   getUrls,
   setUrls,
   startSignIn,
