@@ -15,8 +15,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 const SharingContext = createContext(null);
 
-/** The relay hands out a slot; the app decides what a slot looks like. */
-const COLOR_SLOTS = 8;
+/** The relay hands out a slot; the app decides what a slot looks like. Nine
+ *  of them, one per participant at full capacity — the owner plus eight. */
+const COLOR_SLOTS = 9;
 
 export function memberColor(slot) {
   return `var(--share-${(Number(slot) % COLOR_SLOTS) + 1})`;
