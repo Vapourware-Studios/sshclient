@@ -27,18 +27,22 @@ export default function ShareViewerBar({ shareId }) {
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3 text-xs">
-      {state.status === 'watching' ? (
+      {state.status === 'error' ? (
+        <Eye className="size-3.5 shrink-0 text-destructive" />
+      ) : state.status === 'watching' ? (
         <Eye className="size-3.5 shrink-0 text-muted-foreground" />
       ) : (
         <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
       )}
 
-      <span className="truncate text-muted-foreground">
-        {state.status === 'reconnecting'
-          ? 'Reconnecting…'
-          : state.canType
-            ? 'You have the keyboard'
-            : `Watching ${owner ? owner.name : 'a shared terminal'}`}
+      <span className={`truncate ${state.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+        {state.status === 'error'
+          ? state.error || 'Not connected'
+          : state.status === 'reconnecting'
+            ? 'Reconnecting…'
+            : state.canType
+              ? 'You have the keyboard'
+              : `Watching ${owner ? owner.name : 'a shared terminal'}`}
       </span>
 
       <div className="ml-auto flex items-center gap-1.5">
