@@ -83,8 +83,8 @@ function socketUrl(shareId, { owner }) {
 }
 
 function joinLink(shareId, key) {
-  const { connectUrl } = sync.getUrls();
-  return `${connectUrl}/join#s=${shareId}&k=${key.toString('base64url')}`;
+  const { apiUrl } = sync.getUrls();
+  return `${apiUrl}/join#s=${shareId}&k=${key.toString('base64url')}`;
 }
 
 function sendControl(share, message) {
@@ -137,6 +137,17 @@ function scheduleReconnect(share, { connect, emit, giveUp }) {
   share.status = 'reconnecting';
   emit(share);
   share.retryTimer = setTimeout(() => connect(share), delay);
+}
+
+function connectedAccount(share, emit) {
+  const account = sync.getAccount();
+  if (!account) {
+    share.status = 'error';
+    share.error = 'Signed out';
+    emit(share);
+    return null;
+  }
+  return account;
 }
 
 function upsertMember(members, member) {
@@ -227,13 +238,8 @@ function startShare(sessionId, kind) {
 }
 
 function connectOwner(share) {
-  const account = sync.getAccount();
-  if (!account) {
-    share.status = 'error';
-    share.error = 'Signed out';
-    emitOwner(share);
-    return;
-  }
+  const account = connectedAccount(share, emitOwner);
+  if (!account) return;
 
   const socket = new WebSocket(socketUrl(share.shareId, { owner: true }), {
     headers: { Authorization: `Bearer ${account.token}` },
@@ -613,13 +619,8 @@ function joinShare(shareId, key) {
 }
 
 function connectViewer(share) {
-  const account = sync.getAccount();
-  if (!account) {
-    share.status = 'error';
-    share.error = 'Signed out';
-    emitViewer(share);
-    return;
-  }
+  const account = connectedAccount(share, emitViewer);
+  if (!account) return;
 
   const socket = new WebSocket(socketUrl(share.shareId, { owner: false }), {
     headers: { Authorization: `Bearer ${account.token}` },
@@ -639,7 +640,7 @@ function connectViewer(share) {
     endViewer(
       share,
       res.statusCode === 409
-        ? 'That terminal already has as many viewers as it allows'
+        ? closeReason(4002, '')
         : res.statusCode === 404
           ? 'That share has ended'
           : `Could not join (${res.statusCode})`,
@@ -672,12 +673,12 @@ function connectViewer(share) {
 }
 
 function closeReason(code, reason) {
-  if (code === 4001) return 'The owner removed you from this terminal';
-  if (code === 4002) return 'That terminal already has as many viewers as it allows';
-  if (code === 4003) return 'Your connection could not keep up';
-  if (code === 4005) return 'The owner disconnected';
-  if (reason === 'expired') return 'The share expired';
-  return 'The owner ended the share';
+  if (code === 4001) return 'You have been removed from this terminal by the owner.';
+  if (code === 4002) return 'This terminal has reached its maximum number of viewers.';
+  if (code === 4003) return 'The network connection was lost.';
+  if (code === 4005) return 'The owner has disconnected.';
+  if (reason === 'expired') return 'The share expired.';
+  return 'The owner has ended the sharing session.';
 }
 
 function onViewerFrame(share, frame) {

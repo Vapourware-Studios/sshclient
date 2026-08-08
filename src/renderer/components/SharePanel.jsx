@@ -78,15 +78,21 @@ export default function SharePanel({ tab, onClose }) {
             <div className="flex items-center gap-2">
               <span
                 className={`size-2 shrink-0 rounded-full ${
-                  share.status === 'live' ? 'bg-emerald-500' : 'animate-pulse bg-amber-500'
+                  share.status === 'live'
+                    ? 'bg-emerald-500'
+                    : share.status === 'error'
+                      ? 'bg-destructive'
+                      : 'animate-pulse bg-amber-500'
                 }`}
               />
               <p className="text-sm font-medium">
                 {share.status === 'live'
                   ? 'Live'
-                  : share.status === 'reconnecting'
-                    ? 'Reconnecting…'
-                    : 'Connecting…'}
+                  : share.status === 'error'
+                    ? share.error || 'Not connected'
+                    : share.status === 'reconnecting'
+                      ? 'Reconnecting…'
+                      : 'Connecting…'}
               </p>
               <p className="ml-auto text-xs text-muted-foreground">
                 {viewers.length}/{share.maxViewers ?? 8} watching
