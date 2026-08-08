@@ -10,7 +10,8 @@ const vault = require('./vault');
 
 const DEFAULT_API_URL =
   process.env.SSHCLIENT_API_URL || 'https://api.sshclient.vapourware-studios.net';
-const DEFAULT_CONNECT_URL = process.env.SSHCLIENT_CONNECT_URL || 'https://sshclient.vapourware-studios.net/';
+const DEFAULT_CONNECT_URL =
+  process.env.SSHCLIENT_CONNECT_URL || 'https://sshclient.vapourware-studios.net';
 const SCRYPT_PARAMS = { N: 2 ** 17, r: 8, p: 1 };
 const SIGNIN_TTL_MS = 10 * 60 * 1000;
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -34,16 +35,24 @@ function setNotifier(fn) {
   notify = fn;
 }
 
+// Every caller appends its own `/path`, so a trailing slash here lands them on
+// `//connect` and `//join` — different paths as far as a router is concerned.
+// Normalising on the way out covers the defaults and the env overrides too,
+// not just what somebody typed into settings.
+function trimUrl(url) {
+  return String(url).replace(/\/+$/, '');
+}
+
 function getUrls() {
   return {
-    apiUrl: vault.getMeta('sync.apiUrl') || DEFAULT_API_URL,
-    connectUrl: vault.getMeta('sync.connectUrl') || DEFAULT_CONNECT_URL,
+    apiUrl: trimUrl(vault.getMeta('sync.apiUrl') || DEFAULT_API_URL),
+    connectUrl: trimUrl(vault.getMeta('sync.connectUrl') || DEFAULT_CONNECT_URL),
   };
 }
 
 function setUrls({ apiUrl, connectUrl }) {
-  if (apiUrl) vault.setMeta('sync.apiUrl', String(apiUrl).replace(/\/+$/, ''));
-  if (connectUrl) vault.setMeta('sync.connectUrl', String(connectUrl).replace(/\/+$/, ''));
+  if (apiUrl) vault.setMeta('sync.apiUrl', trimUrl(apiUrl));
+  if (connectUrl) vault.setMeta('sync.connectUrl', trimUrl(connectUrl));
 }
 
 async function api(path, { method = 'GET', token, body } = {}) {
@@ -499,6 +508,8 @@ function onVaultLocked() {
 module.exports = {
   setNotifier,
   status,
+  api,
+  getAccount,
   getUrls,
   setUrls,
   startSignIn,

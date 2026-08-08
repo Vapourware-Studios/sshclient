@@ -27,6 +27,14 @@ const cspOnBuild = {
 export default defineConfig({
   root: 'src/renderer',
   base: './',
+  // The main process and `wait-on` both hardcode this port. Without
+  // strictPort an occupied 5173 sends Vite quietly to 5174 while Electron
+  // keeps loading 5173 — a blank window with nothing to say why. Fail here
+  // instead, where the message names the problem.
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
   plugins: [react(), tailwindcss(), cspOnBuild],
   resolve: {
     alias: {

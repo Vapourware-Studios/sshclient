@@ -1,0 +1,71 @@
+import { Eye, Keyboard, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { memberColor, useIsTyping, useSharing } from '@/lib/sharing.jsx';
+
+function MemberDot({ shareId, member }) {
+  const typing = useIsTyping(shareId, member.id);
+  return (
+    <span
+      title={`${member.name}${member.role === 'owner' ? ' (owner)' : ''}`}
+      className={`size-2 rounded-full ${typing ? 'animate-pulse' : ''}`}
+      style={{ backgroundColor: memberColor(member.color) }}
+    />
+  );
+}
+
+/**
+ * The strip above a terminal somebody else is driving: who else is here,
+ * whether you may type, and how to ask if you may not.
+ */
+export default function ShareViewerBar({ shareId }) {
+  const { viewing, requestControl, releaseControl } = useSharing();
+  const state = viewing[shareId];
+  if (!state) return null;
+
+  const owner = state.members.find((m) => m.role === 'owner');
+  const others = state.members.filter((m) => m.id !== state.memberId);
+
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3 text-xs">
+      {state.status === 'error' ? (
+        <Eye className="size-3.5 shrink-0 text-destructive" />
+      ) : state.status === 'watching' ? (
+        <Eye className="size-3.5 shrink-0 text-muted-foreground" />
+      ) : (
+        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+      )}
+
+      <span className={`truncate ${state.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+        {state.status === 'error'
+          ? state.error || 'Not connected'
+          : state.status === 'reconnecting'
+            ? 'Reconnecting…'
+            : state.canType
+              ? 'You have the keyboard'
+              : `Watching ${owner ? owner.name : 'a shared terminal'}`}
+      </span>
+
+      <div className="ml-auto flex items-center gap-1.5">
+        {others.map((member) => (
+          <MemberDot key={member.id} shareId={shareId} member={member} />
+        ))}
+
+        {state.canType ? (
+          <Button size="xs" variant="secondary" onClick={() => releaseControl(shareId)}>
+            <Keyboard className="size-3" /> Hand back
+          </Button>
+        ) : (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={state.baton !== null}
+            onClick={() => requestControl(shareId)}
+          >
+            <Keyboard className="size-3" />
+            {state.baton !== null ? 'Someone else is typing' : 'Ask to type'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}

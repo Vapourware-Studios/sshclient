@@ -85,7 +85,8 @@
     "snappyjs": "^0.7.0",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.6.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.21.3"
   },
   "optionalDependencies": {
     "electron-liquid-glass": "^1.1.1"

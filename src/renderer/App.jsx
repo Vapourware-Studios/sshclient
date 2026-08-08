@@ -1,18 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { Palette } from 'lucide-react';
+import { Palette, Share2 } from 'lucide-react';
 import Unlock from '@/components/Unlock';
 import NewConnectionDialog from '@/components/NewConnectionDialog';
 import TabBar from '@/components/TabBar';
 import ContentArea from '@/components/ContentArea';
 import TerminalStylePanel from '@/components/TerminalStylePanel';
+import SharePanel from '@/components/SharePanel';
+import ShareToasts from '@/components/ShareToasts';
 import { SlidePanel } from '@/components/SlidePanel';
 import FeedbackPromptToast from '@/components/FeedbackPromptToast';
 import { useConfirm } from '@/lib/confirm';
+import { useSharing } from '@/lib/sharing.jsx';
 
 const MIN_CONNECTING_MS = 2000;
 
+/** Names a tab after whoever is sharing, once the relay has said who that is. */
+function sharedTabTitle(state) {
+  const owner = state.members?.find((m) => m.role === 'owner');
+  return owner ? `${owner.name} (shared)` : 'Shared terminal';
+}
+
 export default function App() {
   const confirm = useConfirm();
+  const { shares, viewing } = useSharing();
   const [vaultStatus, setVaultStatus] = useState(null);
   const [hosts, setHosts] = useState([]);
   const [tabs, setTabs] = useState([
@@ -22,6 +32,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState('vault');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [stylePanelOpen, setStylePanelOpen] = useState(false);
+  const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [editingHost, setEditingHost] = useState(null);
   const [dialogInitialType, setDialogInitialType] = useState('ssh');
   const [connectError, setConnectError] = useState(null);
@@ -61,6 +72,40 @@ export default function App() {
   useEffect(() => {
     if (vaultStatus?.unlocked) refreshHosts();
   }, [vaultStatus?.unlocked]);
+
+  // A share the user accepted opens a tab of its own. The main process has
+  // already joined by the time its state shows up here, so this only mirrors
+  // it into the UI. The tab is never focused for them: a share link can be
+  // fired by any page they happen to visit, and a terminal that appears under
+  // the cursor mid-keystroke is the last thing that should have their input.
+  useEffect(() => {
+    setTabs((prev) => {
+      const known = new Set(prev.map((t) => t.id));
+      const withNew = [
+        ...prev,
+        ...Object.values(viewing)
+          .filter((state) => !known.has(state.shareId))
+          .map((state) => ({
+            id: state.shareId,
+            title: sharedTabTitle(state),
+            type: 'shared',
+            status: 'connected',
+          })),
+      ];
+      // Titles firm up once the welcome message names the owner's device.
+      let changed = withNew.length !== prev.length;
+      const next = withNew.map((t) => {
+        const state = t.type === 'shared' ? viewing[t.id] : null;
+        const title = state ? sharedTabTitle(state) : null;
+        if (!title || title === t.title) return t;
+        changed = true;
+        return { ...t, title };
+      });
+      // Presence churns on every join, leave and handover; don't re-render the
+      // whole tab strip for an event that renamed nothing.
+      return changed ? next : prev;
+    });
+  }, [viewing]);
 
   useEffect(() => {
     return window.api.onHostsChanged(({ hosts }) => setHosts(hosts));
@@ -215,14 +260,17 @@ export default function App() {
       return rest;
     });
 
-    const disconnect =
-      tab?.type === 'local'
-        ? window.api.localDisconnect
-        : tab?.type === 'serial'
-          ? window.api.serialDisconnect
-          : tab?.type === 'playback'
-            ? null
-            : window.api.sshDisconnect;
+    // `playback` closes nothing, so a missing entry and an entry that is
+    // deliberately null have to stay tellable apart.
+    const closers = {
+      local: window.api.localDisconnect,
+      serial: window.api.serialDisconnect,
+      playback: null,
+      shared: window.api.shareLeave,
+    };
+    const disconnect = Object.hasOwn(closers, tab?.type ?? '')
+      ? closers[tab.type]
+      : window.api.sshDisconnect;
     if (disconnect) await disconnect(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
@@ -369,6 +417,7 @@ export default function App() {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
   const terminalTabActive =
     activeTab?.status === 'connected' && ['ssh', 'local', 'serial'].includes(activeTab.type);
+  const activeShare = activeTab ? shares[activeTab.id] : null;
 
   if (!vaultStatus) return null;
 
@@ -377,6 +426,8 @@ export default function App() {
       <>
         <Unlock vaultExists={vaultStatus.exists} onUnlocked={refreshVaultStatus} />
         <FeedbackPromptToast />
+        {/* A share link can land while the vault is locked; the invite says so. */}
+        <ShareToasts />
       </>
     );
   }
@@ -423,13 +474,30 @@ export default function App() {
             />
 
             {terminalTabActive && (
-              <button
-                onClick={() => setStylePanelOpen((open) => !open)}
-                title="Terminal style & snippets"
-                className="absolute right-2 top-2 z-20 flex size-8 items-center justify-center rounded-md border bg-background/80 text-muted-foreground backdrop-blur hover:bg-accent hover:text-foreground"
-              >
-                <Palette className="size-4" />
-              </button>
+              <div className="absolute right-2 top-2 z-20 flex gap-1.5">
+                <button
+                  onClick={() => {
+                    setStylePanelOpen(false);
+                    setSharePanelOpen((open) => !open);
+                  }}
+                  title={activeShare ? 'Sharing — manage viewers' : 'Share this terminal'}
+                  className={`flex size-8 items-center justify-center rounded-md border bg-background/80 backdrop-blur hover:bg-accent hover:text-foreground ${
+                    activeShare ? 'text-emerald-500' : 'text-muted-foreground'
+                  }`}
+                >
+                  <Share2 className="size-4" />
+                </button>
+                <button
+                  onClick={() => {
+                    setSharePanelOpen(false);
+                    setStylePanelOpen((open) => !open);
+                  }}
+                  title="Terminal style & snippets"
+                  className="flex size-8 items-center justify-center rounded-md border bg-background/80 text-muted-foreground backdrop-blur hover:bg-accent hover:text-foreground"
+                >
+                  <Palette className="size-4" />
+                </button>
+              </div>
             )}
           </div>
 
@@ -441,6 +509,13 @@ export default function App() {
               onClose={() => setStylePanelOpen(false)}
               onRunSnippet={runSnippetInActiveTab}
             />
+          </SlidePanel>
+
+          <SlidePanel
+            open={sharePanelOpen && terminalTabActive}
+            onClose={() => setSharePanelOpen(false)}
+          >
+            <SharePanel tab={activeTab} onClose={() => setSharePanelOpen(false)} />
           </SlidePanel>
 
           <NewConnectionDialog
@@ -459,6 +534,7 @@ export default function App() {
         </div>
       </main>
       <FeedbackPromptToast />
+      <ShareToasts />
     </div>
   );
 }
