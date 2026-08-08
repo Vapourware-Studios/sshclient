@@ -89,6 +89,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
   const terminalThemeRef = useRef(terminalTheme);
   terminalThemeRef.current = terminalTheme;
   const fitAddonRef = useRef(null);
+  const refitRef = useRef(null);
   const seekRef = useRef(null);
   const positionRef = useRef(0);
   const [playing, setPlaying] = useState(true);
@@ -132,6 +133,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     fitAddonRef.current = fitAddon;
 
     if (kind === 'playback') {
+      refitRef.current = () => fitAddon.fit();
       fitAddon.fit();
       const resizeObserver = new ResizeObserver(() => fitAddon.fit());
       resizeObserver.observe(containerRef.current);
@@ -159,6 +161,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       setPlaying(true);
 
       return () => {
+        refitRef.current = null;
         seekRef.current = null;
         resizeObserver.disconnect();
         term.dispose();
@@ -192,6 +195,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       if (watching && grid) fitFontToGrid(term, fitAddon, grid);
       else fitAddon.fit();
     };
+    refitRef.current = refit;
     refit();
     const resizeObserver = new ResizeObserver(refit);
     resizeObserver.observe(containerRef.current);
@@ -256,6 +260,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       : null;
 
     return () => {
+      refitRef.current = null;
       disposed = true;
       dataSub.dispose();
       resizeSub.dispose();
@@ -296,7 +301,7 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
 
   useEffect(() => {
     if (active) {
-      fitAddonRef.current?.fit();
+      refitRef.current?.();
       termRef.current?.focus();
     }
   }, [active]);

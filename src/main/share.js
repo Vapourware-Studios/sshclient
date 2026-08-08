@@ -147,6 +147,18 @@ function removeMember(members, id) {
   return members.filter((m) => m.id !== id);
 }
 
+function isMember(member) {
+  return Boolean(member) && typeof member === 'object' && Number.isInteger(member.id);
+}
+
+function asMembers(members) {
+  return Array.isArray(members) && members.every(isMember) ? members : null;
+}
+
+function isMemberId(value) {
+  return value === null || Number.isInteger(value);
+}
+
 // --- owner ------------------------------------------------------------------
 
 function ownerState(share) {
@@ -302,7 +314,20 @@ function onOwnerControl(share, data) {
 
   switch (message.type) {
     case 'welcome':
-      share.members = message.members;
+      if (
+        !Number.isInteger(message.max_viewers) ||
+        !isMemberId(message.baton) ||
+        (message.expires_at !== undefined &&
+          message.expires_at !== null &&
+          typeof message.expires_at !== 'string')
+      ) {
+        return;
+      }
+      {
+        const members = asMembers(message.members);
+        if (!members) return;
+        share.members = members;
+      }
       share.maxViewers = message.max_viewers;
       share.expiresAt = message.expires_at;
       // A reconnect lands here; the relay may have forgotten who was typing.
@@ -310,12 +335,14 @@ function onOwnerControl(share, data) {
       emitOwner(share);
       return;
     case 'joined':
+      if (!isMember(message.member)) return;
       share.members = upsertMember(share.members, message.member);
       emitOwner(share);
       notify('share:event', { kind: 'joined', sessionId: share.sessionId, member: message.member });
       resendSize(share);
       return;
     case 'left': {
+      if (!Number.isInteger(message.member_id)) return;
       const gone = share.members.find((m) => m.id === message.member_id);
       share.members = removeMember(share.members, message.member_id);
       if (share.granted === message.member_id) share.granted = null;
@@ -324,9 +351,11 @@ function onOwnerControl(share, data) {
       return;
     }
     case 'baton':
+      if (!isMemberId(message.holder)) return;
       if (reconcileBaton(share, message.holder)) emitOwner(share);
       return;
     case 'control_requested':
+      if (!Number.isInteger(message.member_id)) return;
       notify('share:event', {
         kind: 'control_requested',
         sessionId: share.sessionId,
@@ -334,6 +363,7 @@ function onOwnerControl(share, data) {
       });
       return;
     case 'typing':
+      if (!Number.isInteger(message.member_id)) return;
       notify('share:event', {
         kind: 'typing',
         sessionId: share.sessionId,
@@ -341,6 +371,7 @@ function onOwnerControl(share, data) {
       });
       return;
     case 'closed':
+      if (message.reason !== undefined && typeof message.reason !== 'string') return;
       finishShare(share, message.reason);
       return;
     default:
@@ -683,20 +714,28 @@ function onViewerControl(share, data) {
 
   switch (message.type) {
     case 'welcome':
-      share.memberId = message.member_id;
-      share.members = message.members;
+      if (!Number.isInteger(message.member_id) || !isMemberId(message.baton)) return;
+      {
+        const members = asMembers(message.members);
+        if (!members) return;
+        share.memberId = message.member_id;
+        share.members = members;
+      }
       share.baton = message.baton;
       emitViewer(share);
       return;
     case 'joined':
+      if (!isMember(message.member)) return;
       share.members = upsertMember(share.members, message.member);
       emitViewer(share);
       return;
     case 'left':
+      if (!Number.isInteger(message.member_id)) return;
       share.members = removeMember(share.members, message.member_id);
       emitViewer(share);
       return;
     case 'baton':
+      if (!isMemberId(message.holder)) return;
       share.baton = message.holder;
       emitViewer(share);
       notify('share:event', {
@@ -707,6 +746,7 @@ function onViewerControl(share, data) {
       });
       return;
     case 'typing':
+      if (!Number.isInteger(message.member_id)) return;
       notify('share:event', {
         kind: 'typing',
         sessionId: share.shareId,
@@ -714,6 +754,7 @@ function onViewerControl(share, data) {
       });
       return;
     case 'closed':
+      if (message.reason !== undefined && typeof message.reason !== 'string') return;
       endViewer(share, closeReason(4000, message.reason));
       return;
     default:
