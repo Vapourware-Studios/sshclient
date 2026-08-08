@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { Check, Copy, Keyboard, Link2, Loader2, UserMinus, Users } from 'lucide-react';
 import { PanelHeader } from '@/components/SlidePanel';
 import { Button } from '@/components/ui/button';
-import { memberColor, useSharing } from '@/lib/sharing.jsx';
+import { memberColor, useIsTyping, useSharing } from '@/lib/sharing.jsx';
 
-function Dot({ slot, typing }) {
+function Dot({ slot, sessionId, memberId }) {
+  const typing = useIsTyping(sessionId, memberId);
   return (
     <span
       className={`size-2 shrink-0 rounded-full ${typing ? 'animate-pulse' : ''}`}
@@ -18,7 +19,7 @@ function Dot({ slot, typing }) {
  * right now, and who currently holds the keyboard.
  */
 export default function SharePanel({ tab, onClose }) {
-  const { shares, start, stop, grant, revoke, kick, isTyping } = useSharing();
+  const { shares, start, stop, grant, revoke, kick } = useSharing();
   const share = tab ? shares[tab.id] : null;
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
@@ -123,7 +124,7 @@ export default function SharePanel({ tab, onClose }) {
                     key={member.id}
                     className="flex items-center gap-2 rounded-md px-2 py-2 hover:bg-accent/50"
                   >
-                    <Dot slot={member.color} typing={isTyping(share.sessionId, member.id)} />
+                    <Dot slot={member.color} sessionId={share.sessionId} memberId={member.id} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">{member.name}</p>
                       <p className="truncate text-xs text-muted-foreground">

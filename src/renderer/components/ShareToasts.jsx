@@ -4,11 +4,12 @@ import { memberColor, useSharing } from '@/lib/sharing.jsx';
 
 /**
  * What is happening on a shared terminal, said out loud: who joined, who left,
- * and who is asking for the keyboard. Joining a share needs no approval, so
- * the owner finding out immediately is the point of this.
+ * who is asking for the keyboard, and whether to open a terminal a link just
+ * offered. Joining a share needs no approval from the owner, so the owner
+ * finding out immediately is the point of this.
  */
 export default function ShareToasts() {
-  const { toasts, dismissToast, grant } = useSharing();
+  const { toasts, dismissToast, answerToast } = useSharing();
   if (toasts.length === 0) return null;
 
   return (
@@ -32,20 +33,18 @@ export default function ShareToasts() {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">{toast.title}</p>
             {toast.body && <p className="mt-0.5 text-xs text-muted-foreground">{toast.body}</p>}
-            {toast.action && (
+            {toast.actions && (
               <div className="mt-2 flex gap-2">
-                <Button
-                  size="xs"
-                  onClick={() => {
-                    grant(toast.action.sessionId, toast.action.memberId);
-                    dismissToast(toast.id);
-                  }}
-                >
-                  {toast.action.label}
-                </Button>
-                <Button size="xs" variant="ghost" onClick={() => dismissToast(toast.id)}>
-                  Not now
-                </Button>
+                {toast.actions.map((action) => (
+                  <Button
+                    key={action.label}
+                    size="xs"
+                    variant={action.variant}
+                    onClick={() => answerToast(toast.id, action.onSelect)}
+                  >
+                    {action.label}
+                  </Button>
+                ))}
               </div>
             )}
           </div>

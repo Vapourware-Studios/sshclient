@@ -11,38 +11,76 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
  *
  * No keys or ciphertext reach the renderer; the main process does all of that.
  * What arrives here is presence, who holds the keyboard, and decrypted output.
+ *
+ * Who is typing sits in a context of its own. It changes on every keystroke
+ * anybody sends, and the tab bar, the panels and every open terminal have no
+ * business re-rendering for a blinking dot.
  */
 
 const SharingContext = createContext(null);
+const TypingContext = createContext(null);
 
-/** The relay hands out a slot; the app decides what a slot looks like. Nine
- *  of them, one per participant at full capacity — the owner plus eight. */
+/**
+ * The relay hands out a slot; the app decides what a slot looks like. Nine of
+ * them, one per participant at full capacity — the owner plus eight.
+ *
+ * Deliberately not `tone.js`: that hashes an id into five shared colours, and
+ * two people in the same terminal wearing the same colour defeats the point.
+ */
 const COLOR_SLOTS = 9;
 
 export function memberColor(slot) {
-  return `var(--share-${(Number(slot) % COLOR_SLOTS) + 1})`;
+  const index = Number.isInteger(slot) ? Math.abs(slot) % COLOR_SLOTS : 0;
+  return `var(--share-${index + 1})`;
 }
 
 /** How long a toast sticks around when nothing needs answering. */
 const TOAST_MS = 6000;
+/** Past this, the oldest toast nobody has to answer makes way. */
+const MAX_TOASTS = 5;
+
+function trimToasts(list) {
+  if (list.length <= MAX_TOASTS) return list;
+  const oldestIdle = list.findIndex((t) => !t.sticky);
+  const victim = oldestIdle === -1 ? 0 : oldestIdle;
+  return list.filter((_, i) => i !== victim);
+}
 
 export function SharingProvider({ children }) {
   const [shares, setShares] = useState({});
   const [viewing, setViewing] = useState({});
   const [toasts, setToasts] = useState([]);
-  const [invite, setInvite] = useState(null);
   const [typing, setTyping] = useState({});
   const typingTimers = useRef(new Map());
+  const toastTimers = useRef(new Map());
 
   const dismissToast = useCallback((id) => {
+    clearTimeout(toastTimers.current.get(id));
+    toastTimers.current.delete(id);
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   const pushToast = useCallback(
     (toast) => {
       const id = crypto.randomUUID();
-      setToasts((prev) => [...prev.slice(-4), { ...toast, id }]);
-      if (!toast.sticky) setTimeout(() => dismissToast(id), TOAST_MS);
+      setToasts((prev) => {
+        // One toast per subject: a second invite for the same share replaces
+        // the first rather than queueing up behind it.
+        const kept = toast.key ? prev.filter((t) => t.key !== toast.key) : prev;
+        return trimToasts([...kept, { ...toast, id }]);
+      });
+      if (!toast.sticky) {
+        toastTimers.current.set(id, setTimeout(() => dismissToast(id), TOAST_MS));
+      }
+    },
+    [dismissToast],
+  );
+
+  /** Runs a toast's button and takes the toast away. */
+  const answerToast = useCallback(
+    (id, onSelect) => {
+      onSelect?.();
+      dismissToast(id);
     },
     [dismissToast],
   );
@@ -51,7 +89,7 @@ export function SharingProvider({ children }) {
   const markTyping = useCallback((sessionId, memberId) => {
     const key = `${sessionId}:${memberId}`;
     clearTimeout(typingTimers.current.get(key));
-    setTyping((prev) => ({ ...prev, [key]: true }));
+    setTyping((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
     typingTimers.current.set(
       key,
       setTimeout(() => {
@@ -82,18 +120,20 @@ export function SharingProvider({ children }) {
       setViewing((prev) => ({ ...prev, [state.shareId]: state }));
     });
 
+    // Sent for a share that ended on its own *and* for one the user closed —
+    // the tab state has to go either way. Only the former has anything to say.
     const unsubClosed = window.api.onShareClosed(({ sessionId, reason }) => {
       setViewing((prev) => {
         const { [sessionId]: _gone, ...rest } = prev;
         return rest;
       });
-      pushToast({ tone: 'warn', title: 'Shared terminal ended', body: reason });
+      if (reason) pushToast({ tone: 'warn', title: 'Shared terminal ended', body: reason });
     });
 
     const unsubInvite = window.api.onShareInvite((payload) => {
-      setInvite(payload);
       if (payload.status === 'invalid') {
         pushToast({
+          key: 'invite',
           tone: 'warn',
           title: 'That share link is incomplete',
           body: 'Ask for the whole link — the part after the # is what opens the terminal.',
@@ -101,6 +141,7 @@ export function SharingProvider({ children }) {
       }
       if (payload.status === 'needs-unlock') {
         pushToast({
+          key: 'invite',
           tone: 'info',
           title: 'Unlock to join',
           body: 'Someone shared a terminal with you. Unlock your vault to open it.',
@@ -108,10 +149,36 @@ export function SharingProvider({ children }) {
       }
       if (payload.status === 'needs-sign-in') {
         pushToast({
+          key: 'invite',
           tone: 'info',
           title: 'Sign in to join',
           body: 'Someone shared a terminal with you. Sign in and it will open.',
         });
+      }
+      // A link the browser handed over opens nothing until this is answered:
+      // any page can fire the protocol handler, so arriving is not consent.
+      if (payload.status === 'confirm') {
+        pushToast({
+          key: 'invite',
+          tone: 'ask',
+          sticky: true,
+          title: 'Open a shared terminal?',
+          body: 'Only if you were expecting this link. Whoever sent it can watch what you type if they hand you the keyboard.',
+          actions: [
+            {
+              label: 'Open',
+              onSelect: () => window.api.shareAcceptInvite(payload.shareId),
+            },
+            {
+              label: 'Ignore',
+              variant: 'ghost',
+              onSelect: () => window.api.shareDeclineInvite(),
+            },
+          ],
+        });
+      }
+      if (payload.status === 'joined') {
+        setToasts((prev) => prev.filter((t) => t.key !== 'invite'));
       }
     });
 
@@ -138,11 +205,18 @@ export function SharingProvider({ children }) {
       }
       if (event.kind === 'control_requested' && event.member) {
         pushToast({
+          key: `control:${event.sessionId}:${event.member.id}`,
           tone: 'ask',
           sticky: true,
           title: `${event.member.name} wants to type`,
           colorSlot: event.member.color,
-          action: { label: 'Allow', sessionId: event.sessionId, memberId: event.member.id },
+          actions: [
+            {
+              label: 'Allow',
+              onSelect: () => window.api.shareGrant(event.sessionId, event.member.id),
+            },
+            { label: 'Not now', variant: 'ghost' },
+          ],
         });
         return;
       }
@@ -175,33 +249,52 @@ export function SharingProvider({ children }) {
     });
   }, []);
 
+  // Both maps outlive the state they were set from, so sweep them together.
+  useEffect(() => {
+    const pending = [typingTimers.current, toastTimers.current];
+    return () => {
+      for (const timers of pending) {
+        for (const timer of timers.values()) clearTimeout(timer);
+        timers.clear();
+      }
+    };
+  }, []);
+
   const value = useMemo(
     () => ({
       shares,
       viewing,
       toasts,
-      invite,
-      isTyping: (sessionId, memberId) => Boolean(typing[`${sessionId}:${memberId}`]),
       dismissToast,
+      answerToast,
       start: (sessionId, kind) => window.api.shareStart(sessionId, kind),
       stop: (sessionId) => window.api.shareStop(sessionId),
       grant: (sessionId, memberId) => window.api.shareGrant(sessionId, memberId),
       revoke: (sessionId) => window.api.shareRevoke(sessionId),
       kick: (sessionId, memberId) => window.api.shareKick(sessionId, memberId),
-      leave: (shareId) => window.api.shareLeave(shareId),
       requestControl: (shareId) => window.api.shareRequestControl(shareId),
       releaseControl: (shareId) => window.api.shareReleaseControl(shareId),
     }),
-    [shares, viewing, toasts, invite, typing, dismissToast],
+    [shares, viewing, toasts, dismissToast, answerToast],
   );
 
-  return <SharingContext.Provider value={value}>{children}</SharingContext.Provider>;
+  return (
+    <SharingContext.Provider value={value}>
+      <TypingContext.Provider value={typing}>{children}</TypingContext.Provider>
+    </SharingContext.Provider>
+  );
 }
 
 export function useSharing() {
   const value = useContext(SharingContext);
   if (!value) throw new Error('useSharing must be used inside a SharingProvider');
   return value;
+}
+
+/** Subscribes to one member's typing light, and nothing else. */
+export function useIsTyping(sessionId, memberId) {
+  const typing = useContext(TypingContext);
+  return Boolean(typing?.[`${sessionId}:${memberId}`]);
 }
 
 function describeReason(reason) {

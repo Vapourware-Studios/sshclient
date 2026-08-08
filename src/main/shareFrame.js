@@ -37,12 +37,22 @@ const FRAME_TYPES = new Set(Object.values(FRAME_TYPE));
 // multi-byte characters are counted.
 const MAX_CHUNK_BYTES = 32 * 1024;
 
+const KEY_BYTES = 32;
+
+/** `shareId` may be the string or a buffer of it cached for the hot path. */
 function aad(header, shareId) {
-  return Buffer.concat([header.subarray(0, 12), Buffer.from(shareId, 'utf8')]);
+  const tail = Buffer.isBuffer(shareId) ? shareId : Buffer.from(shareId, 'utf8');
+  return Buffer.concat([header.subarray(0, 12), tail]);
+}
+
+function usableKey(key) {
+  return Buffer.isBuffer(key) && key.length === KEY_BYTES;
 }
 
 /** Seals one frame. `seq` must never repeat for a given sender. */
 function seal({ key, shareId, memberId, seq, type }, plaintext) {
+  if (!usableKey(key)) throw new Error('share frame: no key');
+
   const header = Buffer.alloc(HEADER_BYTES);
   header.writeUInt8(PROTOCOL_VERSION, 0);
   header.writeUInt8(type, 1);
@@ -65,6 +75,7 @@ function seal({ key, shareId, memberId, seq, type }, plaintext) {
  * number that doesn't advance is a replay rather than a reordering.
  */
 function open({ key, shareId, seen }, frame) {
+  if (!usableKey(key)) return null;
   if (!Buffer.isBuffer(frame) || frame.length <= HEADER_BYTES + TAG_BYTES) return null;
 
   const header = frame.subarray(0, HEADER_BYTES);

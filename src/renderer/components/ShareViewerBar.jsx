@@ -1,13 +1,24 @@
 import { Eye, Keyboard, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { memberColor, useSharing } from '@/lib/sharing.jsx';
+import { memberColor, useIsTyping, useSharing } from '@/lib/sharing.jsx';
+
+function MemberDot({ shareId, member }) {
+  const typing = useIsTyping(shareId, member.id);
+  return (
+    <span
+      title={`${member.name}${member.role === 'owner' ? ' (owner)' : ''}`}
+      className={`size-2 rounded-full ${typing ? 'animate-pulse' : ''}`}
+      style={{ backgroundColor: memberColor(member.color) }}
+    />
+  );
+}
 
 /**
  * The strip above a terminal somebody else is driving: who else is here,
  * whether you may type, and how to ask if you may not.
  */
 export default function ShareViewerBar({ shareId }) {
-  const { viewing, requestControl, releaseControl, isTyping } = useSharing();
+  const { viewing, requestControl, releaseControl } = useSharing();
   const state = viewing[shareId];
   if (!state) return null;
 
@@ -32,12 +43,7 @@ export default function ShareViewerBar({ shareId }) {
 
       <div className="ml-auto flex items-center gap-1.5">
         {others.map((member) => (
-          <span
-            key={member.id}
-            title={`${member.name}${member.role === 'owner' ? ' (owner)' : ''}`}
-            className={`size-2 rounded-full ${isTyping(shareId, member.id) ? 'animate-pulse' : ''}`}
-            style={{ backgroundColor: memberColor(member.color) }}
-          />
+          <MemberDot key={member.id} shareId={shareId} member={member} />
         ))}
 
         {state.canType ? (

@@ -120,6 +120,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
       <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1 self-stretch overflow-x-auto py-1.5">
         {tabs.filter((t) => !t.constant).map((tab) => {
           const share = shares[tab.id];
+          const watching = share?.members?.filter((m) => m.role === 'viewer').length ?? 0;
           return (
           <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
             {tab.status === 'connecting' ? (
@@ -133,13 +134,11 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
             {/* Never let a terminal be shared without saying so on its tab. */}
             {share && (
               <span
-                title={`Shared — ${share.members?.filter((m) => m.role === 'viewer').length ?? 0} watching`}
+                title={`Shared — ${watching} watching`}
                 className="flex shrink-0 items-center gap-0.5 text-emerald-500"
               >
                 <Share2 className="size-3" />
-                <span className="text-[10px] tabular-nums">
-                  {share.members?.filter((m) => m.role === 'viewer').length ?? 0}
-                </span>
+                <span className="text-[10px] tabular-nums">{watching}</span>
               </span>
             )}
             {tab.type === 'shared' && <Eye className="size-3 shrink-0 text-muted-foreground" />}
