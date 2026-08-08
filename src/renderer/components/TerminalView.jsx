@@ -30,7 +30,50 @@ const ADAPTERS = {
     onClosed: 'onSerialClosed',
     onError: 'onSerialError',
   },
+  // Watching somebody else's terminal. Keystrokes take the long way round —
+  // relay, owner, terminal — and are dropped unless we hold the keyboard, so
+  // there is no resize: the owner's terminal is the one that has a size.
+  shared: {
+    write: 'shareInput',
+    resize: null,
+    attach: 'shareAttach',
+    onData: 'onShareData',
+    onClosed: 'onShareClosed',
+    onError: null,
+  },
 };
+
+const MIN_FONT_SIZE = 4;
+const MAX_FONT_SIZE = 40;
+
+/**
+ * Sizes the font so an owner's cols x rows grid fills the room this window
+ * has. Their terminal keeps its dimensions — a viewer on a laptop must not
+ * squash the shell somebody else is working in — so the only thing that gives
+ * is how big the text is here.
+ *
+ * How many columns fit is inversely proportional to the font size, so the
+ * addon's proposal at the current size says directly how far off we are. Two
+ * passes settle the rounding.
+ */
+function fitFontToGrid(term, fitAddon, grid) {
+  if (!grid?.cols || !grid?.rows) return;
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    const proposed = fitAddon.proposeDimensions();
+    if (!proposed?.cols || !proposed?.rows) return;
+
+    const scale = Math.min(proposed.cols / grid.cols, proposed.rows / grid.rows);
+    const next = Math.max(
+      MIN_FONT_SIZE,
+      Math.min(MAX_FONT_SIZE, Math.floor(term.options.fontSize * scale))
+    );
+    if (next === term.options.fontSize) break;
+    term.options.fontSize = next;
+  }
+
+  if (term.cols !== grid.cols || term.rows !== grid.rows) term.resize(grid.cols, grid.rows);
+}
 
 function formatTime(ms) {
   const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
@@ -123,8 +166,16 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     }
 
     const adapter = ADAPTERS[kind] ?? ADAPTERS.ssh;
+    const watching = kind === 'shared';
+
+    // A viewer types only while it holds the keyboard. The relay and the
+    // owner both enforce this too; blocking here just avoids the pantomime of
+    // keystrokes that go nowhere.
+    let canType = false;
+    term.options.disableStdin = watching;
 
     const dataSub = term.onData((data) => {
+      if (watching && !canType) return;
       window.api[adapter.write](sessionId, data);
     });
 
@@ -132,8 +183,17 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
       if (adapter.resize) window.api[adapter.resize](sessionId, cols, rows);
     });
 
-    fitAddon.fit();
-    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+    // The owner's grid is authoritative. Rather than resize their terminal to
+    // suit us, scale the font so their cols x rows fills whatever room this
+    // window has — every viewer gets a right-sized view, nobody squashes the
+    // shell being shared.
+    let grid = null;
+    const refit = () => {
+      if (watching && grid) fitFontToGrid(term, fitAddon, grid);
+      else fitAddon.fit();
+    };
+    refit();
+    const resizeObserver = new ResizeObserver(refit);
     resizeObserver.observe(containerRef.current);
 
     let pendingLive = [];
@@ -152,27 +212,58 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
         if (payload.seq > (result?.lastSeq ?? 0)) term.write(payload.data);
       }
       pendingLive = null;
+      if (watching) {
+        canType = Boolean(result?.canType);
+        term.options.disableStdin = !canType;
+        if (result?.size) {
+          grid = result.size;
+          refit();
+        }
+      }
     });
+
+    const unsubSize = watching
+      ? window.api.onShareSize((payload) => {
+          if (payload.sessionId !== sessionId) return;
+          grid = { cols: payload.cols, rows: payload.rows };
+          refit();
+        })
+      : null;
+
+    const unsubViewer = watching
+      ? window.api.onShareViewer((state) => {
+          if (state.shareId !== sessionId) return;
+          canType = Boolean(state.canType);
+          term.options.disableStdin = !canType;
+        })
+      : null;
 
     const unsubClosed = window.api[adapter.onClosed]((payload) => {
-      if (payload.sessionId === sessionId) {
-        term.write('\r\n\x1b[31m[connection closed]\x1b[0m\r\n');
-      }
+      if (payload.sessionId !== sessionId) return;
+      term.write(
+        watching
+          ? `\r\n\x1b[31m[${payload.reason ?? 'the share ended'}]\x1b[0m\r\n`
+          : '\r\n\x1b[31m[connection closed]\x1b[0m\r\n'
+      );
     });
 
-    const unsubError = window.api[adapter.onError]((payload) => {
-      if (payload.sessionId === sessionId) {
-        term.write(`\r\n\x1b[31m[error] ${payload.message}\x1b[0m\r\n`);
-      }
-    });
+    const unsubError = adapter.onError
+      ? window.api[adapter.onError]((payload) => {
+          if (payload.sessionId === sessionId) {
+            term.write(`\r\n\x1b[31m[error] ${payload.message}\x1b[0m\r\n`);
+          }
+        })
+      : null;
 
     return () => {
       disposed = true;
       dataSub.dispose();
       resizeSub.dispose();
       unsubData();
+      unsubSize?.();
+      unsubViewer?.();
       unsubClosed();
-      unsubError();
+      unsubError?.();
       resizeObserver.disconnect();
       term.dispose();
     };

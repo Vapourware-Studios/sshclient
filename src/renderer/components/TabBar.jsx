@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy } from 'lucide-react';
+import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy, Eye, Share2 } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useGlassSettings, glassAlpha } from '@/lib/glass-settings.jsx';
 import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
+import { useSharing } from '@/lib/sharing.jsx';
 import { isIpAddress } from '@/lib/ip';
 
 const NO_DRAG = { WebkitAppRegion: 'no-drag' };
@@ -79,6 +80,7 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
   const { enabled, intensity } = useGlassSettings();
   const barAlpha = glassAlpha(enabled, intensity, 1, 0);
   const { blurHostIps } = usePrivacySettings();
+  const { shares } = useSharing();
 
   useEffect(() => {
     if (!IS_MAC || typeof window.api.onFullScreenChange !== 'function') return;
@@ -116,7 +118,9 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
       <Separator orientation="vertical" className="shrink-0" />
 
       <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1 self-stretch overflow-x-auto py-1.5">
-        {tabs.filter((t) => !t.constant).map((tab) => (
+        {tabs.filter((t) => !t.constant).map((tab) => {
+          const share = shares[tab.id];
+          return (
           <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
             {tab.status === 'connecting' ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
@@ -125,6 +129,20 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
             ) : (
               <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
             )}
+
+            {/* Never let a terminal be shared without saying so on its tab. */}
+            {share && (
+              <span
+                title={`Shared — ${share.members?.filter((m) => m.role === 'viewer').length ?? 0} watching`}
+                className="flex shrink-0 items-center gap-0.5 text-emerald-500"
+              >
+                <Share2 className="size-3" />
+                <span className="text-[10px] tabular-nums">
+                  {share.members?.filter((m) => m.role === 'viewer').length ?? 0}
+                </span>
+              </span>
+            )}
+            {tab.type === 'shared' && <Eye className="size-3 shrink-0 text-muted-foreground" />}
 
             <span
               className={`max-w-32 truncate ${blurHostIps && isIpAddress(tab.title) ? 'blur-sensitive' : ''}`}
@@ -139,7 +157,8 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
               }}
             />
           </Tab>
-        ))}
+          );
+        })}
       </div>
 
       <button

@@ -29,6 +29,16 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
+  /* One per person in a shared terminal. The relay hands out a slot index; the
+     app decides what it looks like. Eight because that's the viewer cap. */
+  --share-1: oklch(0.62 0.19 255);
+  --share-2: oklch(0.64 0.17 155);
+  --share-3: oklch(0.68 0.19 60);
+  --share-4: oklch(0.6 0.24 305);
+  --share-5: oklch(0.62 0.22 15);
+  --share-6: oklch(0.62 0.13 200);
+  --share-7: oklch(0.66 0.17 120);
+  --share-8: oklch(0.6 0.16 335);
   --sidebar: color-mix(in oklch, oklch(0.985 0 0) var(--glass-bg-alpha, 100%), transparent);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.21 0.006 285.885);
@@ -63,6 +73,14 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
+  --share-1: oklch(0.7 0.17 255);
+  --share-2: oklch(0.74 0.16 155);
+  --share-3: oklch(0.79 0.16 70);
+  --share-4: oklch(0.71 0.21 305);
+  --share-5: oklch(0.71 0.19 15);
+  --share-6: oklch(0.75 0.12 200);
+  --share-7: oklch(0.78 0.16 125);
+  --share-8: oklch(0.71 0.15 335);
   --sidebar: color-mix(in oklch, oklch(0.21 0.006 285.885) var(--glass-bg-alpha, 100%), transparent);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);

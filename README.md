@@ -19,6 +19,17 @@ We provide a free forever **secure** cloud storage for all your **hosts**, **key
 
 If you dont trust us with our data. Well thats fair... that's why we open source our backend. You want to host it yourself, sure go for it!  
 
+## SHARE A TERMINAL
+
+Working on something with someone? Hit **Share** on any terminal tab — SSH, local shell or serial — and you get a link. Send it to whoever should see it. They open it, the app opens with them, and they're watching your terminal live.
+
+They **watch only**. Nobody types in your shell until you hand them the keyboard, one person at a time, and you can take it back with one click. You see who is watching the whole time, and you can remove anyone.
+
+It is sealed the same way everything else here is: the terminal is encrypted on your machine and the key lives inside the link itself, so the relay passes along bytes it cannot read. Two things to know before you send one:
+
+- **The link is the key.** Anyone who opens it starts watching — nobody has to be approved first. Send it the way you'd send the shell.
+- Both of you need to be on the same server, so a self-hosted setup shares within its own team.
+
 ## Why us?
 
 Well why NOT? We are free, open source, we dont take your money. And if you dont like something, your wish is just a **PR** away!

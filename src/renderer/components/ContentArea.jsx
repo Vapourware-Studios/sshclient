@@ -1,6 +1,7 @@
 import TerminalView from '@/components/TerminalView';
 import VaultView from '@/components/VaultView';
 import SftpHub from '@/components/SftpHub';
+import ShareViewerBar from '@/components/ShareViewerBar';
 import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
 
 export default function ContentArea({
@@ -48,15 +49,29 @@ export default function ContentArea({
 
       {tabs
         .filter((t) => t.status === 'connected')
-        .map((tab) => (
-          <TerminalView
-            key={tab.id}
-            sessionId={tab.id}
-            kind={tab.type}
-            active={tab.id === activeTabId}
-            recording={tab.recording}
-          />
-        ))}
+        .map((tab) =>
+          tab.type === 'shared' ? (
+            <div
+              key={tab.id}
+              className={`absolute inset-0 flex flex-col bg-background ${
+                tab.id === activeTabId ? '' : 'invisible pointer-events-none'
+              }`}
+            >
+              <ShareViewerBar shareId={tab.id} />
+              <div className="relative min-h-0 flex-1">
+                <TerminalView sessionId={tab.id} kind="shared" active={tab.id === activeTabId} />
+              </div>
+            </div>
+          ) : (
+            <TerminalView
+              key={tab.id}
+              sessionId={tab.id}
+              kind={tab.type}
+              active={tab.id === activeTabId}
+              recording={tab.recording}
+            />
+          )
+        )}
 
       {activeTab?.status === 'connecting' && activeTab.hostKeyInfo && (
         <HostKeyPromptView
