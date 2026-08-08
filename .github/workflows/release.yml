@@ -256,11 +256,24 @@ jobs:
       - name: Check out sshclient
         uses: actions/checkout@v4
 
+      # Releases are published by the org's own app rather than by GitHub's
+      # generic bot, so the tap's history says who shipped each version. The
+      # token is minted per run, reaches the tap and nothing else, and expires
+      # an hour later — no long-lived PAT sitting in the secrets.
+      - name: Mint a token for TheCoolRaven
+        id: bot
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
+          private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+
       - name: Check out homebrew-tap
         uses: actions/checkout@v4
         with:
           repository: Vapourware-Studios/homebrew-tap
-          token: ${{ secrets.TAP_REPO_TOKEN }}
+          token: ${{ steps.bot.outputs.token }}
           path: homebrew-tap
 
       - name: Update cask
@@ -314,8 +327,8 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "thecoolraven[bot]"
+          git config user.email "306463211+thecoolraven[bot]@users.noreply.github.com"
           git add Casks/sshclient.rb
           git commit -m "sshclient ${VERSION}"
           git push
