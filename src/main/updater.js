@@ -8,6 +8,10 @@ const REPO_NAME = 'sshclient';
 // Must match the token the app is published under in Homebrew once a cask exists.
 const HOMEBREW_CASK = 'sshclient';
 
+// An app that stays open for days would otherwise only ever see the release
+// that was current when it launched.
+const RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
 function compareSemver(a, b) {
   const pa = a.replace(/^v/, '').split('.').map(Number);
   const pb = b.replace(/^v/, '').split('.').map(Number);
@@ -137,20 +141,84 @@ async function initMacUpdater() {
   pollForBrewUpgrade(brewBin, latest.version);
 }
 
+/**
+ * Offers the restart that finishes an already-downloaded update. Declining is
+ * not the end of it — `autoInstallOnAppQuit` means the update still lands the
+ * next time the app is closed — so this asks once per version and then leaves
+ * the user alone.
+ */
+async function promptInstall(autoUpdater, version) {
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    buttons: ['Restart now', 'Later'],
+    defaultId: 0,
+    message: `SSH Client ${version} is ready to install`,
+    detail: `You're on ${app.getVersion()}. Restarting finishes the update now; otherwise it installs the next time you quit.`,
+  });
+  if (response !== 0) return;
+
+  // Goes through the normal quit path, so `before-quit` still gets to end
+  // shares and lock the vault before the installer runs.
+  autoUpdater.quitAndInstall();
+}
+
 function initWindowsLinuxUpdater() {
   // Lazily required: only touches Squirrel/NSIS/AppImage update machinery,
   // none of which applies on macOS.
   const { autoUpdater } = require('electron-updater');
-  autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+
+  // The dialog below is this app's update UI, so electron-updater must not
+  // also raise its own toast — hence checkForUpdates, not
+  // checkForUpdatesAndNotify.
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  // A broken update feed is invisible from inside the app: nothing fails, an
+  // update simply never arrives. Logging is the only trace there is, and it
+  // costs nothing to keep.
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] update failed:', err?.message || err);
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[updater] ${info?.version} available; downloading`);
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[updater] already up to date');
+  });
+
+  let promptedVersion = null;
+
+  autoUpdater.on('update-downloaded', (info) => {
+    const version = info?.version;
+    // Re-checks can re-emit this for a version already declined; asking again
+    // every few hours would be nagging, not helping.
+    if (version && version === promptedVersion) return;
+    promptedVersion = version;
+    console.log(`[updater] ${version} downloaded; prompting to restart`);
+    promptInstall(autoUpdater, version).catch((err) => {
+      console.error('[updater] restart prompt failed:', err?.message || err);
+    });
+  });
+
+  // Rejections here duplicate the `error` event, which is already logged.
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+
+  check();
+  // Unref'd so a pending re-check never holds the process open at quit.
+  setInterval(check, RECHECK_INTERVAL_MS).unref?.();
 }
 
-let checked = false;
+let started = false;
 
 function init() {
-  if (!app.isPackaged || checked) return;
-  checked = true;
+  if (!app.isPackaged || started) return;
+  started = true;
   if (process.platform === 'darwin') {
-    initMacUpdater().catch(() => {});
+    initMacUpdater().catch((err) => {
+      console.error('[updater] update check failed:', err?.message || err);
+    });
   } else {
     initWindowsLinuxUpdater();
   }
