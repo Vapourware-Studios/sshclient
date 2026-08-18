@@ -336,7 +336,14 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     <div
       className={`absolute inset-0 flex flex-col bg-background ${active ? '' : 'invisible pointer-events-none'}`}
     >
-      <div className="min-h-0 flex-1 p-2" ref={containerRef} />
+      {/* The padding lives on a wrapper, never on the element xterm is opened
+          into. The fit addon sizes the grid from getComputedStyle(parent)
+          .height, which for a border-box element is the *border* box — so any
+          padding here would be counted as room for text, and the row it fits
+          into that padding hangs off the bottom of the pane, cut in half. */}
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        <div className="size-full" ref={containerRef} />
+      </div>
 
       {kind === 'playback' && (
         <div className="flex shrink-0 items-center gap-3 border-t px-4 py-3">
