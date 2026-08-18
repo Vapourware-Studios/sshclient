@@ -254,7 +254,7 @@ function connect(config, handlers = {}) {
         sftp.on('close', () => {
           sessions.delete(sessionId);
           conn.end();
-          onClose?.(sessionId);
+          onClose?.(sessionId, { reason: 'closed' });
         });
 
         log('SFTP channel open — session ready');
@@ -291,6 +291,13 @@ function connect(config, handlers = {}) {
           recordingLength: 0,
           recordingStartedAt: Date.now(),
           forwards: new Map(),
+          // Close bookkeeping: the remote sends exit-status when the shell ends
+          // on purpose, so a close with no preceding `exit` means the transport
+          // went away under us — that is a lost connection, not a clean logout.
+          exited: false,
+          exitCode: null,
+          intentional: false,
+          transportError: null,
         };
         sessions.set(sessionId, session);
 
@@ -345,6 +352,11 @@ function connect(config, handlers = {}) {
           }
         });
 
+        stream.on('exit', (code) => {
+          session.exited = true;
+          session.exitCode = typeof code === 'number' ? code : null;
+        });
+
         stream.on('close', () => {
           flush();
           for (const server of session.forwards.values()) server.close();
@@ -356,7 +368,13 @@ function connect(config, handlers = {}) {
             frames: session.recording,
           });
           sessions.delete(sessionId);
-          onClose?.(sessionId);
+          const clean = session.intentional || (session.exited && !session.transportError);
+          log(clean ? 'Session closed' : 'Connection lost');
+          onClose?.(sessionId, {
+            reason: clean ? 'closed' : 'lost',
+            exitCode: session.exitCode,
+            message: session.transportError,
+          });
         });
 
         log('Terminal channel open — session ready');
@@ -369,13 +387,31 @@ function connect(config, handlers = {}) {
   conn.on('error', (err) => {
     pending.delete(sessionId);
     log(`Connection error: ${err.message}`, 'error');
+    // Once a session exists the renderer has already moved past "connecting",
+    // so an error here is a drop mid-session — remember why, and let the
+    // stream/connection close handler report it as a lost connection.
+    const session = sessions.get(sessionId);
+    if (session) {
+      session.transportError = err.message;
+      return;
+    }
     onError?.(sessionId, err);
   });
 
   conn.on('close', () => {
     pending.delete(sessionId);
+    // Normally the shell stream closes first and has already cleaned up. If the
+    // session is still here, the transport died without the channel closing.
+    const session = sessions.get(sessionId);
     sessions.delete(sessionId);
     log('Connection closed');
+    if (session) {
+      onClose?.(sessionId, {
+        reason: session.intentional ? 'closed' : 'lost',
+        exitCode: session.exitCode,
+        message: session.transportError,
+      });
+    }
   });
 
   conn.connect(connectConfig);
@@ -771,6 +807,7 @@ async function sftpMkdir(sessionId, remotePath) {
 function disconnect(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
+    session.intentional = true;
     session.conn.end();
     sessions.delete(sessionId);
     return;

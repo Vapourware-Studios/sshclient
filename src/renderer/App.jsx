@@ -152,6 +152,51 @@ export default function App() {
       patchTab(sessionId, { hostKeyInfo: info });
     });
 
+    // A session that was up and then went away keeps its tab, parked on the
+    // disconnected view so the reason is visible and reconnecting is one click.
+    // Tabs the user closed are already gone from state by the time this fires;
+    // a session that never got that far reports through onSshError instead.
+    function markDisconnected(sessionId, { reason, message, exitCode }) {
+      // The session was ready (only ready sessions ever close), but the tab may
+      // still be showing the connecting view because of MIN_CONNECTING_MS —
+      // drop that pending flip so it doesn't overwrite the disconnected state.
+      const pendingTimeout = pendingTimeoutsRef.current.get(sessionId);
+      if (pendingTimeout) {
+        clearTimeout(pendingTimeout);
+        pendingTimeoutsRef.current.delete(sessionId);
+        startedAtRef.current.delete(sessionId);
+      }
+      const pendingAction = pendingReadyActionRef.current.get(sessionId);
+      if (pendingAction) {
+        pendingReadyActionRef.current.delete(sessionId);
+        pendingAction.onFailure?.(message || 'The connection closed before it could be used');
+      }
+
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === sessionId && (t.status === 'connected' || t.status === 'connecting')
+            ? {
+                ...t,
+                status: 'disconnected',
+                closeReason: reason === 'closed' ? 'closed' : 'lost',
+                closeMessage: message ?? null,
+                closeExitCode: exitCode ?? null,
+              }
+            : t
+        )
+      );
+    }
+
+    const unsubClosed = window.api.onSshClosed(({ sessionId, ...detail }) =>
+      markDisconnected(sessionId, detail)
+    );
+    const unsubLocalClosed = window.api.onLocalClosed(({ sessionId, ...detail }) =>
+      markDisconnected(sessionId, detail)
+    );
+    const unsubSerialClosed = window.api.onSerialClosed(({ sessionId, ...detail }) =>
+      markDisconnected(sessionId, detail)
+    );
+
     const unsubLog = window.api.onSshLog(({ sessionId, line, level }) => {
       setSessionLogs((prev) => {
         const entry = { id: crypto.randomUUID(), time: Date.now(), line, level };
@@ -166,6 +211,9 @@ export default function App() {
       unsubReady();
       unsubError();
       unsubHostKey();
+      unsubClosed();
+      unsubLocalClosed();
+      unsubSerialClosed();
       unsubLog();
     };
   }, []);

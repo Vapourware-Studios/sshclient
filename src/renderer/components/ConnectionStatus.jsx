@@ -5,6 +5,8 @@ import {
   ChevronDown,
   ChevronUp,
   Loader2,
+  PlugZap,
+  PowerOff,
   RotateCcw,
   Server,
   ShieldAlert,
@@ -232,6 +234,57 @@ export function HostKeyPromptView({ title, info, onTrust, onReject }) {
           Trust & continue
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shown when a session that was already up goes away. `reason` is 'closed' for
+ * a deliberate logout (the remote reported an exit status) and 'lost' when the
+ * transport dropped underneath us — the wording and the affordance differ.
+ */
+export function DisconnectedView({ title, reason, message, exitCode, logs, onReconnect, onClose }) {
+  const [showLogs, setShowLogs] = useState(false);
+  const lost = reason === 'lost';
+  const Icon = lost ? PlugZap : PowerOff;
+
+  const detail =
+    message ||
+    (lost
+      ? 'The connection dropped before the session ended. The server, the network, or a sleeping laptop are all likely culprits.'
+      : exitCode
+        ? `The remote shell exited with code ${exitCode}.`
+        : 'The remote shell exited and the session ended normally.');
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-5 bg-background px-6 text-center animate-view-in">
+      <div
+        className={`flex size-16 items-center justify-center rounded-full animate-step-pop ${
+          lost ? 'bg-destructive/10' : 'bg-muted'
+        }`}
+      >
+        <Icon className={`size-7 ${lost ? 'text-destructive' : 'text-muted-foreground'}`} />
+      </div>
+
+      <div className="flex flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
+        <p className="text-sm font-medium">
+          {lost ? 'Connection lost to ' : 'Connection closed to '}
+          <HostTitle title={title} />
+        </p>
+        <p className="max-w-sm text-xs text-muted-foreground">{detail}</p>
+      </div>
+
+      <div className="flex gap-2 animate-rise-in [animation-delay:0.16s]">
+        <Button variant="outline" size="sm" onClick={onClose}>
+          Close tab
+        </Button>
+        <Button size="sm" onClick={onReconnect}>
+          <RotateCcw className="size-3.5" /> {lost ? 'Try again' : 'Reconnect'}
+        </Button>
+        <ShowLogsButton show={showLogs} onToggle={() => setShowLogs((s) => !s)} />
+      </div>
+
+      {showLogs && <ConnectionLog logs={logs} />}
     </div>
   );
 }

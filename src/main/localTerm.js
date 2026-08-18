@@ -46,7 +46,7 @@ function connect(config = {}, handlers = {}) {
     if (exitCode !== 0 && !session.disconnecting) {
       onError?.(sessionId, new Error(`Shell exited with code ${exitCode}`));
     }
-    onClose?.(sessionId);
+    onClose?.(sessionId, { reason: 'closed', exitCode });
   });
 
   return sessionId;

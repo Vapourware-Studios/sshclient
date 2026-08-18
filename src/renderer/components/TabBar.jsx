@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy, Eye, Share2 } from 'lucide-react';
+import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy, Eye, Share2, Unplug } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useGlassSettings, glassAlpha } from '@/lib/glass-settings.jsx';
 import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
@@ -127,9 +127,9 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
             ) : tab.status === 'error' ? (
               <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-            ) : (
-              <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
-            )}
+            ) : tab.status === 'disconnected' ? (
+              <Unplug className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : null}
 
             {/* Never let a terminal be shared without saying so on its tab. */}
             {share && (

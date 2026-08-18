@@ -2,7 +2,12 @@ import TerminalView from '@/components/TerminalView';
 import VaultView from '@/components/VaultView';
 import SftpHub from '@/components/SftpHub';
 import ShareViewerBar from '@/components/ShareViewerBar';
-import { ConnectingView, ConnectErrorView, HostKeyPromptView } from '@/components/ConnectionStatus';
+import {
+  ConnectingView,
+  ConnectErrorView,
+  DisconnectedView,
+  HostKeyPromptView,
+} from '@/components/ConnectionStatus';
 
 export default function ContentArea({
   tabs,
@@ -88,6 +93,18 @@ export default function ContentArea({
           stage={activeTab.stage}
           logs={sessionLogs[activeTab.id] ?? []}
           onCancel={() => onCloseTab(activeTab.id)}
+        />
+      )}
+
+      {activeTab?.status === 'disconnected' && (
+        <DisconnectedView
+          title={activeTab.title}
+          reason={activeTab.closeReason}
+          message={activeTab.closeMessage}
+          exitCode={activeTab.closeExitCode}
+          logs={sessionLogs[activeTab.id] ?? []}
+          onReconnect={() => onRetryTab(activeTab)}
+          onClose={() => onCloseTab(activeTab.id)}
         />
       )}
 
