@@ -92,7 +92,7 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
       <div
         onDoubleClick={() => onConnect(host)}
         title="Double-click to connect"
-        className="group flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted/50"
+        className="group flex cursor-pointer items-center gap-3 rounded-lg bg-foreground/[0.04] px-3 py-2.5 hover:bg-foreground/[0.08]"
       >
         <span
           className="flex size-9 shrink-0 items-center justify-center rounded-md"
@@ -119,7 +119,7 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
               onEdit(host);
             }}
             title="Edit host"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-foreground"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
           >
             <Pencil className="size-3.5" />
           </button>
@@ -129,7 +129,7 @@ function HostRow({ host, onConnect, onEdit, onDuplicate, onDelete }) {
               onDelete(host);
             }}
             title="Delete host"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-destructive"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-foreground/10 hover:text-destructive"
           >
             <Trash2 className="size-3.5" />
           </button>
@@ -282,7 +282,7 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onDuplicate, onNewConn
       <div className="flex-1 overflow-y-auto p-4">
         {hosts.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
+            <span className="flex size-12 items-center justify-center rounded-xl bg-foreground/[0.06] text-muted-foreground">
               <Server className="size-6" />
             </span>
             <div>
@@ -321,7 +321,7 @@ function HostsPanel({ hosts, onConnect, onEdit, onDelete, onDuplicate, onNewConn
                 ))}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border bg-card">
+              <div className="flex flex-col gap-0.5">
                 {filtered.map((host) => (
                   <HostRow
                     key={host.id}
@@ -440,7 +440,7 @@ function KnownHostsPanel() {
         {error && <p className="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         {knownHosts.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
+            <span className="flex size-12 items-center justify-center rounded-xl bg-foreground/[0.06] text-muted-foreground">
               <ShieldCheck className="size-6" />
             </span>
             <div>
@@ -464,10 +464,10 @@ function KnownHostsPanel() {
                 ))}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border bg-card">
+              <div className="flex flex-col gap-0.5">
                 {filtered.map((entry) => (
-                  <div key={`${entry.host}:${entry.port}`} className="group flex items-center gap-3 border-b px-3 py-3 last:border-b-0">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <div key={`${entry.host}:${entry.port}`} className="group flex items-center gap-3 rounded-lg bg-foreground/[0.04] px-3 py-3 hover:bg-foreground/[0.08]">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-foreground/10 text-muted-foreground">
                       <ShieldCheck className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -485,7 +485,7 @@ function KnownHostsPanel() {
                       onClick={() => forget(entry)}
                       title="Forget host key"
                       aria-label={`Forget host key for ${entry.host}`}
-                      className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-destructive"
+                      className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-foreground/10 hover:text-destructive"
                     >
                       <Trash2 className="size-4" />
                     </button>

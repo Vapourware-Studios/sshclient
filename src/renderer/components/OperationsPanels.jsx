@@ -13,6 +13,7 @@ import {
   ContextMenuShortcut,
 } from '@/components/ui/context-menu';
 import { GridCard, ViewToggle, GRID_CLASS } from '@/components/GridCard';
+import { ColorPicker } from '@/components/ColorPicker';
 import SelectHostPanel from '@/components/SelectHostPanel';
 import { useViewMode } from '@/lib/view-mode';
 import { toneForId, toneStyle } from '@/lib/tone';
@@ -63,10 +64,21 @@ function useSlideOutPanel() {
   };
 }
 
-const ItemRow = forwardRef(function ItemRow({ Icon, title, subtitle, actions, ...rest }, ref) {
+const ItemRow = forwardRef(function ItemRow({ Icon, title, subtitle, actions, tone, ...rest }, ref) {
   return (
-    <div ref={ref} className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/60" {...rest}>
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted text-muted-foreground">
+    <div
+      ref={ref}
+      className="group flex items-center gap-3 rounded-lg bg-foreground/[0.04] px-3 py-2 hover:bg-foreground/[0.08]"
+      {...rest}
+    >
+      <span
+        className="flex size-9 shrink-0 items-center justify-center rounded-lg"
+        style={
+          tone
+            ? toneStyle(tone)
+            : { backgroundColor: 'var(--muted)', color: 'var(--muted-foreground)' }
+        }
+      >
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
@@ -81,7 +93,7 @@ const ItemRow = forwardRef(function ItemRow({ Icon, title, subtitle, actions, ..
 function EmptyState({ Icon, title, description, action }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-      <span className="flex size-12 items-center justify-center rounded-xl border bg-muted text-muted-foreground">
+      <span className="flex size-12 items-center justify-center rounded-xl bg-foreground/[0.06] text-muted-foreground">
         <Icon className="size-6" />
       </span>
       <div>
@@ -385,6 +397,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
   const [name, setName] = useState(editingSnippet?.name ?? '');
   const [command, setCommand] = useState(editingSnippet?.command ?? '');
   const [targets, setTargets] = useState(editingSnippet?.targets ?? []);
+  const [color, setColor] = useState(editingSnippet?.color ?? null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -410,6 +423,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
       name: name.trim(),
       command,
       targets,
+      color,
     });
     setBusy(false);
     if (result.error) {
@@ -458,6 +472,11 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
         </div>
 
         <div className="flex flex-col gap-2">
+          <Label>Icon color</Label>
+          <ColorPicker value={color} onChange={setColor} />
+        </div>
+
+        <div className="flex flex-col gap-2">
           <Label>Targets for execution</Label>
           <p className="text-xs text-muted-foreground">
             Attach saved hosts to connect and run this snippet on them in one click.
@@ -471,7 +490,7 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
                 return (
                   <div
                     key={hostId}
-                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5"
+                    className="flex items-center gap-2 rounded-md bg-foreground/[0.06] px-2.5 py-1.5"
                   >
                     <span
                       className="flex size-7 shrink-0 items-center justify-center rounded-md"
@@ -573,7 +592,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
     <SnippetContextMenu item={item} onRun={onRun} onEdit={onEdit} onDuplicate={onDuplicate} onDelete={onDelete}>
       <GridCard
         id={item.id}
-        tone="chart-5"
+        tone={item.color || toneForId(item.id)}
         icon={Code2}
         title={item.name}
         subtitle={snippetSubtitle(item)}
@@ -641,6 +660,7 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHos
       name: `${item.name} copy`,
       command: item.command,
       targets: item.targets ?? [],
+      color: item.color ?? null,
     });
     if (!result.error) setItems(result.snippets);
   }
@@ -755,6 +775,7 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHos
                 >
                   <ItemRow
                     Icon={Code2}
+                    tone={item.color || toneForId(item.id)}
                     title={item.name}
                     subtitle={snippetSubtitle(item)}
                     actions={

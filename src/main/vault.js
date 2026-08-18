@@ -546,7 +546,8 @@ function saveSnippet(snippet) {
   const id = snippet.id || crypto.randomUUID();
   const now = Date.now();
   const targets = Array.isArray(snippet?.targets) ? snippet.targets.filter((v) => typeof v === 'string') : [];
-  const enc = encryptJSON(derivedKey, { name, command, targets });
+  const color = snippet?.color ? String(snippet.color) : undefined;
+  const enc = encryptJSON(derivedKey, { name, command, targets, color });
   db.prepare(`INSERT INTO snippets VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET data_iv=excluded.data_iv, data_auth_tag=excluded.data_auth_tag,
     data_ciphertext=excluded.data_ciphertext, updated_at=excluded.updated_at`)

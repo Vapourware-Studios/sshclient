@@ -25,15 +25,18 @@ const CONSTANT_TAB_ICONS = { vault: Home, sftp: Folder };
 
 const IS_MAC = window.api?.platform === 'darwin';
 
+// Inactive tabs are tinted with the foreground colour rather than a fixed
+// grey, so the same rule reads as slightly darker than the bar in the light
+// theme and slightly lighter than it in the dark one — either way, visible.
 function Tab({ active, onClick, children }) {
   return (
     <div
       onClick={onClick}
       style={NO_DRAG}
-      className={`flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md px-3 text-sm ${
+      className={`flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm ${
         active
-          ? 'border bg-background text-foreground'
-          : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'
+          ? 'bg-background text-foreground'
+          : 'border-transparent bg-foreground/[0.06] text-muted-foreground hover:bg-foreground/[0.12] hover:text-foreground'
       }`}
     >
       {children}
