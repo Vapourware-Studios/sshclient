@@ -34,9 +34,6 @@ import {
   X,
 } from 'lucide-react';
 
-const selectClass =
-  'h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30';
-
 const iconButtonClass =
   'shrink-0 rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground';
 
@@ -622,10 +619,9 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
   );
 }
 
-export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onNewHost }) {
+export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHosts, onNewHost }) {
   const sessions = sshTabs(tabs);
   const [items, setItems] = useState([]);
-  const [sessionId, setSessionId] = useState('');
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useViewMode('snippets');
@@ -652,14 +648,25 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onNewHost }) {
   function run(item) {
     if (item.targets?.length) {
       setError('');
-      for (const hostId of item.targets) {
-        const host = hosts.find((h) => h.id === hostId);
-        if (host) onRunOnHost?.(host, item.command);
+      const targetHosts = item.targets
+        .map((hostId) => hosts.find((h) => h.id === hostId))
+        .filter(Boolean);
+      if (!targetHosts.length) {
+        setError('None of this snippet\u2019s targets still exist under Hosts');
+        return;
       }
+      // Several machines named by one snippet belong together, so they open as
+      // a single tab with a strip of them down its side. A lone target has
+      // nothing to sit beside and stays an ordinary tab.
+      if (targetHosts.length > 1 && onRunSnippetOnHosts) {
+        onRunSnippetOnHosts(item, targetHosts);
+        return;
+      }
+      for (const host of targetHosts) onRunOnHost?.(host, item.command);
       return;
     }
 
-    const id = sessionId || sessions[0]?.id;
+    const id = sessions[0]?.id;
     if (!id) {
       setError('Connect to an SSH host before running a snippet, or attach targets to it');
       return;
@@ -689,20 +696,6 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onNewHost }) {
           <Button onClick={open}>
             <Plus className="size-4" /> New Snippet
           </Button>
-
-          {sessions.length > 0 && (
-            <select
-              className={selectClass}
-              value={sessionId || sessions[0].id}
-              onChange={(e) => setSessionId(e.target.value)}
-            >
-              {sessions.map((tab) => (
-                <option key={tab.id} value={tab.id}>
-                  Run on {tab.title}
-                </option>
-              ))}
-            </select>
-          )}
 
           <div className="flex-1" />
 

@@ -81,20 +81,24 @@ export default function App() {
   useEffect(() => {
     setTabs((prev) => {
       const known = new Set(prev.map((t) => t.id));
-      const withNew = [
-        ...prev,
-        ...Object.values(viewing)
-          .filter((state) => !known.has(state.shareId))
-          .map((state) => ({
-            id: state.shareId,
-            title: sharedTabTitle(state),
-            type: 'shared',
-            status: 'connected',
-          })),
-      ];
+      const added = Object.values(viewing)
+        .filter((state) => !known.has(state.shareId))
+        .map((state) => ({
+          id: state.shareId,
+          title: sharedTabTitle(state),
+          type: 'shared',
+          status: 'connected',
+        }));
+      // A share that ended takes its tab with it, the moment it drops out of
+      // `viewing`. The session behind it is already gone by then — whether the
+      // owner stopped sharing, their shell exited, or this app was removed from
+      // it — so leaving the tab up would leave a terminal on screen with
+      // nothing behind it and no way to tell that from a live one.
+      const kept = prev.filter((t) => t.type !== 'shared' || viewing[t.id]);
+
+      let changed = added.length > 0 || kept.length !== prev.length;
       // Titles firm up once the welcome message names the owner's device.
-      let changed = withNew.length !== prev.length;
-      const next = withNew.map((t) => {
+      const next = [...kept, ...added].map((t) => {
         const state = t.type === 'shared' ? viewing[t.id] : null;
         const title = state ? sharedTabTitle(state) : null;
         if (!title || title === t.title) return t;
@@ -106,6 +110,14 @@ export default function App() {
       return changed ? next : prev;
     });
   }, [viewing]);
+
+  // A tab can go away without anybody here closing it — a share ending takes
+  // its own tab — so selection has to be able to land somewhere else.
+  useEffect(() => {
+    if (tabs.some((t) => t.id === activeTabId)) return;
+    const lastRealTab = [...tabs].reverse().find((t) => !t.constant && !t.groupId);
+    setActiveTabId(lastRealTab ? lastRealTab.id : 'vault');
+  }, [tabs, activeTabId]);
 
   useEffect(() => {
     return window.api.onHostsChanged(({ hosts }) => setHosts(hosts));
@@ -251,7 +263,19 @@ export default function App() {
     if (!result.error) setHosts(result.hosts);
   }
 
-  async function openSession(connectConfig, title, type = 'ssh') {
+  // A session that belongs to a group never becomes the selected tab — the
+  // group is the tab — so it takes the group's member slot instead.
+  function focusNewSession(tab, groupId) {
+    if (!groupId) {
+      setActiveTabId(tab.id);
+      return;
+    }
+    setTabs((prev) =>
+      prev.map((t) => (t.id === groupId ? { ...t, activeMemberId: tab.id } : t))
+    );
+  }
+
+  async function openSession(connectConfig, title, type = 'ssh', { groupId } = {}) {
     setConnectError(null);
 
     if (type !== 'ssh') {
@@ -261,9 +285,9 @@ export default function App() {
         setConnectError(result.error);
         throw new Error(result.error);
       }
-      const tab = { id: result.sessionId, title, type, status: 'connected', connectConfig };
+      const tab = { id: result.sessionId, title, type, status: 'connected', connectConfig, groupId };
       setTabs((prev) => [...prev, tab]);
-      setActiveTabId(tab.id);
+      focusNewSession(tab, groupId);
       return tab.id;
     }
 
@@ -279,11 +303,75 @@ export default function App() {
       status: 'connecting',
       stage: 'connecting',
       connectConfig,
+      groupId,
     };
     startedAtRef.current.set(tab.id, Date.now());
     setTabs((prev) => [...prev, tab]);
-    setActiveTabId(tab.id);
+    focusNewSession(tab, groupId);
     return tab.id;
+  }
+
+  /**
+   * Launching a snippet that carries several targets opens one tab, not one
+   * per host: the machines it names belong together, so they get a single
+   * window with a strip down the left to move between them. Every host is
+   * connected up front and the command is sent to each as it comes up.
+   */
+  async function openSnippetGroup(snippet, targetHosts) {
+    setConnectError(null);
+    if (!targetHosts.length) return;
+
+    const groupId = `group:${crypto.randomUUID()}`;
+    const command = snippet.command.endsWith('\n') ? snippet.command : `${snippet.command}\n`;
+
+    const memberTabs = [];
+    const failures = [];
+
+    for (const host of targetHosts) {
+      const title = host.label || host.host;
+      const result = await window.api.sshConnect({ hostId: host.id });
+      if (result.error) {
+        failures.push(`${title}: ${result.error}`);
+        continue;
+      }
+      startedAtRef.current.set(result.sessionId, Date.now());
+      pendingReadyActionRef.current.set(result.sessionId, {
+        onReady: () => window.api.sshWrite(result.sessionId, command),
+      });
+      memberTabs.push({
+        id: result.sessionId,
+        title,
+        type: 'ssh',
+        status: 'connecting',
+        stage: 'connecting',
+        connectConfig: { hostId: host.id },
+        groupId,
+      });
+    }
+
+    if (failures.length) setConnectError(failures.join(' · '));
+    // Nothing connected, so there is no group to show — the error above is the
+    // whole story, and an empty tab would only have to be closed again.
+    if (!memberTabs.length) return;
+
+    setTabs((prev) => [
+      ...prev,
+      {
+        id: groupId,
+        title: snippet.name,
+        type: 'group',
+        status: 'connected',
+        activeMemberId: memberTabs[0].id,
+      },
+      ...memberTabs,
+    ]);
+    setActiveTabId(groupId);
+  }
+
+  function selectGroupMember(groupId, memberId) {
+    setTabs((prev) =>
+      prev.map((t) => (t.id === groupId ? { ...t, activeMemberId: memberId } : t))
+    );
   }
 
   async function openLocalTerminal() {
@@ -292,38 +380,87 @@ export default function App() {
     } catch {}
   }
 
-  async function closeTab(tabId) {
-    const tab = tabs.find((t) => t.id === tabId);
-    if (tab?.constant) return;
-
+  function forgetSession(tabId) {
     const pendingTimeout = pendingTimeoutsRef.current.get(tabId);
     if (pendingTimeout) {
       clearTimeout(pendingTimeout);
       pendingTimeoutsRef.current.delete(tabId);
     }
     startedAtRef.current.delete(tabId);
+    pendingReadyActionRef.current.delete(tabId);
 
     setSessionLogs((prev) => {
       const { [tabId]: _removed, ...rest } = prev;
       return rest;
     });
+  }
 
-    // `playback` closes nothing, so a missing entry and an entry that is
-    // deliberately null have to stay tellable apart.
+  async function disconnectSession(tab) {
+    // `playback` and `group` close nothing of their own, so a missing entry
+    // and an entry that is deliberately null have to stay tellable apart.
     const closers = {
       local: window.api.localDisconnect,
       serial: window.api.serialDisconnect,
       playback: null,
+      group: null,
       shared: window.api.shareLeave,
     };
     const disconnect = Object.hasOwn(closers, tab?.type ?? '')
       ? closers[tab.type]
       : window.api.sshDisconnect;
-    if (disconnect) await disconnect(tabId);
+    if (disconnect) await disconnect(tab.id);
+  }
+
+  async function closeTab(tabId) {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab || tab.constant) return;
+
+    // Closing a group closes every session it holds; nothing else can reach
+    // them once the tab is gone, so leaving one connected would strand it.
+    if (tab.type === 'group') {
+      for (const member of tabs.filter((t) => t.groupId === tabId)) {
+        forgetSession(member.id);
+        await disconnectSession(member);
+      }
+      forgetSession(tabId);
+      setTabs((prev) => {
+        const next = prev.filter((t) => t.id !== tabId && t.groupId !== tabId);
+        if (activeTabId === tabId) {
+          const lastRealTab = [...next].reverse().find((t) => !t.constant && !t.groupId);
+          setActiveTabId(lastRealTab ? lastRealTab.id : 'vault');
+        }
+        return next;
+      });
+      return;
+    }
+
+    forgetSession(tabId);
+    await disconnectSession(tab);
+
     setTabs((prev) => {
-      const next = prev.filter((t) => t.id !== tabId);
+      let next = prev.filter((t) => t.id !== tabId);
+
+      if (tab.groupId) {
+        const siblings = next.filter((t) => t.groupId === tab.groupId);
+        // The last connection out takes the group tab with it: a group with
+        // nothing in it is an empty sidebar and a blank pane.
+        if (siblings.length === 0) {
+          next = next.filter((t) => t.id !== tab.groupId);
+          if (activeTabId === tab.groupId) {
+            const lastRealTab = [...next].reverse().find((t) => !t.constant && !t.groupId);
+            setActiveTabId(lastRealTab ? lastRealTab.id : 'vault');
+          }
+        } else {
+          next = next.map((t) =>
+            t.id === tab.groupId && t.activeMemberId === tabId
+              ? { ...t, activeMemberId: siblings[0].id }
+              : t
+          );
+        }
+      }
+
       if (activeTabId === tabId) {
-        const lastRealTab = [...next].reverse().find((t) => !t.constant);
+        const lastRealTab = [...next].reverse().find((t) => !t.constant && !t.groupId);
         setActiveTabId(lastRealTab ? lastRealTab.id : 'vault');
       }
       return next;
@@ -337,7 +474,7 @@ export default function App() {
       return rest;
     });
     try {
-      await openSession(tab.connectConfig, tab.title, tab.type);
+      await openSession(tab.connectConfig, tab.title, tab.type, { groupId: tab.groupId });
     } catch {}
   }
 
@@ -367,7 +504,11 @@ export default function App() {
   }
 
   function runSnippetInActiveTab(snippet) {
-    const tab = tabs.find((t) => t.id === activeTabId);
+    const selected = tabs.find((t) => t.id === activeTabId);
+    const tab =
+      selected?.type === 'group'
+        ? tabs.find((t) => t.id === selected.activeMemberId)
+        : selected;
     if (!tab || tab.status !== 'connected') return;
     const write =
       tab.type === 'local'
@@ -463,9 +604,17 @@ export default function App() {
   }
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
+  // A group tab is a container, not a session. Anything that acts on "the
+  // terminal on screen" — sharing it, styling it, running a snippet in it —
+  // has to go through the member it is currently showing.
+  const activeSessionTab =
+    activeTab?.type === 'group'
+      ? tabs.find((t) => t.id === activeTab.activeMemberId) || null
+      : activeTab;
   const terminalTabActive =
-    activeTab?.status === 'connected' && ['ssh', 'local', 'serial'].includes(activeTab.type);
-  const activeShare = activeTab ? shares[activeTab.id] : null;
+    activeSessionTab?.status === 'connected' &&
+    ['ssh', 'local', 'serial'].includes(activeSessionTab.type);
+  const activeShare = activeSessionTab ? shares[activeSessionTab.id] : null;
 
   if (!vaultStatus) return null;
 
@@ -519,6 +668,8 @@ export default function App() {
               onRunOnHost={runOnHost}
               onConnectAndStartForward={connectAndStartForward}
               onHostsChange={setHosts}
+              onRunSnippetOnHosts={openSnippetGroup}
+              onSelectGroupMember={selectGroupMember}
             />
 
             {terminalTabActive && (
@@ -563,7 +714,7 @@ export default function App() {
             open={sharePanelOpen && terminalTabActive}
             onClose={() => setSharePanelOpen(false)}
           >
-            <SharePanel tab={activeTab} onClose={() => setSharePanelOpen(false)} />
+            <SharePanel tab={activeSessionTab} onClose={() => setSharePanelOpen(false)} />
           </SlidePanel>
 
           <NewConnectionDialog
