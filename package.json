@@ -38,6 +38,7 @@
       "owner": "Vapourware-Studios",
       "repo": "sshclient"
     },
+    "afterPack": "build/afterPack.js",
     "mac": {
       "icon": "build/icon.png",
       "identity": "-",
