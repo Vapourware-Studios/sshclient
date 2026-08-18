@@ -41,7 +41,10 @@
     "mac": {
       "icon": "build/icon.png",
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "sshclient needs local network access to reach SSH and SFTP servers on your network, such as routers, NAS devices and home lab machines."
+      }
     },
     "win": {
       "target": "nsis",
