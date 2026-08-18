@@ -181,9 +181,11 @@ ipcMain.handle('ssh:connect', (event, config) => {
         win?.webContents.send('ssh:data', { sessionId, data, seq });
         share.publishOutput(sessionId, data);
       },
-      onClose: (sessionId) => {
-        win?.webContents.send('ssh:closed', { sessionId });
+      // Viewers first: they are the ones waiting on the network, and the tab
+      // this window has to repaint is already on this machine.
+      onClose: (sessionId, detail = {}) => {
         share.onSessionClosed(sessionId);
+        win?.webContents.send('ssh:closed', { sessionId, ...detail });
       },
       onError: (sessionId, err) =>
         win?.webContents.send('ssh:error', { sessionId, message: err.message }),
@@ -243,9 +245,9 @@ ipcMain.handle('local:connect', (event, config) => {
         win?.webContents.send('local:data', { sessionId, data, seq });
         share.publishOutput(sessionId, data);
       },
-      onClose: (sessionId) => {
-        win?.webContents.send('local:closed', { sessionId });
+      onClose: (sessionId, detail = {}) => {
         share.onSessionClosed(sessionId);
+        win?.webContents.send('local:closed', { sessionId, ...detail });
       },
       onError: (sessionId, err) =>
         win?.webContents.send('local:error', { sessionId, message: err.message }),
@@ -287,9 +289,9 @@ ipcMain.handle('serial:connect', async (event, config) => {
         win?.webContents.send('serial:data', { sessionId, data, seq });
         share.publishOutput(sessionId, data);
       },
-      onClose: (sessionId) => {
-        win?.webContents.send('serial:closed', { sessionId });
+      onClose: (sessionId, detail = {}) => {
         share.onSessionClosed(sessionId);
+        win?.webContents.send('serial:closed', { sessionId, ...detail });
       },
       onError: (sessionId, err) =>
         win?.webContents.send('serial:error', { sessionId, message: err.message }),

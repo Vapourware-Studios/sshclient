@@ -29,7 +29,7 @@ function connect(config = {}, handlers = {}) {
       autoOpen: false,
     });
 
-    const session = { port, history: [], historyLength: 0, seq: 0, attached: false };
+    const session = { port, history: [], historyLength: 0, seq: 0, attached: false, intentional: false };
     const decoder = new StringDecoder('utf8');
 
     port.on('data', (chunk) => {
@@ -46,7 +46,9 @@ function connect(config = {}, handlers = {}) {
 
     port.on('close', () => {
       sessions.delete(sessionId);
-      onClose?.(sessionId);
+      // `disconnect` drops the session from the map before the port finishes
+      // closing, so the flag has to be read off the closed-over session.
+      onClose?.(sessionId, { reason: session.intentional ? 'closed' : 'lost' });
     });
 
     port.open((err) => {
@@ -78,6 +80,7 @@ function attach(sessionId) {
 function disconnect(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
+    session.intentional = true;
     sessions.delete(sessionId);
     session.port.close(() => {});
   }

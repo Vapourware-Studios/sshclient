@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Slider } from '@/components/ui/slider';
 import { useTheme } from '@/lib/theme-settings.jsx';
+import { memberColorHex, useCursorSlot } from '@/lib/sharing.jsx';
 import { Pause, Play } from 'lucide-react';
 
 const ADAPTERS = {
@@ -83,7 +84,8 @@ function formatTime(ms) {
 }
 
 export default function TerminalView({ sessionId, kind = 'ssh', active, recording }) {
-  const { terminalTheme } = useTheme();
+  const { terminalTheme, activeTheme } = useTheme();
+  const cursorSlot = useCursorSlot(sessionId);
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const terminalThemeRef = useRef(terminalTheme);
@@ -295,9 +297,33 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     return () => cancelAnimationFrame(raf);
   }, [kind, playing, duration]);
 
+  // While a terminal is shared its cursor is coloured for whoever holds the
+  // keyboard, so who is driving shows up in the terminal itself and not only in
+  // the strip above it. `activeTheme` is a dependency because the share palette
+  // has a light set and a dark set, and switching themes swaps which one the
+  // custom property resolves to.
   useEffect(() => {
-    if (termRef.current) termRef.current.options.theme = terminalTheme;
-  }, [terminalTheme]);
+    const term = termRef.current;
+    if (!term) return;
+
+    // Only the cursor itself is recoloured. `cursorAccent` — the character
+    // underneath it — is left as the theme had it, because the terminal's own
+    // background is transparent and painting the character in it would rub it
+    // out rather than invert it.
+    const apply = () => {
+      const cursor = cursorSlot === null ? null : memberColorHex(cursorSlot);
+      term.options.theme = cursor ? { ...terminalTheme, cursor } : terminalTheme;
+    };
+    apply();
+    if (cursorSlot === null) return;
+
+    // And again once the browser has painted: which share palette is live is
+    // decided by a class the theme provider sets in an effect of its own, and
+    // React runs a child's effects before its parent's — so on the frame a
+    // theme is switched the value read above is the outgoing one.
+    const frame = requestAnimationFrame(apply);
+    return () => cancelAnimationFrame(frame);
+  }, [terminalTheme, cursorSlot, activeTheme]);
 
   useEffect(() => {
     if (active) {
@@ -310,7 +336,14 @@ export default function TerminalView({ sessionId, kind = 'ssh', active, recordin
     <div
       className={`absolute inset-0 flex flex-col bg-background ${active ? '' : 'invisible pointer-events-none'}`}
     >
-      <div className="min-h-0 flex-1 p-2" ref={containerRef} />
+      {/* The padding lives on a wrapper, never on the element xterm is opened
+          into. The fit addon sizes the grid from getComputedStyle(parent)
+          .height, which for a border-box element is the *border* box — so any
+          padding here would be counted as room for text, and the row it fits
+          into that padding hangs off the bottom of the pane, cut in half. */}
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        <div className="size-full" ref={containerRef} />
+      </div>
 
       {kind === 'playback' && (
         <div className="flex shrink-0 items-center gap-3 border-t px-4 py-3">

@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
-import { X, Loader2, Home, Plus, Folder, Minus, Square, Copy, Eye, Share2 } from 'lucide-react';
+import {
+  X,
+  Loader2,
+  Home,
+  Plus,
+  Folder,
+  Minus,
+  Square,
+  Copy,
+  Eye,
+  Share2,
+  Unplug,
+  Boxes,
+} from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useGlassSettings, glassAlpha } from '@/lib/glass-settings.jsx';
 import { usePrivacySettings } from '@/lib/privacy-settings.jsx';
@@ -12,15 +25,18 @@ const CONSTANT_TAB_ICONS = { vault: Home, sftp: Folder };
 
 const IS_MAC = window.api?.platform === 'darwin';
 
+// Inactive tabs are tinted with the foreground colour rather than a fixed
+// grey, so the same rule reads as slightly darker than the bar in the light
+// theme and slightly lighter than it in the dark one — either way, visible.
 function Tab({ active, onClick, children }) {
   return (
     <div
       onClick={onClick}
       style={NO_DRAG}
-      className={`flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md px-3 text-sm ${
+      className={`flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm ${
         active
-          ? 'border bg-background text-foreground'
-          : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'
+          ? 'bg-background text-foreground'
+          : 'border-transparent bg-foreground/[0.06] text-muted-foreground hover:bg-foreground/[0.12] hover:text-foreground'
       }`}
     >
       {children}
@@ -118,18 +134,20 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
       <Separator orientation="vertical" className="shrink-0" />
 
       <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1 self-stretch overflow-x-auto py-1.5">
-        {tabs.filter((t) => !t.constant).map((tab) => {
+        {tabs.filter((t) => !t.constant && !t.groupId).map((tab) => {
           const share = shares[tab.id];
           const watching = share?.members?.filter((m) => m.role === 'viewer').length ?? 0;
           return (
           <Tab key={tab.id} active={tab.id === activeTabId} onClick={() => onSelectTab(tab.id)}>
-            {tab.status === 'connecting' ? (
+            {tab.type === 'group' ? (
+              <Boxes className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : tab.status === 'connecting' ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
             ) : tab.status === 'error' ? (
               <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-            ) : (
-              <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
-            )}
+            ) : tab.status === 'disconnected' ? (
+              <Unplug className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : null}
 
             {/* Never let a terminal be shared without saying so on its tab. */}
             {share && (
@@ -148,6 +166,11 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
             >
               {tab.title}
             </span>
+            {tab.type === 'group' && (
+              <span className="shrink-0 rounded-full bg-foreground/10 px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                {tabs.filter((t) => t.groupId === tab.id).length}
+              </span>
+            )}
             <X
               className="size-3.5 shrink-0 hover:text-destructive"
               onClick={(e) => {

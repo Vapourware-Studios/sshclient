@@ -29,9 +29,35 @@ const TypingContext = createContext(null);
  */
 const COLOR_SLOTS = 9;
 
+function slotIndex(slot) {
+  return Number.isInteger(slot) ? Math.abs(slot) % COLOR_SLOTS : 0;
+}
+
 export function memberColor(slot) {
-  const index = Number.isInteger(slot) ? Math.abs(slot) % COLOR_SLOTS : 0;
-  return `var(--share-${index + 1})`;
+  return `var(--share-${slotIndex(slot) + 1})`;
+}
+
+/**
+ * The same colour as `memberColor`, but as something xterm will take.
+ *
+ * The palette is written in oklch and handed out as a custom property, and
+ * xterm's parser understands neither. A canvas understands both: give it any
+ * colour CSS accepts and it hands the same colour back as hex.
+ */
+let swatch = null;
+const PROBE = '#010203';
+
+export function memberColorHex(slot) {
+  const token = getComputedStyle(document.documentElement)
+    .getPropertyValue(`--share-${slotIndex(slot) + 1}`)
+    .trim();
+  if (!token) return null;
+  swatch ||= document.createElement('canvas').getContext('2d');
+  // A colour the canvas cannot parse is ignored rather than thrown, so the
+  // probe is what tells a rejected token from a real one.
+  swatch.fillStyle = PROBE;
+  swatch.fillStyle = token;
+  return swatch.fillStyle === PROBE ? null : swatch.fillStyle;
 }
 
 /** How long a toast sticks around when nothing needs answering. */
@@ -295,6 +321,31 @@ export function useSharing() {
 export function useIsTyping(sessionId, memberId) {
   const typing = useContext(TypingContext);
   return Boolean(typing?.[`${sessionId}:${memberId}`]);
+}
+
+/**
+ * The colour slot of whoever is driving a terminal right now. Both sides of a
+ * share resolve through here: the owner's own session is keyed by session id,
+ * a viewer's copy by share id, and those are the keys of the two maps.
+ *
+ * A shared shell has one cursor, not one per person — everybody's view is the
+ * same grid with the same caret in it. So rather than draw carets nobody's
+ * keystrokes move, the real one wears the colour of whoever it is currently
+ * obeying, and it changes hands when the keyboard does. `null` for a terminal
+ * nobody is sharing: it keeps whatever cursor its theme gave it.
+ */
+export function useCursorSlot(sessionId) {
+  const { shares, viewing } = useSharing();
+  const state = shares[sessionId] ?? viewing[sessionId] ?? null;
+  if (!state) return null;
+
+  const members = state.members ?? [];
+  // A null baton means the owner is typing; the relay lists them like anyone
+  // else, so their slot is theirs rather than a colour reserved here.
+  if (state.baton === null || state.baton === undefined) {
+    return members.find((m) => m.role === 'owner')?.color ?? 0;
+  }
+  return members.find((m) => m.id === state.baton)?.color ?? null;
 }
 
 function describeReason(reason) {

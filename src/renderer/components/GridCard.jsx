@@ -4,14 +4,14 @@ import { toneForId, toneStyle } from '@/lib/tone';
 
 export function ViewToggle({ mode, onChange }) {
   return (
-    <div className="flex shrink-0 items-center rounded-md border p-0.5">
+    <div className="flex shrink-0 items-center rounded-md bg-foreground/[0.06] p-0.5">
       <button
         type="button"
         onClick={() => onChange('grid')}
         title="Grid view"
         aria-pressed={mode === 'grid'}
         className={`rounded-sm p-1.5 ${
-          mode === 'grid' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'
+          mode === 'grid' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'
         }`}
       >
         <LayoutGrid className="size-4" />
@@ -22,7 +22,7 @@ export function ViewToggle({ mode, onChange }) {
         title="List view"
         aria-pressed={mode === 'list'}
         className={`rounded-sm p-1.5 ${
-          mode === 'list' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'
+          mode === 'list' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'
         }`}
       >
         <List className="size-4" />
@@ -42,8 +42,8 @@ export const GridCard = forwardRef(function GridCard(
       ref={ref}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
-      className={`group flex items-center gap-3 rounded-xl border bg-card p-3 transition-colors ${
-        onClick || onDoubleClick ? 'cursor-pointer hover:bg-accent/40' : ''
+      className={`group flex items-center gap-3 rounded-xl bg-foreground/[0.04] p-3 transition-colors ${
+        onClick || onDoubleClick ? 'cursor-pointer hover:bg-foreground/[0.08]' : ''
       } ${className}`}
       {...rest}
     >

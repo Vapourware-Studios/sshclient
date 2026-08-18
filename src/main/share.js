@@ -448,22 +448,46 @@ function kick(sessionId, memberId) {
   emitOwner(share);
 }
 
+/**
+ * Says, over every channel there is, that this share is over.
+ *
+ * `stop` on its own is what ends a share, but it only ends it as fast as the
+ * relay chooses to act on it, and the relay's own instinct on losing an owner
+ * is to hold the share open for 30s in case they come back. That grace is
+ * right for a dropped connection and wrong for a shell that has exited: the
+ * terminal behind it is already gone, so every extra second is somebody
+ * watching a session that no longer exists. Naming each member as well means
+ * the sockets are dropped by the same path the owner's own kick button uses,
+ * which needs no grace to expire first.
+ */
+function evictAll(share) {
+  for (const member of share.members) {
+    if (member.id !== 0) sendControl(share, { type: 'kick', member_id: member.id });
+  }
+  sendControl(share, { type: 'stop' });
+}
+
+/**
+ * The one path that does not go through the socket. If the socket had already
+ * dropped, nothing above was heard and the relay still has the share; this is
+ * what ends it then.
+ */
+function deleteShare(shareId) {
+  const account = sync.getAccount();
+  if (!account) return Promise.resolve();
+  return sync
+    .api(`/v1/share/${shareId}`, { method: 'DELETE', token: account.token })
+    .catch(() => {});
+}
+
 /** Ends a share from this side and tells the relay to drop everyone. */
 async function stopShare(sessionId) {
   const share = owned.get(sessionId);
   if (!share) return { ok: true };
   const { shareId } = share;
-  sendControl(share, { type: 'stop' });
+  evictAll(share);
   finishShare(share, 'stopped');
-
-  const account = sync.getAccount();
-  if (account) {
-    // Belt and braces: if the socket had already dropped, the relay still has
-    // the share until its grace period lapses.
-    await sync
-      .api(`/v1/share/${shareId}`, { method: 'DELETE', token: account.token })
-      .catch(() => {});
-  }
+  await deleteShare(shareId);
   return { ok: true };
 }
 
@@ -480,7 +504,11 @@ function finishShare(share, reason) {
   });
 }
 
-/** Terminal closed underneath us — end its share too. */
+/**
+ * Terminal closed underneath us — end its share too, and now rather than
+ * whenever the relay next thinks about it. There is nothing left to watch:
+ * the shell these people were looking at has exited.
+ */
 function onSessionClosed(sessionId) {
   sizes.delete(sessionId);
   if (owned.has(sessionId)) stopShare(sessionId).catch(() => {});
@@ -853,8 +881,12 @@ function onVaultLocked() {
 /** Ends every share this app is part of. */
 function shutdown(reason = 'shutdown') {
   for (const share of [...owned.values()]) {
-    sendControl(share, { type: 'stop' });
+    const { shareId } = share;
+    evictAll(share);
     finishShare(share, reason);
+    // Not awaited: locking the vault must not wait on the network, and the
+    // sockets have already been told.
+    deleteShare(shareId);
   }
   for (const shareId of [...joined.keys()]) leaveShare(shareId);
   pendingJoin = null;
