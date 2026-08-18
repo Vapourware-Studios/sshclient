@@ -39,6 +39,9 @@ export default function App() {
   const [sessionLogs, setSessionLogs] = useState({});
 
   const startedAtRef = useRef(new Map());
+  // Placeholder ids whose tab was closed while their connect was still in
+  // flight. Whoever is awaiting that connect hangs up on it when it lands.
+  const abandonedPendingRef = useRef(new Set());
   const pendingTimeoutsRef = useRef(new Map());
   const pendingReadyActionRef = useRef(new Map());
 
@@ -275,47 +278,111 @@ export default function App() {
     );
   }
 
+  /**
+   * Swaps the placeholder a tab was opened under for the session id the main
+   * process handed back, carrying over when the attempt started so the
+   * connecting view still measures from the click and not from this moment.
+   *
+   * Nothing can have patched the tab by its real id before now: the main
+   * process only starts reporting progress once the socket is up, which is
+   * whole network round trips after the connect call returns.
+   */
+  function adoptSession(placeholderId, sessionId, groupId, type) {
+    const startedAt = startedAtRef.current.get(placeholderId) ?? Date.now();
+    startedAtRef.current.delete(placeholderId);
+    startedAtRef.current.set(sessionId, startedAt);
+
+    setTabs((prev) =>
+      prev.map((t) => {
+        if (t.id === placeholderId) {
+          const { pending: _pending, ...rest } = t;
+          return { ...rest, id: sessionId, status: type === 'ssh' ? t.status : 'connected' };
+        }
+        if (t.id === groupId && t.activeMemberId === placeholderId) {
+          return { ...t, activeMemberId: sessionId };
+        }
+        return t;
+      })
+    );
+    setActiveTabId((current) => (current === placeholderId ? sessionId : current));
+  }
+
+  function dropPending(placeholderId, groupId) {
+    startedAtRef.current.delete(placeholderId);
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.id !== placeholderId);
+      // A group that was opened for this one session has nothing left to show.
+      const orphanedGroup =
+        groupId && !next.some((t) => t.groupId === groupId) ? groupId : null;
+      return orphanedGroup ? next.filter((t) => t.id !== orphanedGroup) : next;
+    });
+  }
+
+  /**
+   * The tab goes up the moment it is asked for, before the main process has
+   * opened a socket. Connecting is not instant — reading the host out of the
+   * vault and parsing an encrypted key are real work — and a window that sits
+   * still through it reads as a click that missed.
+   */
   async function openSession(connectConfig, title, type = 'ssh', { groupId } = {}) {
     setConnectError(null);
 
-    if (type !== 'ssh') {
-      const connect = type === 'local' ? window.api.localConnect : window.api.serialConnect;
-      const result = await connect(connectConfig);
-      if (result.error) {
-        setConnectError(result.error);
-        throw new Error(result.error);
-      }
-      const tab = { id: result.sessionId, title, type, status: 'connected', connectConfig, groupId };
-      setTabs((prev) => [...prev, tab]);
-      focusNewSession(tab, groupId);
-      return tab.id;
-    }
-
-    const result = await window.api.sshConnect(connectConfig);
-    if (result.error) {
-      setConnectError(result.error);
-      throw new Error(result.error);
-    }
+    const placeholderId = `pending:${crypto.randomUUID()}`;
     const tab = {
-      id: result.sessionId,
+      id: placeholderId,
       title,
       type,
       status: 'connecting',
       stage: 'connecting',
       connectConfig,
       groupId,
+      pending: true,
     };
-    startedAtRef.current.set(tab.id, Date.now());
+    startedAtRef.current.set(placeholderId, Date.now());
     setTabs((prev) => [...prev, tab]);
     focusNewSession(tab, groupId);
-    return tab.id;
+
+    const connect =
+      type === 'local'
+        ? window.api.localConnect
+        : type === 'serial'
+          ? window.api.serialConnect
+          : window.api.sshConnect;
+
+    let result;
+    try {
+      result = await connect(connectConfig);
+    } catch (err) {
+      dropPending(placeholderId, groupId);
+      throw err;
+    }
+
+    // The tab was closed while this was in flight, so the session the main
+    // process just opened has nobody to belong to.
+    if (abandonedPendingRef.current.delete(placeholderId)) {
+      if (result?.sessionId) await disconnectSessionId(result.sessionId, type);
+      return null;
+    }
+
+    if (result.error) {
+      setConnectError(result.error);
+      dropPending(placeholderId, groupId);
+      throw new Error(result.error);
+    }
+
+    adoptSession(placeholderId, result.sessionId, groupId, type);
+    return result.sessionId;
   }
 
   /**
    * Launching a snippet that carries several targets opens one tab, not one
    * per host: the machines it names belong together, so they get a single
-   * window with a strip down the left to move between them. Every host is
-   * connected up front and the command is sent to each as it comes up.
+   * window with a strip down the left to move between them.
+   *
+   * The group and a slot for every host are on screen in the first render,
+   * before any socket is opened, and the connections then race each other
+   * instead of queueing behind one another. The command is sent to each host
+   * as it comes up.
    */
   async function openSnippetGroup(snippet, targetHosts) {
     setConnectError(null);
@@ -324,35 +391,20 @@ export default function App() {
     const groupId = `group:${crypto.randomUUID()}`;
     const command = snippet.command.endsWith('\n') ? snippet.command : `${snippet.command}\n`;
 
-    const memberTabs = [];
-    const failures = [];
+    const placeholders = targetHosts.map((host) => ({
+      id: `pending:${crypto.randomUUID()}`,
+      title: host.label || host.host,
+      type: 'ssh',
+      status: 'connecting',
+      stage: 'connecting',
+      connectConfig: { hostId: host.id },
+      groupId,
+      pending: true,
+    }));
 
-    for (const host of targetHosts) {
-      const title = host.label || host.host;
-      const result = await window.api.sshConnect({ hostId: host.id });
-      if (result.error) {
-        failures.push(`${title}: ${result.error}`);
-        continue;
-      }
-      startedAtRef.current.set(result.sessionId, Date.now());
-      pendingReadyActionRef.current.set(result.sessionId, {
-        onReady: () => window.api.sshWrite(result.sessionId, command),
-      });
-      memberTabs.push({
-        id: result.sessionId,
-        title,
-        type: 'ssh',
-        status: 'connecting',
-        stage: 'connecting',
-        connectConfig: { hostId: host.id },
-        groupId,
-      });
+    for (const placeholder of placeholders) {
+      startedAtRef.current.set(placeholder.id, Date.now());
     }
-
-    if (failures.length) setConnectError(failures.join(' · '));
-    // Nothing connected, so there is no group to show — the error above is the
-    // whole story, and an empty tab would only have to be closed again.
-    if (!memberTabs.length) return;
 
     setTabs((prev) => [
       ...prev,
@@ -361,11 +413,49 @@ export default function App() {
         title: snippet.name,
         type: 'group',
         status: 'connected',
-        activeMemberId: memberTabs[0].id,
+        activeMemberId: placeholders[0].id,
       },
-      ...memberTabs,
+      ...placeholders,
     ]);
     setActiveTabId(groupId);
+
+    const outcomes = await Promise.all(
+      placeholders.map(async (placeholder) => {
+        let result;
+        try {
+          result = await window.api.sshConnect(placeholder.connectConfig);
+        } catch (err) {
+          result = { error: err.message };
+        }
+
+        if (abandonedPendingRef.current.delete(placeholder.id)) {
+          if (result?.sessionId) await window.api.sshDisconnect(result.sessionId);
+          return null;
+        }
+
+        if (result.error) {
+          // The slot stays, holding the error: the host is still named, and
+          // reconnecting it is one click rather than a rerun of the snippet.
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.id === placeholder.id
+                ? { ...t, status: 'error', error: result.error, pending: false }
+                : t
+            )
+          );
+          return `${placeholder.title}: ${result.error}`;
+        }
+
+        pendingReadyActionRef.current.set(result.sessionId, {
+          onReady: () => window.api.sshWrite(result.sessionId, command),
+        });
+        adoptSession(placeholder.id, result.sessionId, groupId, 'ssh');
+        return null;
+      })
+    );
+
+    const problems = outcomes.filter(Boolean);
+    if (problems.length) setConnectError(problems.join(' · '));
   }
 
   function selectGroupMember(groupId, memberId) {
@@ -395,20 +485,29 @@ export default function App() {
     });
   }
 
+  // `playback` and `group` close nothing of their own, so a missing entry and
+  // an entry that is deliberately null have to stay tellable apart.
+  const CLOSERS = {
+    local: 'localDisconnect',
+    serial: 'serialDisconnect',
+    playback: null,
+    group: null,
+    shared: 'shareLeave',
+  };
+
+  async function disconnectSessionId(sessionId, type) {
+    const method = Object.hasOwn(CLOSERS, type ?? '') ? CLOSERS[type] : 'sshDisconnect';
+    if (method) await window.api[method](sessionId);
+  }
+
   async function disconnectSession(tab) {
-    // `playback` and `group` close nothing of their own, so a missing entry
-    // and an entry that is deliberately null have to stay tellable apart.
-    const closers = {
-      local: window.api.localDisconnect,
-      serial: window.api.serialDisconnect,
-      playback: null,
-      group: null,
-      shared: window.api.shareLeave,
-    };
-    const disconnect = Object.hasOwn(closers, tab?.type ?? '')
-      ? closers[tab.type]
-      : window.api.sshDisconnect;
-    if (disconnect) await disconnect(tab.id);
+    // A session still being opened has no id in the main process yet. Flag the
+    // placeholder instead; whoever is awaiting the connect hangs up on it.
+    if (tab?.pending) {
+      abandonedPendingRef.current.add(tab.id);
+      return;
+    }
+    await disconnectSessionId(tab.id, tab?.type);
   }
 
   async function closeTab(tabId) {
@@ -535,6 +634,8 @@ export default function App() {
     } catch (err) {
       return { error: err.message };
     }
+    // The tab was closed before the session finished opening.
+    if (!sessionId) return { error: 'The connection was cancelled' };
 
     return new Promise((resolve) => {
       pendingReadyActionRef.current.set(sessionId, {
