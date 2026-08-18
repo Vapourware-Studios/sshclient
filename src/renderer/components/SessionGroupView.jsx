@@ -35,10 +35,17 @@ function MemberButton({ tab, host, active, onSelect, onClose }) {
       ? ''
       : tab.title;
 
+  // A blurred title is only hidden on screen. The tooltip and the accessibility
+  // name are plain text that hover and a screen reader both read straight out,
+  // so an unlabelled host — whose title is its address — has to be held back
+  // from those too, or the setting only works against people looking away.
+  const addressHidden = blurHostIps && isIpAddress(tab.title);
+  const label = addressHidden ? 'Hidden address' : tab.title;
+
   return (
     <div
       onClick={onSelect}
-      title={tab.title}
+      title={label}
       className={`group flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm ${
         active
           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
@@ -54,9 +61,7 @@ function MemberButton({ tab, host, active, onSelect, onClose }) {
 
       <span className="min-w-0 flex-1">
         <span
-          className={`block truncate ${
-            blurHostIps && isIpAddress(tab.title) ? 'blur-sensitive' : ''
-          }`}
+          className={`block truncate ${addressHidden ? 'blur-sensitive' : ''}`}
         >
           {tab.title}
         </span>
@@ -79,7 +84,7 @@ function MemberButton({ tab, host, active, onSelect, onClose }) {
           onClose();
         }}
         title="Close this connection"
-        aria-label={`Close ${tab.title}`}
+        aria-label={`Close ${label}`}
         className="shrink-0 opacity-0 hover:text-destructive group-hover:opacity-100"
       >
         <X className="size-3.5" />
