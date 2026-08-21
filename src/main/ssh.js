@@ -6,6 +6,7 @@ const path = require('path');
 const net = require('net');
 const { StringDecoder } = require('string_decoder');
 const vault = require('./vault');
+const localNetwork = require('./localNetwork');
 
 const sessions = new Map();
 const pending = new Map();
@@ -67,9 +68,12 @@ function isLocalNetworkHost(host) {
  */
 function describeConnectError(err, host) {
   if (process.platform === 'darwin' && err?.code === 'EHOSTUNREACH' && isLocalNetworkHost(host)) {
+    // The startup probe already put the question to the system. If it came
+    // back refused, say so plainly instead of offering it as a possibility.
+    const denied = localNetwork.getStatus() === 'denied';
     return (
-      `${err.message}\n\nmacOS may be denying this app access to your local ` +
-      'network. Check System Settings → Privacy & Security → Local Network.'
+      `${err.message}\n\nmacOS ${denied ? 'is' : 'may be'} denying this app access to your ` +
+      'local network. Check System Settings → Privacy & Security → Local Network.'
     );
   }
   return err.message;
