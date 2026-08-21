@@ -217,3 +217,63 @@ test('buildSnippets skips snippets with no script content', () => {
   const idx = indexRecords(records);
   assert.equal(buildSnippets(idx).length, 0);
 });
+
+const fs = require('node:fs');
+const os = require('node:os');
+const nodePath = require('node:path');
+const {
+  rankLeveldbName,
+  termiusDbCandidates,
+  windowsCredTargets,
+} = require('../src/main/termiusImport');
+
+function withPlatform(platform, fn) {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
+}
+
+test('rankLeveldbName prefers the file:// origin store', () => {
+  const names = [
+    'https_termius.com_0.indexeddb.leveldb',
+    'chrome-extension_x_0.indexeddb.leveldb',
+    'file__0.indexeddb.leveldb',
+    'file__1.indexeddb.leveldb',
+  ];
+  const sorted = [...names].sort((a, b) => rankLeveldbName(a) - rankLeveldbName(b));
+  assert.equal(sorted[0], 'file__0.indexeddb.leveldb');
+  assert.equal(sorted[1], 'file__1.indexeddb.leveldb');
+  assert.equal(sorted[3], 'chrome-extension_x_0.indexeddb.leveldb');
+});
+
+test('termiusDbCandidates finds stores under an XDG config dir and skips empty ones', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  const idb = nodePath.join(root, 'Termius', 'IndexedDB');
+  const real = nodePath.join(idb, 'file__0.indexeddb.leveldb');
+  const empty = nodePath.join(idb, 'https_termius.com_0.indexeddb.leveldb');
+  fs.mkdirSync(real, { recursive: true });
+  fs.mkdirSync(empty, { recursive: true });
+  fs.writeFileSync(nodePath.join(real, '000003.log'), '');
+
+  const previous = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  try {
+    const found = withPlatform('linux', () => termiusDbCandidates());
+    assert.deepEqual(found, [real]);
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('windowsCredTargets covers both keytar service names', () => {
+  const targets = withPlatform('win32', () => windowsCredTargets());
+  assert.ok(targets.includes('Termius/localKey'));
+  assert.ok(targets.includes('termius-app/localKey'));
+  assert.equal(new Set(targets).size, targets.length);
+});

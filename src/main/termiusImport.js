@@ -6,40 +6,109 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const nacl = require('tweetnacl');
 
-const TERMIUS_DB_SUBPATH = path.join('Termius', 'IndexedDB', 'file__0.indexeddb.leveldb');
+// Termius keeps its whole dataset in Chromium's IndexedDB, under the Electron
+// user-data directory. Where that directory lives — and what the per-origin
+// leveldb folder inside it is called — depends on the platform and on how
+// Termius was installed, so both are discovered rather than hardcoded.
+const TERMIUS_APP_DIR = 'Termius';
 
-function termiusDbCandidates() {
+function uniq(list) {
+  return [...new Set(list)];
+}
+
+function isDir(p) {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Every place a Termius user-data directory could plausibly be on this OS. */
+function termiusDataDirs() {
+  const home = os.homedir();
   const out = [];
 
   if (process.platform === 'win32') {
-    if (process.env.APPDATA) out.push(path.join(process.env.APPDATA, TERMIUS_DB_SUBPATH));
+    if (process.env.APPDATA) out.push(path.join(process.env.APPDATA, TERMIUS_APP_DIR));
     if (process.env.LOCALAPPDATA) {
+      out.push(path.join(process.env.LOCALAPPDATA, TERMIUS_APP_DIR));
+      // The Microsoft Store build is sandboxed: its %APPDATA% is redirected
+      // into the package's own LocalCache tree.
       const pkgs = path.join(process.env.LOCALAPPDATA, 'Packages');
       try {
         for (const entry of fs.readdirSync(pkgs)) {
           if (entry.startsWith('Crystalnix.Termius_')) {
-            out.push(path.join(pkgs, entry, 'LocalCache', 'Roaming', TERMIUS_DB_SUBPATH));
+            out.push(path.join(pkgs, entry, 'LocalCache', 'Roaming', TERMIUS_APP_DIR));
+            out.push(path.join(pkgs, entry, 'LocalCache', 'Local', TERMIUS_APP_DIR));
           }
         }
       } catch {}
     }
+    out.push(path.join(home, 'AppData', 'Roaming', TERMIUS_APP_DIR));
   } else if (process.platform === 'darwin') {
-    out.push(path.join(os.homedir(), 'Library', 'Application Support', TERMIUS_DB_SUBPATH));
+    out.push(path.join(home, 'Library', 'Application Support', TERMIUS_APP_DIR));
   } else {
-    const config = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-    out.push(path.join(config, TERMIUS_DB_SUBPATH));
+    // Plain install, plus the two sandboxes that relocate $HOME/.config.
+    const config = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+    out.push(path.join(config, TERMIUS_APP_DIR));
+    out.push(path.join(home, '.config', TERMIUS_APP_DIR));
+    out.push(path.join(home, 'snap', 'termius-app', 'current', '.config', TERMIUS_APP_DIR));
+    out.push(path.join(home, 'snap', 'termius-app', 'common', '.config', TERMIUS_APP_DIR));
+    out.push(path.join(home, '.var', 'app', 'com.termius.Termius', 'config', TERMIUS_APP_DIR));
   }
 
+  return uniq(out);
+}
+
+/**
+ * Ranks the per-origin leveldb folders inside one IndexedDB directory. Termius
+ * loads its UI from a file:// URL, so `file__0` is the real store, but the name
+ * is Chromium's to choose and has changed across versions — hence a ranking
+ * rather than an equality check.
+ */
+function rankLeveldbName(name) {
+  if (name.startsWith('file__0')) return 0;
+  if (name.startsWith('file__')) return 1;
+  if (name.includes('termius')) return 2;
+  return 3;
+}
+
+/** The candidate leveldb directories inside one Termius user-data directory. */
+function leveldbDirsIn(dataDir) {
+  const idb = path.join(dataDir, 'IndexedDB');
+  let names;
+  try {
+    names = fs.readdirSync(idb);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => name.endsWith('.leveldb'))
+    .sort((a, b) => rankLeveldbName(a) - rankLeveldbName(b) || a.localeCompare(b))
+    .map((name) => path.join(idb, name))
+    .filter((dir) => isDir(dir) && hasLeveldbFiles(dir));
+}
+
+function hasLeveldbFiles(dir) {
+  try {
+    return fs.readdirSync(dir).some((name) => name.endsWith('.ldb') || name.endsWith('.log'));
+  } catch {
+    return false;
+  }
+}
+
+function termiusDbCandidates() {
+  const out = [];
+  for (const dataDir of termiusDataDirs()) out.push(...leveldbDirsIn(dataDir));
   return out;
 }
 
 function findTermiusDbDir() {
   const candidates = termiusDbCandidates();
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
-  }
+  if (candidates.length > 0) return candidates[0];
   throw new Error(
-    `Termius database not found. Looked in:\n  ${candidates.join('\n  ')}`
+    `Termius database not found. Looked for an IndexedDB store in:\n  ${termiusDataDirs().join('\n  ')}`
   );
 }
 
@@ -61,7 +130,15 @@ async function copyDbToTemp(srcDir) {
   return temp;
 }
 
-const CRED_READ_PS = `
+// Termius stores its master key with keytar, which maps onto a different
+// secret store on each OS: Credential Manager, the login Keychain, and the
+// freedesktop Secret Service. The service/account pair has also changed
+// between Termius versions, so every reader tries the known spellings.
+const KEY_ACCOUNT = 'localKey';
+const KEY_SERVICES = ['Termius', 'termius-app'];
+
+function credReadPs(target) {
+  return `
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -88,7 +165,7 @@ public class SshClientCredReader {
 }
 "@
 $credPtr = [IntPtr]::Zero
-$ok = [SshClientCredReader]::CredRead("Termius/localKey", 1, 0, [ref]$credPtr)
+$ok = [SshClientCredReader]::CredRead("${target}", 1, 0, [ref]$credPtr)
 if (-not $ok) { exit 1 }
 $cred = [System.Runtime.InteropServices.Marshal]::PtrToStructure($credPtr, [type][SshClientCredReader+CREDENTIAL])
 $bytes = New-Object byte[] $cred.CredentialBlobSize
@@ -96,6 +173,22 @@ $bytes = New-Object byte[] $cred.CredentialBlobSize
 [SshClientCredReader]::CredFree($credPtr) | Out-Null
 [Convert]::ToBase64String($bytes)
 `;
+}
+
+/** keytar writes Windows credentials under the target name `service/account`. */
+function windowsCredTargets() {
+  const targets = KEY_SERVICES.map((service) => `${service}/${KEY_ACCOUNT}`);
+  return uniq([...targets, ...KEY_SERVICES]);
+}
+
+function powershellBinaries() {
+  const root = process.env.SystemRoot || 'C:\\Windows';
+  return uniq([
+    path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    'powershell.exe',
+    'pwsh.exe',
+  ]);
+}
 
 function decodeKeytarBlob(buf) {
   try {
@@ -110,53 +203,66 @@ function decodeKeytarBlob(buf) {
 }
 
 function readWindowsMasterKeyBase64() {
-  let out;
-  try {
-    out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', CRED_READ_PS], {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-  } catch (err) {
-    throw new Error(
-      'Termius key not found in Credential Manager — is Termius installed and logged in on this machine?'
-    );
+  for (const bin of powershellBinaries()) {
+    for (const target of windowsCredTargets()) {
+      let out;
+      try {
+        out = execFileSync(bin, ['-NoProfile', '-NonInteractive', '-Command', credReadPs(target)], {
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+      } catch {
+        continue;
+      }
+      const blobB64 = out.trim();
+      if (blobB64) return decodeKeytarBlob(Buffer.from(blobB64, 'base64'));
+    }
   }
-  const blobB64 = out.trim();
-  if (!blobB64) {
-    throw new Error(
-      'Termius key not found in Credential Manager — is Termius installed and logged in on this machine?'
-    );
-  }
-  return decodeKeytarBlob(Buffer.from(blobB64, 'base64'));
+  throw new Error(
+    'Termius key not found in Credential Manager — is Termius installed and logged in on this Windows account?'
+  );
 }
 
 function readMacMasterKeyBase64() {
-  try {
-    return execFileSync(
-      'security',
-      ['find-generic-password', '-s', 'Termius', '-a', 'localKey', '-w'],
-      { encoding: 'utf8' }
-    ).trim();
-  } catch {
-    throw new Error(
-      'Termius key not found in Keychain — is Termius installed and logged in on this machine?'
-    );
-  }
-}
-
-function readLinuxMasterKeyBase64() {
-  for (const service of ['termius-app', 'Termius']) {
+  for (const service of KEY_SERVICES) {
     try {
       const out = execFileSync(
-        'secret-tool',
-        ['lookup', 'service', service, 'account', 'localKey'],
+        'security',
+        ['find-generic-password', '-s', service, '-a', KEY_ACCOUNT, '-w'],
         { encoding: 'utf8' }
       ).trim();
       if (out) return out;
     } catch {}
   }
   throw new Error(
-    'Termius key not found in the Secret Service — is Termius installed and logged in on this machine?'
+    'Termius key not found in Keychain — is Termius installed and logged in on this machine?'
+  );
+}
+
+function readLinuxMasterKeyBase64() {
+  let sawSecretTool = false;
+  for (const service of KEY_SERVICES) {
+    try {
+      const out = execFileSync(
+        'secret-tool',
+        ['lookup', 'service', service, 'account', KEY_ACCOUNT],
+        { encoding: 'utf8' }
+      ).trim();
+      sawSecretTool = true;
+      if (out) return out;
+    } catch (err) {
+      // ENOENT means secret-tool itself is missing; a non-zero exit only means
+      // this particular service name holds nothing.
+      if (err?.code !== 'ENOENT') sawSecretTool = true;
+    }
+  }
+  if (!sawSecretTool) {
+    throw new Error(
+      'secret-tool is not installed, so the Termius key cannot be read from the keyring. Install it (libsecret-tools on Debian/Ubuntu, libsecret on Arch, libsecret-tools on Fedora) and try again.'
+    );
+  }
+  throw new Error(
+    'Termius key not found in the Secret Service — is Termius installed and logged in on this machine, and is your keyring unlocked?'
   );
 }
 
@@ -668,6 +774,10 @@ async function previewTermiusImport() {
 module.exports = {
   previewTermiusImport,
   extractTermiusRecords,
+  termiusDataDirs,
+  termiusDbCandidates,
+  rankLeveldbName,
+  windowsCredTargets,
   decodeEnvelope,
   decodeIdbKey,
   buildDbNameMap,
