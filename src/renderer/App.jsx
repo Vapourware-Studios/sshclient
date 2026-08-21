@@ -234,7 +234,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const unsub = window.api.onUpdateStart(async ({ targetVersion }) => {
+    const unsub = window.api.onUpdateStart(async ({ targetVersion, command }) => {
+      // The command comes from main because only it knows how this copy was
+      // installed — Homebrew on a Mac, an AUR helper or pacman on Arch.
+      if (!command) return;
       try {
         setConnectError(null);
         const result = await window.api.localConnect({});
@@ -251,7 +254,7 @@ export default function App() {
         };
         setTabs((prev) => [...prev, tab]);
         setActiveTabId(tab.id);
-        window.api.localWrite(result.sessionId, 'brew upgrade --cask sshclient');
+        window.api.localWrite(result.sessionId, command);
       } catch {}
     });
     return unsub;
