@@ -194,6 +194,15 @@ jobs:
               -Encoding utf8 `
               -Append
 
+      # electron-builder shells out to fpm for the deb/rpm/pacman targets:
+      # rpm needs rpmbuild, and the Arch package is a .tar.zst that fpm builds
+      # with bsdtar. Neither ships on the Ubuntu runner by default.
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm libarchive-tools zstd
+
       - name: Install dependencies
         run: npm ci
 

@@ -3,6 +3,7 @@
   "version": "0.1.7",
   "description": "A Termius-like SSH + SFTP client, built from scratch as a learning project",
   "main": "src/main/main.js",
+  "desktopName": "sshclient.desktop",
   "scripts": {
     "test": "node --test test/*.test.js",
     "dev:renderer": "vite",
@@ -13,6 +14,7 @@
     "dist:mac": "vite build && electron-builder --mac",
     "dist:win": "vite build && electron-builder --win",
     "dist:linux": "vite build && electron-builder --linux",
+    "dist:linux:arch": "vite build && electron-builder --linux pacman",
     "postinstall": "electron-builder install-app-deps"
   },
   "author": "Vapourware-Studios",
@@ -53,9 +55,24 @@
       "deleteAppDataOnUninstall": false
     },
     "linux": {
-      "target": "AppImage",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm",
+        "pacman"
+      ],
+      "executableName": "sshclient",
+      "syncDesktopName": true,
       "icon": "build/icon.png",
-      "category": "Network"
+      "category": "Network",
+      "synopsis": "SSH + SFTP client",
+      "description": "An SSH and SFTP client with a tabbed terminal, saved hosts and an encrypted vault.",
+      "maintainer": "Vapourware-Studios <noreply@vapourware-studios.net>",
+      "desktop": {
+        "entry": {
+          "MimeType": "x-scheme-handler/sshclient"
+        }
+      }
     }
   },
   "devDependencies": {

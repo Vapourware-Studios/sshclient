@@ -38,9 +38,22 @@ Well why NOT? We are free, open source, we dont take your money. And if you dont
 
 - Install the app
 
-Windows/Linux
+Windows
 
 [![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://github.com/vapourware-studios/sshclient/releases)
+
+Linux — grab the package your distro speaks from the same releases page:
+
+| Format | Install |
+| --- | --- |
+| `.AppImage` | `chmod +x SSH*.AppImage && ./SSH*.AppImage` — updates itself in place |
+| `.deb` (Debian/Ubuntu) | `sudo dpkg -i sshclient_*.deb` |
+| `.rpm` (Fedora/RHEL) | `sudo rpm -i sshclient-*.rpm` |
+| `.pacman` (Arch/Manjaro) | `sudo pacman -U sshclient-*.pacman` |
+
+The app checks for new releases itself on every format: the AppImage swaps
+itself out, and the packaged installs download the new package and hand you the
+install command in an in-app terminal.
 
 Mac OS
 
