@@ -13,6 +13,8 @@ import { useConfirm } from '@/lib/confirm';
 import { useSharing } from '@/lib/sharing.jsx';
 
 const MIN_CONNECTING_MS = 2000;
+// Lines kept per session before the oldest are dropped.
+const SESSION_LOG_LIMIT = 400;
 
 /** Names a tab after whoever is sharing, once the relay has said who that is. */
 function sharedTabTitle(state) {
@@ -216,7 +218,7 @@ export default function App() {
       setSessionLogs((prev) => {
         const entry = { id: crypto.randomUUID(), time: Date.now(), line, level };
         const list = [...(prev[sessionId] ?? []), entry];
-        if (list.length > 400) list.splice(0, list.length - 400);
+        if (list.length > SESSION_LOG_LIMIT) list.splice(0, list.length - SESSION_LOG_LIMIT);
         return { ...prev, [sessionId]: list };
       });
     });
@@ -566,14 +568,39 @@ export default function App() {
     });
   }
 
+  /**
+   * Retrying opens a new session under a new id, and the log is kept per
+   * session — so the account of why the last attempt failed was thrown away by
+   * the very click made to look into it. Carry it over, marked, so a host that
+   * fails the same way twice says so instead of showing one lonely attempt.
+   */
   async function retryTab(tab) {
+    const previous = sessionLogs[tab.id] ?? [];
+
     setTabs((prev) => prev.filter((t) => t.id !== tab.id));
     setSessionLogs((prev) => {
       const { [tab.id]: _removed, ...rest } = prev;
       return rest;
     });
+
     try {
-      await openSession(tab.connectConfig, tab.title, tab.type, { groupId: tab.groupId });
+      const sessionId = await openSession(tab.connectConfig, tab.title, tab.type, {
+        groupId: tab.groupId,
+      });
+      if (!sessionId || previous.length === 0) return;
+
+      setSessionLogs((prev) => {
+        // Lines for the new session can already have arrived; they belong last.
+        const carried = [
+          ...previous,
+          { id: crypto.randomUUID(), time: Date.now(), line: '— retrying —', level: 'info' },
+          ...(prev[sessionId] ?? []),
+        ];
+        if (carried.length > SESSION_LOG_LIMIT) {
+          carried.splice(0, carried.length - SESSION_LOG_LIMIT);
+        }
+        return { ...prev, [sessionId]: carried };
+      });
     } catch {}
   }
 
