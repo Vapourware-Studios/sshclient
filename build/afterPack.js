@@ -32,11 +32,21 @@ exports.default = async function afterPack(context) {
     const plist = path.join(frameworks, entry, 'Contents', 'Info.plist');
     if (!fs.existsSync(plist)) continue;
 
-    // Set rather than Add, so a rebuild over an existing tree does not fail.
-    execFileSync('/usr/libexec/PlistBuddy', [
-      '-c',
-      `Add :NSLocalNetworkUsageDescription string ${description}`,
-      plist,
-    ], { stdio: 'ignore' });
+    // PlistBuddy has no upsert: Add fails when the key is already there and
+    // Set fails when it is not. A rebuild over a tree that still holds the last
+    // run's output hits the first case, and an aborted package build is a poor
+    // reward for not having cleaned first — so try both.
+    const write = (verb) =>
+      execFileSync('/usr/libexec/PlistBuddy', [
+        '-c',
+        `${verb} :NSLocalNetworkUsageDescription${verb === 'Add' ? ' string' : ''} ${description}`,
+        plist,
+      ], { stdio: 'ignore' });
+
+    try {
+      write('Add');
+    } catch {
+      write('Set');
+    }
   }
 };

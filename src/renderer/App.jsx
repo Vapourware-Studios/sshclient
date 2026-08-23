@@ -578,30 +578,34 @@ export default function App() {
     const previous = sessionLogs[tab.id] ?? [];
 
     setTabs((prev) => prev.filter((t) => t.id !== tab.id));
-    setSessionLogs((prev) => {
-      const { [tab.id]: _removed, ...rest } = prev;
-      return rest;
-    });
 
+    // The old lines are held, not dropped, until there is somewhere to put
+    // them: clearing first would throw away the account of the failure at the
+    // exact moment the attempt to understand it is under way.
+    let sessionId = null;
     try {
-      const sessionId = await openSession(tab.connectConfig, tab.title, tab.type, {
+      sessionId = await openSession(tab.connectConfig, tab.title, tab.type, {
         groupId: tab.groupId,
       });
-      if (!sessionId || previous.length === 0) return;
-
-      setSessionLogs((prev) => {
-        // Lines for the new session can already have arrived; they belong last.
-        const carried = [
-          ...previous,
-          { id: crypto.randomUUID(), time: Date.now(), line: '— retrying —', level: 'info' },
-          ...(prev[sessionId] ?? []),
-        ];
-        if (carried.length > SESSION_LOG_LIMIT) {
-          carried.splice(0, carried.length - SESSION_LOG_LIMIT);
-        }
-        return { ...prev, [sessionId]: carried };
-      });
     } catch {}
+
+    setSessionLogs((prev) => {
+      const { [tab.id]: _removed, ...rest } = prev;
+      // Nothing came back — openSession has already taken the tab away, so
+      // there is no view left to read these in and keeping them only leaks.
+      if (!sessionId || previous.length === 0) return rest;
+
+      // Lines for the new session can already have arrived; they belong last.
+      const carried = [
+        ...previous,
+        { id: crypto.randomUUID(), time: Date.now(), line: '— retrying —', level: 'info' },
+        ...(rest[sessionId] ?? []),
+      ];
+      if (carried.length > SESSION_LOG_LIMIT) {
+        carried.splice(0, carried.length - SESSION_LOG_LIMIT);
+      }
+      return { ...rest, [sessionId]: carried };
+    });
   }
 
   async function connectToHost(host) {
