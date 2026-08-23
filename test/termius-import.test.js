@@ -459,9 +459,9 @@ test('the newer database wins, however much the stale one holds', () => {
 test('a stale account cannot win on its own id space', () => {
   // Ids climb per account, so a long-abandoned account can hold ids far past
   // the current one's, and its retained key still opens all of its data. Those
-  // numbers live in different id spaces and never compare. When no record
-  // stamp separates the two, the keychain does: the key stored under the name
-  // current Termius writes is the account this machine is signed into.
+  // numbers live in different id spaces and never compare. Which account is
+  // signed in is the keychain's to answer: the key stored under the name
+  // current Termius writes belongs to the account this machine uses.
   const staleAccount = {
     score: 90,
     records: new Array(30).fill({}),
@@ -483,15 +483,24 @@ test('a stale account cannot win on its own id space', () => {
   assert.equal(isBetterAttempt(currentAccount, staleAccount), false);
 });
 
-test('the records outrank the keychain name when they do speak', () => {
-  // A machine that went back to an older Termius still syncs under the legacy
-  // name; the stray current-name key does not make its abandoned account
-  // current, because that account's records stopped being stamped.
-  const abandonedNewerName = { score: 6, records: [{}], recordTime: 1000, highestId: 5, keyIndex: 0, dir: '/a' };
-  const activeLegacyName = { score: 8, records: [{}, {}], recordTime: 2000, highestId: 400, keyIndex: 1, dir: '/b' };
+test('a signed-out account cannot win on fresher record stamps', () => {
+  // updated_at says when a record was edited, not when an account was used: a
+  // signed-out account whose hosts changed last week outranks, on every
+  // record signal there is, an active account whose hosts sat untouched for a
+  // year. So between different keys none of the record signals is asked; the
+  // keychain names the signed-in account, and its pairing wins.
+  const signedOut = {
+    score: 90,
+    records: new Array(30).fill({}),
+    recordTime: 9000,
+    highestId: 90_000,
+    keyIndex: 1,
+    dir: '/old/db',
+  };
+  const active = { score: 6, records: [{}, {}], recordTime: 1000, highestId: 12, keyIndex: 0, dir: '/new/db' };
 
-  assert.equal(isBetterAttempt(abandonedNewerName, activeLegacyName), true);
-  assert.equal(isBetterAttempt(activeLegacyName, abandonedNewerName), false);
+  assert.equal(isBetterAttempt(signedOut, active), true);
+  assert.equal(isBetterAttempt(active, signedOut), false);
 });
 
 test('a fuller copy wins once the records agree', () => {

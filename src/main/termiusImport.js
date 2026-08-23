@@ -144,10 +144,10 @@ async function copyDbToTemp(srcDir) {
 //
 // Every key found is tried against every database, and the order is itself a
 // signal: the name current Termius writes is listed ahead of the one only
-// older versions wrote. Each key belongs to one account, so when two keys
-// open two different databases and the records cannot say which account is
-// current, the key under the current name is taken to be the account this
-// machine is signed into — see isBetterAttempt.
+// older versions wrote. Each key belongs to one account, and nothing inside
+// the records says which account this machine is signed into, so when two
+// keys open two different databases the key under the current name is taken
+// to be the active account — see isBetterAttempt.
 const KEY_ACCOUNT = 'localKey';
 const KEY_SERVICES = ['termius-app', 'Termius'];
 const MASTER_KEY_BYTES = 32;
@@ -680,25 +680,25 @@ function recordSignals(entries) {
  * of it does. A stale key can still open a legacy field or two, which is why
  * the measure is how much opened, not whether anything did.
  *
- * Between different databases, age is asked first, of the records rather than
- * the files: a copied or restored database carries file times from the day it
- * was moved, but nothing can advance the `updated_at` stamps inside it. The
- * stamps are wall-clock dates, so they compare across accounts too.
+ * Between databases opened by different keys, the keychain decides, and
+ * nothing inside the records can: each key opens its own account's data, and
+ * no record signal measures which account this machine is signed into.
+ * `updated_at` is stamped when a record is edited, not when an account is
+ * used, so a signed-out account whose hosts changed last week outranks an
+ * active account whose hosts sat untouched for a year; ids climb in
+ * per-account sequences that never compare; and how much decrypted only
+ * measures how much the account accumulated. What does track signing in is
+ * the keychain itself — current Termius keeps the active account's key under
+ * the first service name read — so the pairing whose key came earlier wins.
  *
- * When the stamps cannot separate two pairings that used different keys, no
- * in-data signal can: each key opens its own account's data, and different
- * accounts number their records in different id spaces and hold different
- * amounts to decrypt, so neither ids nor decrypted-field counts compare
- * across them. What still points at the current account is the keychain —
- * the key stored under the name current Termius writes is read first, so the
- * pairing whose key came earlier is the account this machine is signed into.
- *
- * That leaves the id check to pairings sharing one key, meaning one account,
- * where ids are one climbing sequence: Termius assigns them server-side, so
- * of two copies of the same account's data, the higher id marks the copy that
- * kept syncing longest. An abandoned copy can still decrypt more than the
- * live one — it holds every host deleted since — which is why the
- * decrypted-field count is asked after the ids, and record volume last.
+ * Between databases sharing one key — copies of one account — the records
+ * are comparable and are asked in order of how hard they are to fake. The
+ * newest `updated_at` comes first: a copied or restored database carries
+ * file times from the day it was moved, but nothing can advance the stamps
+ * inside it. Ids next: Termius assigns them server-side, so the higher id
+ * marks the copy that kept syncing longest. Only then the decrypted-field
+ * count, because an abandoned copy can still decrypt more than the live one
+ * — it holds every host deleted since — and record volume last of all.
  *
  * File times decide nothing at any step: a restore resets them, so any order
  * they could impose is exactly the wrong one in the case that matters.
@@ -710,8 +710,8 @@ function isBetterAttempt(best, attempt) {
     if (attempt.score !== best.score) return attempt.score > best.score;
     return attempt.records.length > best.records.length;
   }
-  if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
   if (attempt.keyIndex !== best.keyIndex) return attempt.keyIndex < best.keyIndex;
+  if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
   if (attempt.highestId !== best.highestId) return attempt.highestId > best.highestId;
   if (attempt.score !== best.score) return attempt.score > best.score;
   return attempt.records.length > best.records.length;
