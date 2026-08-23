@@ -352,7 +352,6 @@ test('a stale key of the right length still yields nothing, so the live one is r
 const {
   findTermiusDbDirs,
   isBetterAttempt,
-  dbLastWritten,
   recordSignals,
 } = require('../src/main/termiusImport');
 
@@ -416,11 +415,11 @@ test('findTermiusDbDirs throws when no database exists', () => {
 });
 
 // Two keys tried against the same database share both of its age signals.
-const SAME_DB = { recordTime: 5000, highestId: 500, lastWritten: 1000 };
+const SAME_DB = { recordTime: 5000, highestId: 500, dir: '/install/db' };
 
 test('within one database, the key that opens the most wins', () => {
-  const staleKey = { score: 1, records: [{}, {}, {}, {}], ...SAME_DB };
-  const liveKey = { score: 12, records: [{}, {}], ...SAME_DB };
+  const staleKey = { score: 1, records: [{}, {}, {}, {}], keyIndex: 1, ...SAME_DB };
+  const liveKey = { score: 12, records: [{}, {}], keyIndex: 0, ...SAME_DB };
 
   // First-that-works would have kept the stale key on its one legacy field.
   assert.equal(isBetterAttempt(null, staleKey), true);
@@ -428,9 +427,20 @@ test('within one database, the key that opens the most wins', () => {
   assert.equal(isBetterAttempt(liveKey, staleKey), false);
 });
 
+test('within one database, the fitting key wins whatever name it sits under', () => {
+  // A machine can hold the stray key under the current name and the key this
+  // database actually answers to under the legacy one. On a single database
+  // the fit is measurable, so the keychain's opinion is not consulted.
+  const strayUnderCurrentName = { score: 1, records: [{}, {}, {}], keyIndex: 0, ...SAME_DB };
+  const fitsUnderLegacyName = { score: 12, records: [{}, {}], keyIndex: 1, ...SAME_DB };
+
+  assert.equal(isBetterAttempt(strayUnderCurrentName, fitsUnderLegacyName), true);
+  assert.equal(isBetterAttempt(fitsUnderLegacyName, strayUnderCurrentName), false);
+});
+
 test('within one database, an exact tie falls to the fuller result', () => {
-  const fewer = { score: 4, records: [{}, {}], ...SAME_DB };
-  const more = { score: 4, records: [{}, {}, {}], ...SAME_DB };
+  const fewer = { score: 4, records: [{}, {}], keyIndex: 0, ...SAME_DB };
+  const more = { score: 4, records: [{}, {}, {}], keyIndex: 1, ...SAME_DB };
 
   assert.equal(isBetterAttempt(fewer, more), true);
   assert.equal(isBetterAttempt(more, fewer), false);
@@ -439,83 +449,90 @@ test('within one database, an exact tie falls to the fuller result', () => {
 test('the newer database wins, however much the stale one holds', () => {
   // The abandoned install still holds every host the account has since deleted,
   // so it decrypts more of everything. Volume is not the question being asked.
-  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, highestId: 900, lastWritten: 1000 };
-  const current = { score: 6, records: [{}, {}], recordTime: 2000, highestId: 10, lastWritten: 2000 };
+  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, highestId: 900, keyIndex: 0, dir: '/old/db' };
+  const current = { score: 6, records: [{}, {}], recordTime: 2000, highestId: 10, keyIndex: 0, dir: '/new/db' };
 
   assert.equal(isBetterAttempt(stale, current), true, 'the newer install wins');
   assert.equal(isBetterAttempt(current, stale), false, 'and does not lose on volume');
 });
 
-test('a database restored after the live one does not win on its fresh file times', () => {
-  // Copying a backup back onto the machine stamps every file with today's date
-  // while the records inside still stop at the day the account left it.
-  const restoredStale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, highestId: 900, lastWritten: 9_000_000 };
-  const current = { score: 6, records: [{}, {}], recordTime: 2000, highestId: 10, lastWritten: 2000 };
+test('a stale account cannot win on its own id space', () => {
+  // Ids climb per account, so a long-abandoned account can hold ids far past
+  // the current one's, and its retained key still opens all of its data. Those
+  // numbers live in different id spaces and never compare. When no record
+  // stamp separates the two, the keychain does: the key stored under the name
+  // current Termius writes is the account this machine is signed into.
+  const staleAccount = {
+    score: 90,
+    records: new Array(30).fill({}),
+    recordTime: 0,
+    highestId: 90_000,
+    keyIndex: 1,
+    dir: '/old/db',
+  };
+  const currentAccount = {
+    score: 6,
+    records: [{}, {}],
+    recordTime: 0,
+    highestId: 12,
+    keyIndex: 0,
+    dir: '/new/db',
+  };
 
-  assert.equal(isBetterAttempt(restoredStale, current), true, 'the records outrank the file times');
-  assert.equal(isBetterAttempt(current, restoredStale), false);
+  assert.equal(isBetterAttempt(staleAccount, currentAccount), true);
+  assert.equal(isBetterAttempt(currentAccount, staleAccount), false);
 });
 
-test('a fuller copy beats a fresher file time once the records agree', () => {
-  // Same account state by both record signals, so what is left is which copy
-  // actually opens. A restore that only touched the file times cannot buy it.
-  const restoredButThinner = {
+test('the records outrank the keychain name when they do speak', () => {
+  // A machine that went back to an older Termius still syncs under the legacy
+  // name; the stray current-name key does not make its abandoned account
+  // current, because that account's records stopped being stamped.
+  const abandonedNewerName = { score: 6, records: [{}], recordTime: 1000, highestId: 5, keyIndex: 0, dir: '/a' };
+  const activeLegacyName = { score: 8, records: [{}, {}], recordTime: 2000, highestId: 400, keyIndex: 1, dir: '/b' };
+
+  assert.equal(isBetterAttempt(abandonedNewerName, activeLegacyName), true);
+  assert.equal(isBetterAttempt(activeLegacyName, abandonedNewerName), false);
+});
+
+test('a fuller copy wins once the records agree', () => {
+  // Same account by key, same state by both record signals, so what is left is
+  // which copy actually opens. Nothing a restore changes plays any part.
+  const thinner = {
     score: 4,
     records: [{}, {}],
     recordTime: 7000,
     highestId: 7,
-    lastWritten: 9_000_000,
+    keyIndex: 0,
+    dir: '/restored/db',
   };
-  const fuller = { score: 9, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 1000 };
+  const fuller = { score: 9, records: [{}, {}], recordTime: 7000, highestId: 7, keyIndex: 0, dir: '/live/db' };
 
-  assert.equal(isBetterAttempt(restoredButThinner, fuller), true);
-  assert.equal(isBetterAttempt(fuller, restoredButThinner), false);
+  assert.equal(isBetterAttempt(thinner, fuller), true);
+  assert.equal(isBetterAttempt(fuller, thinner), false);
 });
 
-test('file times settle only what nothing else can', () => {
-  // Same age, same reach, same amount opened: no wrong answer is available.
-  const older = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 1000 };
-  const newer = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 2000 };
+test('an exact tie keeps the pairing found first', () => {
+  // Same key, same age, same reach, same amount opened: the two are copies of
+  // one another, and nothing — file times included — is left to consult.
+  const first = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, keyIndex: 0, dir: '/a' };
+  const second = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, keyIndex: 0, dir: '/b' };
 
-  assert.equal(isBetterAttempt(older, newer), true);
-  assert.equal(isBetterAttempt(newer, older), false);
+  assert.equal(isBetterAttempt(first, second), false);
 });
 
 test('a newer database that no key opens never displaces one that opened', () => {
-  const opened = { score: 3, records: [{}, {}], recordTime: 1000, highestId: 10, lastWritten: 1000 };
+  const opened = { score: 3, records: [{}, {}], recordTime: 1000, highestId: 10, keyIndex: 1, dir: '/a' };
   const newerButShut = {
     score: 0,
     records: new Array(50).fill({}),
     recordTime: 9000,
     highestId: 9000,
-    lastWritten: 9000,
+    keyIndex: 0,
+    dir: '/b',
   };
 
   assert.equal(isBetterAttempt(opened, newerButShut), false);
   assert.equal(isBetterAttempt(newerButShut, opened), true);
-});
-
-test('dbLastWritten takes the newest leveldb file and ignores the rest', () => {
-  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
-  try {
-    const old = nodePath.join(dir, '000001.ldb');
-    const recent = nodePath.join(dir, '000002.log');
-    const decoy = nodePath.join(dir, 'LOCK');
-    for (const f of [old, recent, decoy]) fs.writeFileSync(f, '');
-
-    fs.utimesSync(old, new Date(1_000_000), new Date(1_000_000));
-    fs.utimesSync(recent, new Date(2_000_000), new Date(2_000_000));
-    // Newer than either, but not a leveldb file, so it must not count.
-    fs.utimesSync(decoy, new Date(9_000_000), new Date(9_000_000));
-
-    assert.equal(dbLastWritten(dir), 2_000_000);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('dbLastWritten reports nothing for a directory it cannot read', () => {
-  assert.equal(dbLastWritten(nodePath.join(os.tmpdir(), 'sshclient-no-such-dir-xyz')), 0);
 });
 
 function stampedRecord(id, updatedAt, status = 'SYNCHRONIZED') {
@@ -541,8 +558,8 @@ test('recordSignals takes the latest stamp and the highest id, needing no key', 
 });
 
 test('recordSignals still reports an id when no record carries a stamp', () => {
-  // The id is what keeps a restored copy from winning on file times alone once
-  // a schema change has taken updated_at away.
+  // The id is what keeps a restored copy from winning on volume once a schema
+  // change has taken updated_at away.
   assert.deepEqual(recordSignals([stampedRecord(77)]), { recordTime: 0, highestId: 77 });
   assert.deepEqual(recordSignals([]), { recordTime: 0, highestId: 0 });
 });
@@ -562,7 +579,7 @@ test('deleting a host keeps the live database ahead of a restored copy', () => {
   // Termius does not drop a deleted record, it marks it — and recordSignals
   // reads every record in the clear, tombstones included. So the deletion is
   // itself the newest thing either database has to show, and the live database
-  // wins on the first signal asked, long before the file times a restore reset.
+  // wins on the first signal asked, whatever a restore did to the copy since.
   const live = [
     stampedRecord(1, '2026-04-08T16:37:59Z'),
     stampedRecord(2, '2026-05-25T10:07:45Z', 'deleted'),
@@ -576,31 +593,33 @@ test('deleting a host keeps the live database ahead of a restored copy', () => {
   const staleSignals = recordSignals(restoredCopy);
   assert.ok(liveSignals.recordTime > staleSignals.recordTime, 'the deletion is the newer stamp');
 
-  // The stale copy still opens the host that was deleted here, and was restored
-  // today, so it wins on both of the signals that come after age.
-  const liveAttempt = { ...liveSignals, score: 4, records: [{}], lastWritten: 1000 };
-  const staleAttempt = { ...staleSignals, score: 8, records: [{}, {}], lastWritten: 9_000_000 };
+  // The stale copy still opens the host that was deleted here, so it holds
+  // more and decrypts more — the signals that only speak after age.
+  const liveAttempt = { ...liveSignals, score: 4, records: [{}], keyIndex: 0, dir: '/live/db' };
+  const staleAttempt = { ...staleSignals, score: 8, records: [{}, {}], keyIndex: 0, dir: '/restored/db' };
 
   assert.equal(isBetterAttempt(staleAttempt, liveAttempt), true, 'age is asked first, and settles it');
   assert.equal(isBetterAttempt(liveAttempt, staleAttempt), false);
 });
 
-test('the database that synced furthest wins when no stamps survive', () => {
-  // Both restored today, so file times say the stale one is newest; only the
-  // ids still record which account data went on growing.
+test('the copy that synced furthest wins when no stamps survive', () => {
+  // One key, so one account: a schema change took updated_at away, and only
+  // the ids still record which copy of that account's data went on growing.
   const restoredStale = {
     score: 40,
     records: new Array(20).fill({}),
     recordTime: 0,
     highestId: 120,
-    lastWritten: 9_000_000,
+    keyIndex: 0,
+    dir: '/restored/db',
   };
   const current = {
     score: 8,
     records: [{}, {}],
     recordTime: 0,
     highestId: 8800,
-    lastWritten: 1000,
+    keyIndex: 0,
+    dir: '/live/db',
   };
 
   assert.equal(isBetterAttempt(restoredStale, current), true);

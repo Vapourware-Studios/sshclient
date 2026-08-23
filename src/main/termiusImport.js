@@ -142,11 +142,12 @@ async function copyDbToTemp(srcDir) {
 // freedesktop Secret Service. The service/account pair has also changed
 // between Termius versions, so every reader tries the known spellings.
 //
-// Every key found is tried against every database, so this order does not
-// decide which key is used — except in the one case where two keys open a
-// database equally well and nothing else separates them. There the first one
-// listed wins, so the name current Termius writes is listed ahead of the one
-// only older versions wrote.
+// Every key found is tried against every database, and the order is itself a
+// signal: the name current Termius writes is listed ahead of the one only
+// older versions wrote. Each key belongs to one account, so when two keys
+// open two different databases and the records cannot say which account is
+// current, the key under the current name is taken to be the account this
+// machine is signed into — see isBetterAttempt.
 const KEY_ACCOUNT = 'localKey';
 const KEY_SERVICES = ['termius-app', 'Termius'];
 const MASTER_KEY_BYTES = 32;
@@ -669,66 +670,50 @@ function recordSignals(entries) {
 }
 
 /**
- * When a database was last written to. A weaker signal than the record stamps
- * above — a plain file copy resets it — so it only breaks ties between
- * databases whose records claim the same age, or stand in when a schema change
- * means no record carries a stamp at all.
- */
-function dbLastWritten(dir) {
-  let newest = 0;
-  let names;
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return newest;
-  }
-  for (const name of names) {
-    if (!name.endsWith('.ldb') && !name.endsWith('.log')) continue;
-    try {
-      const { mtimeMs } = fs.statSync(path.join(dir, name));
-      if (mtimeMs > newest) newest = mtimeMs;
-    } catch {}
-  }
-  return newest;
-}
-
-/**
  * Ranks one database-and-key pairing against the best seen so far.
  *
- * The two questions this settles are not the same, and neither answer works for
- * the other. Which database is current is a question about the install, and is
- * settled by age. Which key is right is a question about the account, and is
- * settled by how much that key opened. So age picks the database, and the
- * decrypted-field count only breaks ties between the keys tried against that
- * one database, where age is necessarily equal.
+ * Ahead of everything: a pairing that opened nothing never displaces one that
+ * opened something, so a stale database no key fits cannot win on age.
  *
- * Age is asked of the records before anything else, because a database that was
- * copied or restored carries file times from the day it was moved rather than
- * the day it was last used, and would otherwise pass itself off as the newest
- * thing on the machine.
+ * Two pairings that read the same database share every age signal, so between
+ * them the only question is which key fits it, and the key that decrypts more
+ * of it does. A stale key can still open a legacy field or two, which is why
+ * the measure is how much opened, not whether anything did.
  *
- * How much opened comes next. It is safe there and was not safe on its own: an
- * abandoned install holds every host the account has since deleted, so it can
- * decrypt more than the live one — but only after losing on both record signals
- * first, which it does, since its records stopped being written and its ids
- * stopped climbing the day it was abandoned. What reaches this test is two
- * databases holding the same account state, and of those the one that opens
- * more is the better import.
+ * Between different databases, age is asked first, of the records rather than
+ * the files: a copied or restored database carries file times from the day it
+ * was moved, but nothing can advance the `updated_at` stamps inside it. The
+ * stamps are wall-clock dates, so they compare across accounts too.
  *
- * File times come last and decide almost nothing: they are consulted only when
- * the records agree on age, agree on how far they synced, and open equally
- * well, at which point there is no wrong answer left to give.
+ * When the stamps cannot separate two pairings that used different keys, no
+ * in-data signal can: each key opens its own account's data, and different
+ * accounts number their records in different id spaces and hold different
+ * amounts to decrypt, so neither ids nor decrypted-field counts compare
+ * across them. What still points at the current account is the keychain —
+ * the key stored under the name current Termius writes is read first, so the
+ * pairing whose key came earlier is the account this machine is signed into.
  *
- * Ahead of all of it: a pairing that opened nothing never displaces one that
- * opened something, so a stale database that no key fits cannot win on age.
+ * That leaves the id check to pairings sharing one key, meaning one account,
+ * where ids are one climbing sequence: Termius assigns them server-side, so
+ * of two copies of the same account's data, the higher id marks the copy that
+ * kept syncing longest. An abandoned copy can still decrypt more than the
+ * live one — it holds every host deleted since — which is why the
+ * decrypted-field count is asked after the ids, and record volume last.
+ *
+ * File times decide nothing at any step: a restore resets them, so any order
+ * they could impose is exactly the wrong one in the case that matters.
  */
 function isBetterAttempt(best, attempt) {
   if (!best) return true;
   if ((attempt.score > 0) !== (best.score > 0)) return attempt.score > 0;
+  if (attempt.dir === best.dir) {
+    if (attempt.score !== best.score) return attempt.score > best.score;
+    return attempt.records.length > best.records.length;
+  }
   if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
+  if (attempt.keyIndex !== best.keyIndex) return attempt.keyIndex < best.keyIndex;
   if (attempt.highestId !== best.highestId) return attempt.highestId > best.highestId;
   if (attempt.score !== best.score) return attempt.score > best.score;
-  if (attempt.lastWritten !== best.lastWritten) return attempt.lastWritten > best.lastWritten;
   return attempt.records.length > best.records.length;
 }
 
@@ -772,15 +757,15 @@ async function extractTermiusRecords() {
 
     const dbNames = buildDbNameMap(entries);
     const { recordTime, highestId } = recordSignals(entries);
-    const lastWritten = dbLastWritten(dir);
-    for (const masterKey of masterKeys) {
+    for (const [keyIndex, masterKey] of masterKeys.entries()) {
       const records = collectRecords(entries, dbNames, masterKey);
       const attempt = {
         score: decryptedFieldCount(records),
         records,
         recordTime,
         highestId,
-        lastWritten,
+        keyIndex,
+        dir,
       };
       if (isBetterAttempt(best, attempt)) best = attempt;
     }
@@ -1000,7 +985,6 @@ module.exports = {
   termiusDbCandidates,
   findTermiusDbDirs,
   isBetterAttempt,
-  dbLastWritten,
   recordSignals,
   rankLeveldbName,
   windowsCredTargets,
