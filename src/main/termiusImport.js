@@ -136,6 +136,23 @@ async function copyDbToTemp(srcDir) {
 // between Termius versions, so every reader tries the known spellings.
 const KEY_ACCOUNT = 'localKey';
 const KEY_SERVICES = ['Termius', 'termius-app'];
+const MASTER_KEY_BYTES = 32;
+
+/**
+ * A key left behind by an older Termius under one service name would otherwise
+ * mask the live one: the first non-empty answer won, and its length was only
+ * checked afterwards — by which point the remaining names had been passed over
+ * and the import failed with a key it should never have accepted. Ordering the
+ * names differently only changes which stale entry wins, so judge the value
+ * instead: a candidate counts only if it is the right size to be the key.
+ */
+function looksLikeMasterKey(b64) {
+  try {
+    return Buffer.from(String(b64 ?? '').trim(), 'base64').length === MASTER_KEY_BYTES;
+  } catch {
+    return false;
+  }
+}
 
 function credReadPs(target) {
   return `
@@ -215,7 +232,14 @@ function readWindowsMasterKeyBase64() {
         continue;
       }
       const blobB64 = out.trim();
-      if (blobB64) return decodeKeytarBlob(Buffer.from(blobB64, 'base64'));
+      if (!blobB64) continue;
+      let decoded;
+      try {
+        decoded = decodeKeytarBlob(Buffer.from(blobB64, 'base64'));
+      } catch {
+        continue;
+      }
+      if (looksLikeMasterKey(decoded)) return decoded;
     }
   }
   throw new Error(
@@ -231,7 +255,7 @@ function readMacMasterKeyBase64() {
         ['find-generic-password', '-s', service, '-a', KEY_ACCOUNT, '-w'],
         { encoding: 'utf8' }
       ).trim();
-      if (out) return out;
+      if (looksLikeMasterKey(out)) return out;
     } catch {}
   }
   throw new Error(
@@ -249,7 +273,7 @@ function readLinuxMasterKeyBase64() {
         { encoding: 'utf8' }
       ).trim();
       sawSecretTool = true;
-      if (out) return out;
+      if (looksLikeMasterKey(out)) return out;
     } catch (err) {
       // ENOENT means secret-tool itself is missing; a non-zero exit only means
       // this particular service name holds nothing.
@@ -273,7 +297,7 @@ function fetchMasterKey() {
   else b64 = readLinuxMasterKeyBase64();
 
   const bytes = Buffer.from(b64.trim(), 'base64');
-  if (bytes.length !== 32) throw new Error('Termius master key is not 32 bytes');
+  if (bytes.length !== MASTER_KEY_BYTES) throw new Error('Termius master key is not 32 bytes');
   return bytes;
 }
 
@@ -772,6 +796,7 @@ async function previewTermiusImport() {
 }
 
 module.exports = {
+  looksLikeMasterKey,
   previewTermiusImport,
   extractTermiusRecords,
   termiusDataDirs,

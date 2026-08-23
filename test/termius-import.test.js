@@ -277,3 +277,17 @@ test('windowsCredTargets covers both keytar service names', () => {
   assert.ok(targets.includes('termius-app/localKey'));
   assert.equal(new Set(targets).size, targets.length);
 });
+
+test('a stale credential under one service name does not mask the live key', () => {
+  const { looksLikeMasterKey } = require('../src/main/termiusImport');
+  const key = Buffer.alloc(32, 7).toString('base64');
+  const stale = Buffer.from('not-a-key').toString('base64');
+
+  assert.equal(looksLikeMasterKey(key), true);
+  assert.equal(looksLikeMasterKey(stale), false);
+  assert.equal(looksLikeMasterKey(''), false);
+  assert.equal(looksLikeMasterKey(null), false);
+  assert.equal(looksLikeMasterKey(undefined), false);
+  // Whitespace around the value is how the shell tools hand it back.
+  assert.equal(looksLikeMasterKey(`  ${key}\n`), true);
+});
