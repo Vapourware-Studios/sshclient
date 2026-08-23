@@ -337,7 +337,11 @@ test('a stale key of the right length still yields nothing, so the live one is r
   assert.equal(found[0].decrypted.label, 'web-01');
 });
 
-const { findTermiusDbDirs, isBetterAttempt } = require('../src/main/termiusImport');
+const {
+  findTermiusDbDirs,
+  isBetterAttempt,
+  dbLastWritten,
+} = require('../src/main/termiusImport');
 
 test('findTermiusDbDirs returns every candidate, not just the first', () => {
   const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
@@ -398,22 +402,64 @@ test('findTermiusDbDirs throws when no database exists', () => {
   }
 });
 
-test('a pairing that opens one legacy field loses to the one that opens the rest', () => {
-  const stalePairing = { score: 1, records: [{}, {}, {}, {}] };
-  const livePairing = { score: 12, records: [{}, {}] };
+// Two keys tried against the same database share its write time.
+const SAME_DB = 1000;
 
-  // First-that-works would have kept the stale pairing; the count decides.
-  assert.equal(isBetterAttempt(null, stalePairing), true);
-  assert.equal(isBetterAttempt(stalePairing, livePairing), true);
-  assert.equal(isBetterAttempt(livePairing, stalePairing), false);
+test('within one database, the key that opens the most wins', () => {
+  const staleKey = { score: 1, records: [{}, {}, {}, {}], lastWritten: SAME_DB };
+  const liveKey = { score: 12, records: [{}, {}], lastWritten: SAME_DB };
+
+  // First-that-works would have kept the stale key on its one legacy field.
+  assert.equal(isBetterAttempt(null, staleKey), true);
+  assert.equal(isBetterAttempt(staleKey, liveKey), true);
+  assert.equal(isBetterAttempt(liveKey, staleKey), false);
 });
 
-test('when two pairings open the same amount, the fuller database wins', () => {
-  const fewer = { score: 4, records: [{}, {}] };
-  const more = { score: 4, records: [{}, {}, {}] };
+test('within one database, an exact tie falls to the fuller result', () => {
+  const fewer = { score: 4, records: [{}, {}], lastWritten: SAME_DB };
+  const more = { score: 4, records: [{}, {}, {}], lastWritten: SAME_DB };
 
   assert.equal(isBetterAttempt(fewer, more), true);
   assert.equal(isBetterAttempt(more, fewer), false);
-  // An empty pairing never displaces one that opened something.
-  assert.equal(isBetterAttempt(fewer, { score: 0, records: [{}, {}, {}, {}] }), false);
+});
+
+test('the database written to last wins, however much the stale one holds', () => {
+  // The abandoned install still holds every host the account has since deleted,
+  // so it decrypts more of everything. Volume is not the question being asked.
+  const stale = { score: 90, records: new Array(30).fill({}), lastWritten: 1000 };
+  const current = { score: 6, records: [{}, {}], lastWritten: 2000 };
+
+  assert.equal(isBetterAttempt(stale, current), true, 'the newer install wins');
+  assert.equal(isBetterAttempt(current, stale), false, 'and does not lose on volume');
+});
+
+test('a newer database that no key opens never displaces one that opened', () => {
+  const opened = { score: 3, records: [{}, {}], lastWritten: 1000 };
+  const newerButShut = { score: 0, records: new Array(50).fill({}), lastWritten: 9000 };
+
+  assert.equal(isBetterAttempt(opened, newerButShut), false);
+  assert.equal(isBetterAttempt(newerButShut, opened), true);
+});
+
+test('dbLastWritten takes the newest leveldb file and ignores the rest', () => {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  try {
+    const old = nodePath.join(dir, '000001.ldb');
+    const recent = nodePath.join(dir, '000002.log');
+    const decoy = nodePath.join(dir, 'LOCK');
+    for (const f of [old, recent, decoy]) fs.writeFileSync(f, '');
+
+    fs.utimesSync(old, new Date(1_000_000), new Date(1_000_000));
+    fs.utimesSync(recent, new Date(2_000_000), new Date(2_000_000));
+    // Newer than either, but not a leveldb file, so it must not count.
+    fs.utimesSync(decoy, new Date(9_000_000), new Date(9_000_000));
+
+    assert.equal(dbLastWritten(dir), 2_000_000);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('dbLastWritten reports nothing for a directory it cannot read', () => {
+  assert.equal(dbLastWritten(nodePath.join(os.tmpdir(), 'sshclient-no-such-dir-xyz')), 0);
 });

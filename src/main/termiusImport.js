@@ -624,12 +624,47 @@ function collectRecords(entries, dbNames, masterKey) {
 }
 
 /**
- * Ranks one database-and-key pairing against the best seen so far. More fields
- * decrypted wins; where two pairings open the same number of fields, the one
- * that yielded more records does.
+ * When a database was last written to. Termius only writes to the store it is
+ * actually using, so of two installs that both hold real data, the one touched
+ * most recently is the one still in use. It is the only thing on disk that says
+ * which layout is current — how much data a database holds does not, since an
+ * install abandoned years ago keeps every host the account has since deleted.
+ */
+function dbLastWritten(dir) {
+  let newest = 0;
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return newest;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.ldb') && !name.endsWith('.log')) continue;
+    try {
+      const { mtimeMs } = fs.statSync(path.join(dir, name));
+      if (mtimeMs > newest) newest = mtimeMs;
+    } catch {}
+  }
+  return newest;
+}
+
+/**
+ * Ranks one database-and-key pairing against the best seen so far.
+ *
+ * The two questions this settles are not the same, and neither answer works for
+ * the other. Which database is current is a question about the install, and is
+ * settled by which was written to last. Which key is right is a question about
+ * the account, and is settled by how much that key opened. So recency picks the
+ * database, and the decrypted-field count only breaks ties between the keys
+ * tried against that one database, where recency is necessarily equal.
+ *
+ * Ahead of both: a pairing that opened nothing never displaces one that opened
+ * something, so a stale database that no key fits cannot win on being newer.
  */
 function isBetterAttempt(best, attempt) {
   if (!best) return true;
+  if ((attempt.score > 0) !== (best.score > 0)) return attempt.score > 0;
+  if (attempt.lastWritten !== best.lastWritten) return attempt.lastWritten > best.lastWritten;
   if (attempt.score !== best.score) return attempt.score > best.score;
   return attempt.records.length > best.records.length;
 }
@@ -653,8 +688,9 @@ async function extractTermiusRecords() {
   // which is current, and picking the wrong one does not fail loudly: the
   // records still come back, just with every encrypted field quietly missing.
   // A stale pairing can even open a field or two, so first-that-works is not
-  // good enough. What separates them is how much was actually decrypted, so
-  // every database is read with every key and the best pairing wins.
+  // good enough. Every database is read with every key, and the pairing that
+  // wins is the one from the most recently written database that any key opens
+  // — see isBetterAttempt for why recency and not volume settles it.
   let best = null;
   let totalEntries = 0;
   let opened = 0;
@@ -672,9 +708,10 @@ async function extractTermiusRecords() {
     totalEntries += entries.length;
 
     const dbNames = buildDbNameMap(entries);
+    const lastWritten = dbLastWritten(dir);
     for (const masterKey of masterKeys) {
       const records = collectRecords(entries, dbNames, masterKey);
-      const attempt = { score: decryptedFieldCount(records), records };
+      const attempt = { score: decryptedFieldCount(records), records, lastWritten };
       if (isBetterAttempt(best, attempt)) best = attempt;
     }
   }
@@ -893,6 +930,7 @@ module.exports = {
   termiusDbCandidates,
   findTermiusDbDirs,
   isBetterAttempt,
+  dbLastWritten,
   rankLeveldbName,
   windowsCredTargets,
   decodeEnvelope,
