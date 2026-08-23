@@ -444,7 +444,24 @@ test('a database restored after the live one does not win on its fresh file time
   assert.equal(isBetterAttempt(current, restoredStale), false);
 });
 
-test('file times still settle databases whose records claim the same age', () => {
+test('a fuller copy beats a fresher file time once the records agree', () => {
+  // Same account state by both record signals, so what is left is which copy
+  // actually opens. A restore that only touched the file times cannot buy it.
+  const restoredButThinner = {
+    score: 4,
+    records: [{}, {}],
+    recordTime: 7000,
+    highestId: 7,
+    lastWritten: 9_000_000,
+  };
+  const fuller = { score: 9, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 1000 };
+
+  assert.equal(isBetterAttempt(restoredButThinner, fuller), true);
+  assert.equal(isBetterAttempt(fuller, restoredButThinner), false);
+});
+
+test('file times settle only what nothing else can', () => {
+  // Same age, same reach, same amount opened: no wrong answer is available.
   const older = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 1000 };
   const newer = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 2000 };
 

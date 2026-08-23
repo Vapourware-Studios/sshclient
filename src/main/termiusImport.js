@@ -696,11 +696,22 @@ function dbLastWritten(dir) {
  * decrypted-field count only breaks ties between the keys tried against that
  * one database, where age is necessarily equal.
  *
- * Age is asked of the records before the filesystem, because a database that
- * was copied or restored carries file times from the day it was moved rather
- * than the day it was last used, and would otherwise pass itself off as the
- * newest thing on the machine. File times are consulted only once both record
- * signals are silent or tied, where there is nothing else left to go on.
+ * Age is asked of the records before anything else, because a database that was
+ * copied or restored carries file times from the day it was moved rather than
+ * the day it was last used, and would otherwise pass itself off as the newest
+ * thing on the machine.
+ *
+ * How much opened comes next. It is safe there and was not safe on its own: an
+ * abandoned install holds every host the account has since deleted, so it can
+ * decrypt more than the live one — but only after losing on both record signals
+ * first, which it does, since its records stopped being written and its ids
+ * stopped climbing the day it was abandoned. What reaches this test is two
+ * databases holding the same account state, and of those the one that opens
+ * more is the better import.
+ *
+ * File times come last and decide almost nothing: they are consulted only when
+ * the records agree on age, agree on how far they synced, and open equally
+ * well, at which point there is no wrong answer left to give.
  *
  * Ahead of all of it: a pairing that opened nothing never displaces one that
  * opened something, so a stale database that no key fits cannot win on age.
@@ -710,8 +721,8 @@ function isBetterAttempt(best, attempt) {
   if ((attempt.score > 0) !== (best.score > 0)) return attempt.score > 0;
   if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
   if (attempt.highestId !== best.highestId) return attempt.highestId > best.highestId;
-  if (attempt.lastWritten !== best.lastWritten) return attempt.lastWritten > best.lastWritten;
   if (attempt.score !== best.score) return attempt.score > best.score;
+  if (attempt.lastWritten !== best.lastWritten) return attempt.lastWritten > best.lastWritten;
   return attempt.records.length > best.records.length;
 }
 
