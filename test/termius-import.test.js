@@ -336,3 +336,84 @@ test('a stale key of the right length still yields nothing, so the live one is r
   assert.equal(found[0].termiusId, 4242);
   assert.equal(found[0].decrypted.label, 'web-01');
 });
+
+const { findTermiusDbDirs, isBetterAttempt } = require('../src/main/termiusImport');
+
+test('findTermiusDbDirs returns every candidate, not just the first', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  const home = nodePath.join(root, 'home');
+  const xdg = nodePath.join(root, 'xdg');
+
+  // A plain install left behind, and a Snap that replaced it.
+  const stale = nodePath.join(xdg, 'Termius', 'IndexedDB', 'file__0.indexeddb.leveldb');
+  const snap = nodePath.join(
+    home,
+    'snap',
+    'termius-app',
+    'current',
+    '.config',
+    'Termius',
+    'IndexedDB',
+    'file__0.indexeddb.leveldb'
+  );
+  for (const dir of [stale, snap]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(nodePath.join(dir, '000003.log'), '');
+  }
+
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousHome = process.env.HOME;
+  process.env.XDG_CONFIG_HOME = xdg;
+  process.env.HOME = home;
+  try {
+    const found = withPlatform('linux', () => findTermiusDbDirs());
+    assert.ok(found.includes(stale), 'the plain install is offered');
+    assert.ok(found.includes(snap), 'and so is the Snap that replaced it');
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findTermiusDbDirs throws when no database exists', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousHome = process.env.HOME;
+  process.env.XDG_CONFIG_HOME = nodePath.join(root, 'xdg');
+  process.env.HOME = nodePath.join(root, 'home');
+  try {
+    assert.throws(
+      () => withPlatform('linux', () => findTermiusDbDirs()),
+      /Termius database not found/
+    );
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a pairing that opens one legacy field loses to the one that opens the rest', () => {
+  const stalePairing = { score: 1, records: [{}, {}, {}, {}] };
+  const livePairing = { score: 12, records: [{}, {}] };
+
+  // First-that-works would have kept the stale pairing; the count decides.
+  assert.equal(isBetterAttempt(null, stalePairing), true);
+  assert.equal(isBetterAttempt(stalePairing, livePairing), true);
+  assert.equal(isBetterAttempt(livePairing, stalePairing), false);
+});
+
+test('when two pairings open the same amount, the fuller database wins', () => {
+  const fewer = { score: 4, records: [{}, {}] };
+  const more = { score: 4, records: [{}, {}, {}] };
+
+  assert.equal(isBetterAttempt(fewer, more), true);
+  assert.equal(isBetterAttempt(more, fewer), false);
+  // An empty pairing never displaces one that opened something.
+  assert.equal(isBetterAttempt(fewer, { score: 0, records: [{}, {}, {}, {}] }), false);
+});

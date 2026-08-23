@@ -104,9 +104,16 @@ function termiusDbCandidates() {
   return out;
 }
 
-function findTermiusDbDir() {
+/**
+ * Every database this machine might hold, best-guess first. An install that was
+ * replaced rather than removed — a plain install beside a Snap, say — leaves its
+ * own database behind, and the order the candidates come in says nothing about
+ * which one is current, so the caller opens them all rather than trusting the
+ * first.
+ */
+function findTermiusDbDirs() {
   const candidates = termiusDbCandidates();
-  if (candidates.length > 0) return candidates[0];
+  if (candidates.length > 0) return candidates;
   throw new Error(
     `Termius database not found. Looked for an IndexedDB store in:\n  ${termiusDataDirs().join('\n  ')}`
   );
@@ -616,40 +623,74 @@ function collectRecords(entries, dbNames, masterKey) {
   return found;
 }
 
-async function extractTermiusRecords() {
-  const dir = findTermiusDbDir();
-  const masterKeys = fetchMasterKeys();
+/**
+ * Ranks one database-and-key pairing against the best seen so far. More fields
+ * decrypted wins; where two pairings open the same number of fields, the one
+ * that yielded more records does.
+ */
+function isBetterAttempt(best, attempt) {
+  if (!best) return true;
+  if (attempt.score !== best.score) return attempt.score > best.score;
+  return attempt.records.length > best.records.length;
+}
 
+async function readEntriesFrom(dir) {
   const temp = await copyDbToTemp(dir);
-  let entries;
   try {
-    entries = await readAllEntries(temp);
+    return await readAllEntries(temp);
   } finally {
     await fsp.rm(temp, { recursive: true, force: true }).catch(() => {});
   }
+}
 
-  const dbNames = buildDbNameMap(entries);
-  let records = [];
+async function extractTermiusRecords() {
+  const dirs = findTermiusDbDirs();
+  const masterKeys = fetchMasterKeys();
 
-  // An account signed out long ago leaves its key in the keychain next to the
-  // live one, the same length and equally well-formed. Nothing about the value
-  // says which is current — and the wrong one does not fail loudly either: the
+  // An install that was replaced leaves its database behind, and an account
+  // signed out long ago leaves its key in the keychain next to the live one —
+  // the same length and equally well-formed. Nothing about either value says
+  // which is current, and picking the wrong one does not fail loudly: the
   // records still come back, just with every encrypted field quietly missing.
-  // What separates them is how much was actually decrypted.
-  for (const masterKey of masterKeys) {
-    const found = collectRecords(entries, dbNames, masterKey);
-    if (decryptedFieldCount(found) > 0) {
-      records = found;
-      break;
+  // A stale pairing can even open a field or two, so first-that-works is not
+  // good enough. What separates them is how much was actually decrypted, so
+  // every database is read with every key and the best pairing wins.
+  let best = null;
+  let totalEntries = 0;
+  let opened = 0;
+  let lastError = null;
+
+  for (const dir of dirs) {
+    let entries;
+    try {
+      entries = await readEntriesFrom(dir);
+    } catch (err) {
+      lastError = err;
+      continue;
     }
-    // Keep the first attempt regardless, so that if no key opens anything the
-    // error below can still say how much was there to be opened.
-    if (records.length === 0) records = found;
+    opened += 1;
+    totalEntries += entries.length;
+
+    const dbNames = buildDbNameMap(entries);
+    for (const masterKey of masterKeys) {
+      const records = collectRecords(entries, dbNames, masterKey);
+      const attempt = { score: decryptedFieldCount(records), records };
+      if (isBetterAttempt(best, attempt)) best = attempt;
+    }
   }
 
+  if (opened === 0) {
+    throw new Error(
+      `Termius database could not be read. Tried:\n  ${dirs.join('\n  ')}${
+        lastError ? `\nLast error: ${lastError.message}` : ''
+      }`
+    );
+  }
+
+  const records = best ? best.records : [];
   if (records.length === 0) {
     throw new Error(
-      `Extracted 0 records from ${entries.length} leveldb entries. Termius's IndexedDB schema may have changed, or Termius is not installed / not logged in on this machine.`
+      `Extracted 0 records from ${totalEntries} leveldb entries. Termius's IndexedDB schema may have changed, or Termius is not installed / not logged in on this machine.`
     );
   }
 
@@ -850,6 +891,8 @@ module.exports = {
   extractTermiusRecords,
   termiusDataDirs,
   termiusDbCandidates,
+  findTermiusDbDirs,
+  isBetterAttempt,
   rankLeveldbName,
   windowsCredTargets,
   decodeEnvelope,
