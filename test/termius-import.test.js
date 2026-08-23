@@ -280,6 +280,18 @@ test('windowsCredTargets covers both keytar service names', () => {
   assert.equal(new Set(targets).size, targets.length);
 });
 
+test('the current service name is tried ahead of the legacy one', () => {
+  // Every key found is tried against every database, so this order decides
+  // nothing until two keys open a database equally well and no other signal
+  // separates them. The first key found wins that tie, so the name current
+  // Termius writes has to come before the one only older versions wrote.
+  const targets = withPlatform('win32', () => windowsCredTargets());
+  assert.ok(
+    targets.indexOf('termius-app/localKey') < targets.indexOf('Termius/localKey'),
+    'a stale key under the legacy name cannot win a tie against the current one'
+  );
+});
+
 test('a stale credential under one service name does not mask the live key', () => {
   const { looksLikeMasterKey } = require('../src/main/termiusImport');
   const key = Buffer.alloc(32, 7).toString('base64');

@@ -141,8 +141,14 @@ async function copyDbToTemp(srcDir) {
 // secret store on each OS: Credential Manager, the login Keychain, and the
 // freedesktop Secret Service. The service/account pair has also changed
 // between Termius versions, so every reader tries the known spellings.
+//
+// Every key found is tried against every database, so this order does not
+// decide which key is used — except in the one case where two keys open a
+// database equally well and nothing else separates them. There the first one
+// listed wins, so the name current Termius writes is listed ahead of the one
+// only older versions wrote.
 const KEY_ACCOUNT = 'localKey';
-const KEY_SERVICES = ['Termius', 'termius-app'];
+const KEY_SERVICES = ['termius-app', 'Termius'];
 const MASTER_KEY_BYTES = 32;
 
 /**
