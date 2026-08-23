@@ -6,40 +6,116 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const nacl = require('tweetnacl');
 
-const TERMIUS_DB_SUBPATH = path.join('Termius', 'IndexedDB', 'file__0.indexeddb.leveldb');
+// Termius keeps its whole dataset in Chromium's IndexedDB, under the Electron
+// user-data directory. Where that directory lives — and what the per-origin
+// leveldb folder inside it is called — depends on the platform and on how
+// Termius was installed, so both are discovered rather than hardcoded.
+const TERMIUS_APP_DIR = 'Termius';
 
-function termiusDbCandidates() {
+function uniq(list) {
+  return [...new Set(list)];
+}
+
+function isDir(p) {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Every place a Termius user-data directory could plausibly be on this OS. */
+function termiusDataDirs() {
+  const home = os.homedir();
   const out = [];
 
   if (process.platform === 'win32') {
-    if (process.env.APPDATA) out.push(path.join(process.env.APPDATA, TERMIUS_DB_SUBPATH));
+    if (process.env.APPDATA) out.push(path.join(process.env.APPDATA, TERMIUS_APP_DIR));
     if (process.env.LOCALAPPDATA) {
+      out.push(path.join(process.env.LOCALAPPDATA, TERMIUS_APP_DIR));
+      // The Microsoft Store build is sandboxed: its %APPDATA% is redirected
+      // into the package's own LocalCache tree.
       const pkgs = path.join(process.env.LOCALAPPDATA, 'Packages');
       try {
         for (const entry of fs.readdirSync(pkgs)) {
           if (entry.startsWith('Crystalnix.Termius_')) {
-            out.push(path.join(pkgs, entry, 'LocalCache', 'Roaming', TERMIUS_DB_SUBPATH));
+            out.push(path.join(pkgs, entry, 'LocalCache', 'Roaming', TERMIUS_APP_DIR));
+            out.push(path.join(pkgs, entry, 'LocalCache', 'Local', TERMIUS_APP_DIR));
           }
         }
       } catch {}
     }
+    out.push(path.join(home, 'AppData', 'Roaming', TERMIUS_APP_DIR));
   } else if (process.platform === 'darwin') {
-    out.push(path.join(os.homedir(), 'Library', 'Application Support', TERMIUS_DB_SUBPATH));
+    out.push(path.join(home, 'Library', 'Application Support', TERMIUS_APP_DIR));
   } else {
-    const config = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-    out.push(path.join(config, TERMIUS_DB_SUBPATH));
+    // Plain install, plus the two sandboxes that relocate $HOME/.config.
+    const config = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+    out.push(path.join(config, TERMIUS_APP_DIR));
+    out.push(path.join(home, '.config', TERMIUS_APP_DIR));
+    out.push(path.join(home, 'snap', 'termius-app', 'current', '.config', TERMIUS_APP_DIR));
+    out.push(path.join(home, 'snap', 'termius-app', 'common', '.config', TERMIUS_APP_DIR));
+    out.push(path.join(home, '.var', 'app', 'com.termius.Termius', 'config', TERMIUS_APP_DIR));
   }
 
+  return uniq(out);
+}
+
+/**
+ * Ranks the per-origin leveldb folders inside one IndexedDB directory. Termius
+ * loads its UI from a file:// URL, so `file__0` is the real store, but the name
+ * is Chromium's to choose and has changed across versions — hence a ranking
+ * rather than an equality check.
+ */
+function rankLeveldbName(name) {
+  if (name.startsWith('file__0')) return 0;
+  if (name.startsWith('file__')) return 1;
+  if (name.includes('termius')) return 2;
+  return 3;
+}
+
+/** The candidate leveldb directories inside one Termius user-data directory. */
+function leveldbDirsIn(dataDir) {
+  const idb = path.join(dataDir, 'IndexedDB');
+  let names;
+  try {
+    names = fs.readdirSync(idb);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => name.endsWith('.leveldb'))
+    .sort((a, b) => rankLeveldbName(a) - rankLeveldbName(b) || a.localeCompare(b))
+    .map((name) => path.join(idb, name))
+    .filter((dir) => isDir(dir) && hasLeveldbFiles(dir));
+}
+
+function hasLeveldbFiles(dir) {
+  try {
+    return fs.readdirSync(dir).some((name) => name.endsWith('.ldb') || name.endsWith('.log'));
+  } catch {
+    return false;
+  }
+}
+
+function termiusDbCandidates() {
+  const out = [];
+  for (const dataDir of termiusDataDirs()) out.push(...leveldbDirsIn(dataDir));
   return out;
 }
 
-function findTermiusDbDir() {
+/**
+ * Every database this machine might hold, best-guess first. An install that was
+ * replaced rather than removed — a plain install beside a Snap, say — leaves its
+ * own database behind, and the order the candidates come in says nothing about
+ * which one is current, so the caller opens them all rather than trusting the
+ * first.
+ */
+function findTermiusDbDirs() {
   const candidates = termiusDbCandidates();
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
-  }
+  if (candidates.length > 0) return candidates;
   throw new Error(
-    `Termius database not found. Looked in:\n  ${candidates.join('\n  ')}`
+    `Termius database not found. Looked for an IndexedDB store in:\n  ${termiusDataDirs().join('\n  ')}`
   );
 }
 
@@ -61,7 +137,39 @@ async function copyDbToTemp(srcDir) {
   return temp;
 }
 
-const CRED_READ_PS = `
+// Termius stores its master key with keytar, which maps onto a different
+// secret store on each OS: Credential Manager, the login Keychain, and the
+// freedesktop Secret Service. The service/account pair has also changed
+// between Termius versions, so every reader tries the known spellings.
+//
+// Every key found is tried against every database. Each key belongs to one
+// account, and neither the keychain nor the records can prove which account
+// this machine is signed into — the name current Termius writes is only the
+// better guess, so it is listed first and picks the default. When two keys
+// open two different databases, both accounts are offered in the import
+// preview and the user chooses — see extractTermiusRecords.
+const KEY_ACCOUNT = 'localKey';
+const KEY_SERVICES = ['termius-app', 'Termius'];
+const MASTER_KEY_BYTES = 32;
+
+/**
+ * A key left behind by an older Termius sits under a different service name
+ * beside the live one, and it is a real key — the same 32 bytes, just for an
+ * account nobody uses any more. Neither the order of the names nor the size of
+ * the value can tell the two apart, so this only rules out what plainly is not
+ * a key; which of the survivors is the right one is settled later, against the
+ * database itself.
+ */
+function looksLikeMasterKey(b64) {
+  try {
+    return Buffer.from(String(b64 ?? '').trim(), 'base64').length === MASTER_KEY_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+function credReadPs(target) {
+  return `
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -88,7 +196,7 @@ public class SshClientCredReader {
 }
 "@
 $credPtr = [IntPtr]::Zero
-$ok = [SshClientCredReader]::CredRead("Termius/localKey", 1, 0, [ref]$credPtr)
+$ok = [SshClientCredReader]::CredRead("${target}", 1, 0, [ref]$credPtr)
 if (-not $ok) { exit 1 }
 $cred = [System.Runtime.InteropServices.Marshal]::PtrToStructure($credPtr, [type][SshClientCredReader+CREDENTIAL])
 $bytes = New-Object byte[] $cred.CredentialBlobSize
@@ -96,6 +204,22 @@ $bytes = New-Object byte[] $cred.CredentialBlobSize
 [SshClientCredReader]::CredFree($credPtr) | Out-Null
 [Convert]::ToBase64String($bytes)
 `;
+}
+
+/** keytar writes Windows credentials under the target name `service/account`. */
+function windowsCredTargets() {
+  const targets = KEY_SERVICES.map((service) => `${service}/${KEY_ACCOUNT}`);
+  return uniq([...targets, ...KEY_SERVICES]);
+}
+
+function powershellBinaries() {
+  const root = process.env.SystemRoot || 'C:\\Windows';
+  return uniq([
+    path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    'powershell.exe',
+    'pwsh.exe',
+  ]);
+}
 
 function decodeKeytarBlob(buf) {
   try {
@@ -109,66 +233,101 @@ function decodeKeytarBlob(buf) {
   throw new Error('Credential blob is neither valid UTF-8 nor UTF-16LE');
 }
 
-function readWindowsMasterKeyBase64() {
-  let out;
-  try {
-    out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', CRED_READ_PS], {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-  } catch (err) {
-    throw new Error(
-      'Termius key not found in Credential Manager — is Termius installed and logged in on this machine?'
-    );
+function readWindowsMasterKeysBase64() {
+  const found = [];
+  for (const bin of powershellBinaries()) {
+    for (const target of windowsCredTargets()) {
+      let out;
+      try {
+        out = execFileSync(bin, ['-NoProfile', '-NonInteractive', '-Command', credReadPs(target)], {
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+      } catch {
+        continue;
+      }
+      const blobB64 = out.trim();
+      if (!blobB64) continue;
+      let decoded;
+      try {
+        decoded = decodeKeytarBlob(Buffer.from(blobB64, 'base64'));
+      } catch {
+        continue;
+      }
+      if (looksLikeMasterKey(decoded)) found.push({ service: target.split('/')[0], b64: decoded });
+    }
   }
-  const blobB64 = out.trim();
-  if (!blobB64) {
-    throw new Error(
-      'Termius key not found in Credential Manager — is Termius installed and logged in on this machine?'
-    );
-  }
-  return decodeKeytarBlob(Buffer.from(blobB64, 'base64'));
-}
-
-function readMacMasterKeyBase64() {
-  try {
-    return execFileSync(
-      'security',
-      ['find-generic-password', '-s', 'Termius', '-a', 'localKey', '-w'],
-      { encoding: 'utf8' }
-    ).trim();
-  } catch {
-    throw new Error(
-      'Termius key not found in Keychain — is Termius installed and logged in on this machine?'
-    );
-  }
-}
-
-function readLinuxMasterKeyBase64() {
-  for (const service of ['termius-app', 'Termius']) {
-    try {
-      const out = execFileSync(
-        'secret-tool',
-        ['lookup', 'service', service, 'account', 'localKey'],
-        { encoding: 'utf8' }
-      ).trim();
-      if (out) return out;
-    } catch {}
-  }
+  if (found.length) return found;
   throw new Error(
-    'Termius key not found in the Secret Service — is Termius installed and logged in on this machine?'
+    'Termius key not found in Credential Manager — is Termius installed and logged in on this Windows account?'
   );
 }
 
-function fetchMasterKey() {
-  let b64;
-  if (process.platform === 'win32') b64 = readWindowsMasterKeyBase64();
-  else if (process.platform === 'darwin') b64 = readMacMasterKeyBase64();
-  else b64 = readLinuxMasterKeyBase64();
+function readMacMasterKeysBase64() {
+  const found = [];
+  for (const service of KEY_SERVICES) {
+    try {
+      const out = execFileSync(
+        'security',
+        ['find-generic-password', '-s', service, '-a', KEY_ACCOUNT, '-w'],
+        { encoding: 'utf8' }
+      ).trim();
+      if (looksLikeMasterKey(out)) found.push({ service, b64: out });
+    } catch {}
+  }
+  if (found.length) return found;
+  throw new Error(
+    'Termius key not found in Keychain — is Termius installed and logged in on this machine?'
+  );
+}
 
-  const bytes = Buffer.from(b64.trim(), 'base64');
-  if (bytes.length !== 32) throw new Error('Termius master key is not 32 bytes');
-  return bytes;
+function readLinuxMasterKeysBase64() {
+  const found = [];
+  let sawSecretTool = false;
+  for (const service of KEY_SERVICES) {
+    try {
+      const out = execFileSync(
+        'secret-tool',
+        ['lookup', 'service', service, 'account', KEY_ACCOUNT],
+        { encoding: 'utf8' }
+      ).trim();
+      sawSecretTool = true;
+      if (looksLikeMasterKey(out)) found.push({ service, b64: out });
+    } catch (err) {
+      // ENOENT means secret-tool itself is missing; a non-zero exit only means
+      // this particular service name holds nothing.
+      if (err?.code !== 'ENOENT') sawSecretTool = true;
+    }
+  }
+  if (found.length) return found;
+  if (!sawSecretTool) {
+    throw new Error(
+      'secret-tool is not installed, so the Termius key cannot be read from the keyring. Install it (libsecret-tools on Debian/Ubuntu, libsecret on Arch, libsecret-tools on Fedora) and try again.'
+    );
+  }
+  throw new Error(
+    'Termius key not found in the Secret Service — is Termius installed and logged in on this machine, and is your keyring unlocked?'
+  );
+}
+
+function fetchMasterKeys() {
+  let candidates;
+  if (process.platform === 'win32') candidates = readWindowsMasterKeysBase64();
+  else if (process.platform === 'darwin') candidates = readMacMasterKeysBase64();
+  else candidates = readLinuxMasterKeysBase64();
+
+  const keys = [];
+  const seen = new Set();
+  for (const { service, b64 } of candidates) {
+    const bytes = Buffer.from(String(b64).trim(), 'base64');
+    if (bytes.length !== MASTER_KEY_BYTES) continue;
+    const id = bytes.toString('base64');
+    if (seen.has(id)) continue;
+    seen.add(id);
+    keys.push({ bytes, service });
+  }
+  if (!keys.length) throw new Error('Termius master key is not 32 bytes');
+  return keys;
 }
 
 async function readAllEntries(dir) {
@@ -438,21 +597,19 @@ function isInactiveStatus(status) {
   return s === 'deleted' || s === 'removed' || s === 'delete' || s.endsWith('_failed');
 }
 
-async function extractTermiusRecords() {
-  const dir = findTermiusDbDir();
-  const masterKey = fetchMasterKey();
+/**
+ * How much the key actually opened. A record survives the wrong key — its id
+ * and status are in the clear — so counting records says nothing about whether
+ * the key was right. Only the fields that had to be decrypted do.
+ */
+function decryptedFieldCount(records) {
+  let count = 0;
+  for (const rec of records) count += Object.keys(rec.decrypted ?? {}).length;
+  return count;
+}
 
-  const temp = await copyDbToTemp(dir);
-  let entries;
-  try {
-    entries = await readAllEntries(temp);
-  } finally {
-    await fsp.rm(temp, { recursive: true, force: true }).catch(() => {});
-  }
-
-  const dbNames = buildDbNameMap(entries);
-  const records = [];
-
+function collectRecords(entries, dbNames, masterKey) {
+  const found = [];
   for (const [k, v] of entries) {
     const idb = decodeIdbKey(k);
     if (!idb) continue;
@@ -468,16 +625,218 @@ async function extractTermiusRecords() {
     if (!rec) continue;
     if (isInactiveStatus(rec.status)) continue;
 
-    records.push({ dbName, termiusId: rec.termiusId, foreignKeys: rec.foreignKeys, decrypted: rec.body });
+    found.push({ dbName, termiusId: rec.termiusId, foreignKeys: rec.foreignKeys, decrypted: rec.body });
+  }
+  return found;
+}
+
+function parseRecordTime(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const t = Date.parse(value);
+    if (Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+
+/**
+ * What the records themselves say about how current a database is, read in the
+ * clear and without a key. Two signals, because a schema change can take either
+ * one away:
+ *
+ *   - the newest `updated_at` any record carries;
+ *   - the highest id, which Termius assigns server-side and only ever climbs as
+ *     an account syncs new records, so the database that went on syncing
+ *     longest holds the highest one.
+ *
+ * Both live inside the data, so copying, restoring, or migrating a database
+ * cannot advance either. That is exactly what the file's own timestamps cannot
+ * promise, and why these are asked first.
+ */
+function recordSignals(entries) {
+  let recordTime = 0;
+  let highestId = 0;
+  for (const [k, v] of entries) {
+    const idb = decodeIdbKey(k);
+    if (!idb) continue;
+    if (idb.indexId !== 0x01 || idb.objectStoreId !== 0x01) continue;
+    const envelope = decodeEnvelope(v);
+    if (!envelope || typeof envelope !== 'object') continue;
+    const t = parseRecordTime(envelope.updated_at);
+    if (t > recordTime) recordTime = t;
+    if (typeof envelope.id === 'number' && envelope.id > highestId) highestId = envelope.id;
+  }
+  return { recordTime, highestId };
+}
+
+/**
+ * Ranks one database-and-key pairing against the best seen so far.
+ *
+ * Ahead of everything: a pairing that opened nothing never displaces one that
+ * opened something, so a stale database no key fits cannot win on age.
+ *
+ * Two pairings that read the same database share every age signal, so between
+ * them the only question is which key fits it, and the key that decrypts more
+ * of it does. A stale key can still open a legacy field or two, which is why
+ * the measure is how much opened, not whether anything did.
+ *
+ * Between databases opened by different keys, nothing measurable decides,
+ * because each key opens its own account's data and no signal on the machine
+ * proves which account is the signed-in one. `updated_at` is stamped when a
+ * record is edited, not when an account is used, so a signed-out account
+ * whose hosts changed last week outranks an active account whose hosts sat
+ * untouched for a year; ids climb in per-account sequences that never
+ * compare; decrypted-field counts only measure how much each account
+ * accumulated; and the keychain's service names say which Termius era wrote
+ * each key, not which account is in use. So different-key pairings are
+ * ranked by keychain order — the name current Termius writes is the better
+ * guess — but that guess only chooses the default: every account that
+ * opened a database of its own is offered, and the user makes the call.
+ * See selectSources.
+ *
+ * Between databases sharing one key — copies of one account — the records
+ * are comparable and are asked in order of how hard they are to fake. The
+ * newest `updated_at` comes first: a copied or restored database carries
+ * file times from the day it was moved, but nothing can advance the stamps
+ * inside it. Ids next: Termius assigns them server-side, so the higher id
+ * marks the copy that kept syncing longest. Only then the decrypted-field
+ * count, because an abandoned copy can still decrypt more than the live one
+ * — it holds every host deleted since — and record volume last of all.
+ *
+ * File times decide nothing at any step: a restore resets them, so any order
+ * they could impose is exactly the wrong one in the case that matters.
+ */
+function isBetterAttempt(best, attempt) {
+  if (!best) return true;
+  if ((attempt.score > 0) !== (best.score > 0)) return attempt.score > 0;
+  if (attempt.dir === best.dir) {
+    if (attempt.score !== best.score) return attempt.score > best.score;
+    return attempt.records.length > best.records.length;
+  }
+  if (attempt.keyIndex !== best.keyIndex) return attempt.keyIndex < best.keyIndex;
+  if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
+  if (attempt.highestId !== best.highestId) return attempt.highestId > best.highestId;
+  if (attempt.score !== best.score) return attempt.score > best.score;
+  return attempt.records.length > best.records.length;
+}
+
+async function readEntriesFrom(dir) {
+  const temp = await copyDbToTemp(dir);
+  try {
+    return await readAllEntries(temp);
+  } finally {
+    await fsp.rm(temp, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Reduces every database-and-key pairing tried to the accounts worth offering.
+ *
+ * A key claims a database only where no other key opens it better. A stale
+ * key can graze a couple of legacy fields in another account's database, and
+ * that database's own key always out-opens it there, so the graze never
+ * counts as the account's data — and never lets that database ride in on the
+ * age of records the key cannot actually read.
+ *
+ * Each key is one account, so the claimed pairings collapse to one champion
+ * per key, found with the same ranking that picks the overall default. The
+ * default comes first. The other accounts follow if they opened a database
+ * of their own — a database the default already claimed holds the default's
+ * data, not a second account.
+ *
+ * More than one source coming back means the machine holds accounts that no
+ * signal can choose between — see isBetterAttempt for why not — and the
+ * choice belongs to the user, in the import preview.
+ */
+function selectSources(attempts) {
+  const topScoreByDir = new Map();
+  for (const attempt of attempts) {
+    const top = topScoreByDir.get(attempt.dir);
+    if (top === undefined || attempt.score > top) topScoreByDir.set(attempt.dir, attempt.score);
+  }
+  const claimed = attempts.filter((attempt) => attempt.score === topScoreByDir.get(attempt.dir));
+
+  let best = null;
+  for (const attempt of claimed) {
+    if (isBetterAttempt(best, attempt)) best = attempt;
+  }
+  if (!best) return [];
+
+  const bestByKey = new Map();
+  for (const attempt of claimed) {
+    const prior = bestByKey.get(attempt.keyIndex) ?? null;
+    if (isBetterAttempt(prior, attempt)) bestByKey.set(attempt.keyIndex, attempt);
   }
 
-  if (records.length === 0) {
+  const sources = [best];
+  for (const [, attempt] of [...bestByKey.entries()].sort((a, b) => a[0] - b[0])) {
+    if (attempt === best) continue;
+    if (attempt.score > 0 && attempt.dir !== best.dir) sources.push(attempt);
+  }
+  return sources;
+}
+
+async function extractTermiusRecords() {
+  const dirs = findTermiusDbDirs();
+  const masterKeys = fetchMasterKeys();
+
+  // An install that was replaced leaves its database behind, and an account
+  // signed out long ago leaves its key in the keychain next to the live one —
+  // the same length and equally well-formed. Nothing about either value says
+  // which is current, and picking the wrong one does not fail loudly: the
+  // records still come back, just with every encrypted field quietly missing.
+  // A stale pairing can even open a field or two, so first-that-works is not
+  // good enough. Every database is read with every key; the ranked pairings
+  // pick a default and every other account found stays on offer — see
+  // isBetterAttempt and selectSources.
+  const attempts = [];
+  let totalEntries = 0;
+  let opened = 0;
+  let lastError = null;
+
+  for (const dir of dirs) {
+    let entries;
+    try {
+      entries = await readEntriesFrom(dir);
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
+    opened += 1;
+    totalEntries += entries.length;
+
+    const dbNames = buildDbNameMap(entries);
+    const { recordTime, highestId } = recordSignals(entries);
+    for (const [keyIndex, { bytes, service }] of masterKeys.entries()) {
+      const records = collectRecords(entries, dbNames, bytes);
+      attempts.push({
+        score: decryptedFieldCount(records),
+        records,
+        recordTime,
+        highestId,
+        keyIndex,
+        service,
+        dir,
+      });
+    }
+  }
+
+  if (opened === 0) {
     throw new Error(
-      `Extracted 0 records from ${entries.length} leveldb entries. Termius's IndexedDB schema may have changed, or Termius is not installed / not logged in on this machine.`
+      `Termius database could not be read. Tried:\n  ${dirs.join('\n  ')}${
+        lastError ? `\nLast error: ${lastError.message}` : ''
+      }`
     );
   }
 
-  return records;
+  const sources = selectSources(attempts).filter((s) => s.records.length > 0);
+  if (sources.length === 0) {
+    throw new Error(
+      `Extracted 0 records from ${totalEntries} leveldb entries. Termius's IndexedDB schema may have changed, or Termius is not installed / not logged in on this machine.`
+    );
+  }
+
+  return sources;
 }
 
 function str(v) {
@@ -655,8 +1014,7 @@ function buildConnections(idx, keyLocalIdByTermiusId, identityBySshConfigId) {
   return connections;
 }
 
-async function previewTermiusImport() {
-  const records = await extractTermiusRecords();
+function buildPreview(records) {
   const idx = indexRecords(records);
   const { keys, keyLocalIdByTermiusId } = buildKeys(idx);
   const identityBySshConfigId = buildIdentityBySshConfigId(idx);
@@ -665,9 +1023,39 @@ async function previewTermiusImport() {
   return { keys, connections, snippets };
 }
 
+/**
+ * One preview per account found, the default first. A single source is the
+ * usual case; more than one means the machine holds data from accounts that
+ * nothing on it can rank with certainty, so the preview offers all of them
+ * and the dialog asks the user which account to import from.
+ */
+async function previewTermiusImport() {
+  const found = await extractTermiusRecords();
+  const sources = found.map((source, i) => ({
+    id: i,
+    service: source.service,
+    dbPath: source.dir,
+    newestActivity: source.recordTime > 0 ? source.recordTime : null,
+    ...buildPreview(source.records),
+  }));
+  return { ...sources[0], sources };
+}
+
 module.exports = {
+  collectRecords,
+  decryptedFieldCount,
+  fetchMasterKeys,
+  looksLikeMasterKey,
   previewTermiusImport,
   extractTermiusRecords,
+  termiusDataDirs,
+  termiusDbCandidates,
+  findTermiusDbDirs,
+  isBetterAttempt,
+  selectSources,
+  recordSignals,
+  rankLeveldbName,
+  windowsCredTargets,
   decodeEnvelope,
   decodeIdbKey,
   buildDbNameMap,

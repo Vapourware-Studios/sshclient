@@ -25,6 +25,18 @@ export default function TermiusImportDialog({ open, onOpenChange, onImported }) 
   const [selectedSnippets, setSelectedSnippets] = useState(() => new Set());
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
+  const [sources, setSources] = useState([]);
+  const [activeSourceId, setActiveSourceId] = useState(0);
+
+  function applySource(source) {
+    setConnections(source.connections);
+    setKeys(source.keys);
+    setSnippets(source.snippets);
+    setSelected(
+      new Set(source.connections.filter((c) => !c.invalidReason).map((c) => c.localId))
+    );
+    setSelectedSnippets(new Set(source.snippets.map((s) => s.localId)));
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -33,6 +45,7 @@ export default function TermiusImportDialog({ open, onOpenChange, onImported }) 
     setResult(null);
     setConnections([]);
     setSnippets([]);
+    setSources([]);
     setLoading(true);
     window.api.termiusPreviewImport().then((res) => {
       if (cancelled) return;
@@ -41,11 +54,10 @@ export default function TermiusImportDialog({ open, onOpenChange, onImported }) 
         setError(res.error);
         return;
       }
-      setConnections(res.connections);
-      setKeys(res.keys);
-      setSnippets(res.snippets);
-      setSelected(new Set(res.connections.filter((c) => !c.invalidReason).map((c) => c.localId)));
-      setSelectedSnippets(new Set(res.snippets.map((s) => s.localId)));
+      const found = res.sources ?? [res];
+      setSources(found);
+      setActiveSourceId(found[0].id ?? 0);
+      applySource(found[0]);
     });
     return () => {
       cancelled = true;
@@ -208,6 +220,48 @@ export default function TermiusImportDialog({ open, onOpenChange, onImported }) 
                 </ul>
               </div>
             )}
+          </div>
+        )}
+
+        {!loading && !error && !result && sources.length > 1 && (
+          <div className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <TriangleAlert className="size-4 shrink-0 text-amber-500" />
+              More than one Termius account was found on this machine
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Nothing on this machine can prove which account you are signed into, so choose the
+              one to import from.
+            </p>
+            <div className="flex flex-col gap-1">
+              {sources.map((source) => (
+                <button
+                  key={source.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveSourceId(source.id);
+                    applySource(source);
+                  }}
+                  className={`flex flex-col items-start rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                    source.id === activeSourceId
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:bg-accent'
+                  }`}
+                >
+                  <span className="font-medium">
+                    {source.connections.length} connection
+                    {source.connections.length === 1 ? '' : 's'}, {source.snippets.length} snippet
+                    {source.snippets.length === 1 ? '' : 's'}
+                    {source.newestActivity
+                      ? ` — last activity ${new Date(source.newestActivity).toLocaleDateString()}`
+                      : ''}
+                  </span>
+                  <span className="w-full truncate font-mono text-xs text-muted-foreground">
+                    key "{source.service}" · {source.dbPath}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

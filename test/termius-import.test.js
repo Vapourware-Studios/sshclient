@@ -12,6 +12,8 @@ const {
   buildIdentityBySshConfigId,
   buildConnections,
   buildSnippets,
+  collectRecords,
+  decryptedFieldCount,
 } = require('../src/main/termiusImport');
 
 function pushVarint(v, out) {
@@ -216,4 +218,491 @@ test('buildSnippets skips snippets with no script content', () => {
   const records = [record('snippets', 100, { label: 'Empty' })];
   const idx = indexRecords(records);
   assert.equal(buildSnippets(idx).length, 0);
+});
+
+const fs = require('node:fs');
+const os = require('node:os');
+const nodePath = require('node:path');
+const {
+  rankLeveldbName,
+  termiusDbCandidates,
+  windowsCredTargets,
+} = require('../src/main/termiusImport');
+
+function withPlatform(platform, fn) {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
+}
+
+test('rankLeveldbName prefers the file:// origin store', () => {
+  const names = [
+    'https_termius.com_0.indexeddb.leveldb',
+    'chrome-extension_x_0.indexeddb.leveldb',
+    'file__0.indexeddb.leveldb',
+    'file__1.indexeddb.leveldb',
+  ];
+  const sorted = [...names].sort((a, b) => rankLeveldbName(a) - rankLeveldbName(b));
+  assert.equal(sorted[0], 'file__0.indexeddb.leveldb');
+  assert.equal(sorted[1], 'file__1.indexeddb.leveldb');
+  assert.equal(sorted[3], 'chrome-extension_x_0.indexeddb.leveldb');
+});
+
+test('termiusDbCandidates finds stores under an XDG config dir and skips empty ones', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  const idb = nodePath.join(root, 'Termius', 'IndexedDB');
+  const real = nodePath.join(idb, 'file__0.indexeddb.leveldb');
+  const empty = nodePath.join(idb, 'https_termius.com_0.indexeddb.leveldb');
+  fs.mkdirSync(real, { recursive: true });
+  fs.mkdirSync(empty, { recursive: true });
+  fs.writeFileSync(nodePath.join(real, '000003.log'), '');
+
+  const previous = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = root;
+  try {
+    const found = withPlatform('linux', () => termiusDbCandidates());
+    assert.deepEqual(found, [real]);
+  } finally {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('windowsCredTargets covers both keytar service names', () => {
+  const targets = withPlatform('win32', () => windowsCredTargets());
+  assert.ok(targets.includes('Termius/localKey'));
+  assert.ok(targets.includes('termius-app/localKey'));
+  assert.equal(new Set(targets).size, targets.length);
+});
+
+test('the current service name is tried ahead of the legacy one', () => {
+  // Every key found is tried against every database, and when two accounts
+  // both hold data here the order only picks which one the preview shows
+  // first — the name current Termius writes is the better guess, so it has
+  // to come before the one only older versions wrote.
+  const targets = withPlatform('win32', () => windowsCredTargets());
+  assert.ok(
+    targets.indexOf('termius-app/localKey') < targets.indexOf('Termius/localKey'),
+    'a stale key under the legacy name cannot win a tie against the current one'
+  );
+});
+
+test('a stale credential under one service name does not mask the live key', () => {
+  const { looksLikeMasterKey } = require('../src/main/termiusImport');
+  const key = Buffer.alloc(32, 7).toString('base64');
+  const stale = Buffer.from('not-a-key').toString('base64');
+
+  assert.equal(looksLikeMasterKey(key), true);
+  assert.equal(looksLikeMasterKey(stale), false);
+  assert.equal(looksLikeMasterKey(''), false);
+  assert.equal(looksLikeMasterKey(null), false);
+  assert.equal(looksLikeMasterKey(undefined), false);
+  // Whitespace around the value is how the shell tools hand it back.
+  assert.equal(looksLikeMasterKey(`  ${key}\n`), true);
+});
+
+// An IndexedDB row key: 0x00, then db / object-store / index ids.
+function idbKey(dbId) {
+  return Buffer.from([0x00, dbId, 0x01, 0x01]);
+}
+
+function sealed(masterKey, plaintext) {
+  const nonce = nacl.randomBytes(24);
+  const box = nacl.secretbox(new Uint8Array(Buffer.from(plaintext)), nonce, masterKey);
+  return Buffer.concat([Buffer.from([0x04, 0x00]), Buffer.from(nonce), Buffer.from(box)]).toString(
+    'base64'
+  );
+}
+
+test('a stale key of the right length still yields nothing, so the live one is reached', () => {
+  const live = nacl.randomBytes(32);
+  const stale = nacl.randomBytes(32);
+  // Both are real keys as far as any shape check goes.
+  assert.equal(live.length, stale.length);
+
+  const bytes = [0x6f];
+  pushKeyInt('id', 4242, bytes);
+  pushKeyStr('status', 'SYNCHRONIZED', bytes);
+  pushKeyStr('label', sealed(live, 'web-01'), bytes);
+  closeObj(3, bytes);
+
+  const entries = [[idbKey(1), Buffer.from(bytes)]];
+  const dbNames = new Map([[1, 'host']]);
+
+  // The wrong key does not fail loudly: the record still comes back, because
+  // its id and status were never encrypted. Only the encrypted field is gone —
+  // so record count says nothing and the decrypted-field count says everything.
+  const withStale = collectRecords(entries, dbNames, Buffer.from(stale));
+  assert.equal(withStale.length, 1, 'the record survives the wrong key');
+  assert.equal(decryptedFieldCount(withStale), 0, 'but nothing was opened');
+
+  const found = collectRecords(entries, dbNames, Buffer.from(live));
+  assert.equal(decryptedFieldCount(found), 1);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].dbName, 'host');
+  assert.equal(found[0].termiusId, 4242);
+  assert.equal(found[0].decrypted.label, 'web-01');
+});
+
+const {
+  findTermiusDbDirs,
+  isBetterAttempt,
+  selectSources,
+  recordSignals,
+} = require('../src/main/termiusImport');
+
+test('findTermiusDbDirs returns every candidate, not just the first', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  const home = nodePath.join(root, 'home');
+  const xdg = nodePath.join(root, 'xdg');
+
+  // A plain install left behind, and a Snap that replaced it.
+  const stale = nodePath.join(xdg, 'Termius', 'IndexedDB', 'file__0.indexeddb.leveldb');
+  const snap = nodePath.join(
+    home,
+    'snap',
+    'termius-app',
+    'current',
+    '.config',
+    'Termius',
+    'IndexedDB',
+    'file__0.indexeddb.leveldb'
+  );
+  for (const dir of [stale, snap]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(nodePath.join(dir, '000003.log'), '');
+  }
+
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousHome = process.env.HOME;
+  process.env.XDG_CONFIG_HOME = xdg;
+  process.env.HOME = home;
+  try {
+    const found = withPlatform('linux', () => findTermiusDbDirs());
+    assert.ok(found.includes(stale), 'the plain install is offered');
+    assert.ok(found.includes(snap), 'and so is the Snap that replaced it');
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('findTermiusDbDirs throws when no database exists', () => {
+  const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'sshclient-termius-test-'));
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousHome = process.env.HOME;
+  process.env.XDG_CONFIG_HOME = nodePath.join(root, 'xdg');
+  process.env.HOME = nodePath.join(root, 'home');
+  try {
+    assert.throws(
+      () => withPlatform('linux', () => findTermiusDbDirs()),
+      /Termius database not found/
+    );
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Two keys tried against the same database share both of its age signals.
+const SAME_DB = { recordTime: 5000, highestId: 500, dir: '/install/db' };
+
+test('within one database, the key that opens the most wins', () => {
+  const staleKey = { score: 1, records: [{}, {}, {}, {}], keyIndex: 1, ...SAME_DB };
+  const liveKey = { score: 12, records: [{}, {}], keyIndex: 0, ...SAME_DB };
+
+  // First-that-works would have kept the stale key on its one legacy field.
+  assert.equal(isBetterAttempt(null, staleKey), true);
+  assert.equal(isBetterAttempt(staleKey, liveKey), true);
+  assert.equal(isBetterAttempt(liveKey, staleKey), false);
+});
+
+test('within one database, the fitting key wins whatever name it sits under', () => {
+  // A machine can hold the stray key under the current name and the key this
+  // database actually answers to under the legacy one. On a single database
+  // the fit is measurable, so the keychain's opinion is not consulted.
+  const strayUnderCurrentName = { score: 1, records: [{}, {}, {}], keyIndex: 0, ...SAME_DB };
+  const fitsUnderLegacyName = { score: 12, records: [{}, {}], keyIndex: 1, ...SAME_DB };
+
+  assert.equal(isBetterAttempt(strayUnderCurrentName, fitsUnderLegacyName), true);
+  assert.equal(isBetterAttempt(fitsUnderLegacyName, strayUnderCurrentName), false);
+});
+
+test('within one database, an exact tie falls to the fuller result', () => {
+  const fewer = { score: 4, records: [{}, {}], keyIndex: 0, ...SAME_DB };
+  const more = { score: 4, records: [{}, {}, {}], keyIndex: 1, ...SAME_DB };
+
+  assert.equal(isBetterAttempt(fewer, more), true);
+  assert.equal(isBetterAttempt(more, fewer), false);
+});
+
+test('the newer database wins, however much the stale one holds', () => {
+  // The abandoned install still holds every host the account has since deleted,
+  // so it decrypts more of everything. Volume is not the question being asked.
+  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, highestId: 900, keyIndex: 0, dir: '/old/db' };
+  const current = { score: 6, records: [{}, {}], recordTime: 2000, highestId: 10, keyIndex: 0, dir: '/new/db' };
+
+  assert.equal(isBetterAttempt(stale, current), true, 'the newer install wins');
+  assert.equal(isBetterAttempt(current, stale), false, 'and does not lose on volume');
+});
+
+test('a stale account cannot win on its own id space', () => {
+  // Ids climb per account, so a long-abandoned account can hold ids far past
+  // the current one's, and its retained key still opens all of its data. Those
+  // numbers live in different id spaces and never compare. Which account is
+  // signed in is the keychain's to answer: the key stored under the name
+  // current Termius writes belongs to the account this machine uses.
+  const staleAccount = {
+    score: 90,
+    records: new Array(30).fill({}),
+    recordTime: 0,
+    highestId: 90_000,
+    keyIndex: 1,
+    dir: '/old/db',
+  };
+  const currentAccount = {
+    score: 6,
+    records: [{}, {}],
+    recordTime: 0,
+    highestId: 12,
+    keyIndex: 0,
+    dir: '/new/db',
+  };
+
+  assert.equal(isBetterAttempt(staleAccount, currentAccount), true);
+  assert.equal(isBetterAttempt(currentAccount, staleAccount), false);
+});
+
+test('a signed-out account cannot win on fresher record stamps', () => {
+  // updated_at says when a record was edited, not when an account was used: a
+  // signed-out account whose hosts changed last week outranks, on every
+  // record signal there is, an active account whose hosts sat untouched for a
+  // year. So between different keys none of the record signals is asked; the
+  // keychain names the likelier account, its pairing becomes the default the
+  // preview opens on, and the other account stays on offer — selectSources.
+  const signedOut = {
+    score: 90,
+    records: new Array(30).fill({}),
+    recordTime: 9000,
+    highestId: 90_000,
+    keyIndex: 1,
+    dir: '/old/db',
+  };
+  const active = { score: 6, records: [{}, {}], recordTime: 1000, highestId: 12, keyIndex: 0, dir: '/new/db' };
+
+  assert.equal(isBetterAttempt(signedOut, active), true);
+  assert.equal(isBetterAttempt(active, signedOut), false);
+});
+
+test('a fuller copy wins once the records agree', () => {
+  // Same account by key, same state by both record signals, so what is left is
+  // which copy actually opens. Nothing a restore changes plays any part.
+  const thinner = {
+    score: 4,
+    records: [{}, {}],
+    recordTime: 7000,
+    highestId: 7,
+    keyIndex: 0,
+    dir: '/restored/db',
+  };
+  const fuller = { score: 9, records: [{}, {}], recordTime: 7000, highestId: 7, keyIndex: 0, dir: '/live/db' };
+
+  assert.equal(isBetterAttempt(thinner, fuller), true);
+  assert.equal(isBetterAttempt(fuller, thinner), false);
+});
+
+test('an exact tie keeps the pairing found first', () => {
+  // Same key, same age, same reach, same amount opened: the two are copies of
+  // one another, and nothing — file times included — is left to consult.
+  const first = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, keyIndex: 0, dir: '/a' };
+  const second = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, keyIndex: 0, dir: '/b' };
+
+  assert.equal(isBetterAttempt(first, second), false);
+});
+
+test('a newer database that no key opens never displaces one that opened', () => {
+  const opened = { score: 3, records: [{}, {}], recordTime: 1000, highestId: 10, keyIndex: 1, dir: '/a' };
+  const newerButShut = {
+    score: 0,
+    records: new Array(50).fill({}),
+    recordTime: 9000,
+    highestId: 9000,
+    keyIndex: 0,
+    dir: '/b',
+  };
+
+  assert.equal(isBetterAttempt(opened, newerButShut), false);
+  assert.equal(isBetterAttempt(newerButShut, opened), true);
+});
+
+// Two accounts, each with its own database and key. The signed-out one has
+// been around longer, so it holds more of everything and its records carry
+// the fresher stamps. Each key also grazes the other account's database for
+// a stray legacy field or nothing at all.
+function twoAccountAttempts({ currentKeyIndex, staleKeyIndex }) {
+  const current = { score: 6, records: [{}, {}], recordTime: 1000, highestId: 12, keyIndex: currentKeyIndex, dir: '/new/db' };
+  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: staleKeyIndex, dir: '/old/db' };
+  const currentGrazesOld = { score: 1, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: currentKeyIndex, dir: '/old/db' };
+  const staleGrazesNew = { score: 0, records: [{}, {}], recordTime: 1000, highestId: 12, keyIndex: staleKeyIndex, dir: '/new/db' };
+  return { current, stale, attempts: [current, stale, currentGrazesOld, staleGrazesNew] };
+}
+
+test('two accounts that each open their own database are both offered', () => {
+  // Nothing on the machine proves which account is signed in, so neither is
+  // silently dropped — the user chooses in the preview. The current-name key
+  // is the better guess, so its account is the default in front.
+  const { attempts } = twoAccountAttempts({ currentKeyIndex: 0, staleKeyIndex: 1 });
+  const sources = selectSources(attempts);
+
+  assert.deepEqual(sources.map((s) => s.dir), ['/new/db', '/old/db']);
+  assert.deepEqual(sources.map((s) => s.keyIndex), [0, 1]);
+});
+
+test('reversing the service-name order changes the default, never the offer', () => {
+  // The active account's key can sit under the legacy name while a signed-out
+  // account retains the current one. The order is only a guess, so the guess
+  // may lead — but the active account must still be on the table.
+  const { attempts } = twoAccountAttempts({ currentKeyIndex: 1, staleKeyIndex: 0 });
+  const sources = selectSources(attempts);
+
+  assert.deepEqual(sources.map((s) => s.dir).sort(), ['/new/db', '/old/db']);
+  assert.equal(sources[0].keyIndex, 0, 'the first-listed key still fronts the offer');
+  assert.equal(sources.length, 2, 'and the other account is still there to pick');
+});
+
+test('a grazed foreign database never becomes the default', () => {
+  // The stale database carries the freshest stamps, and the current key does
+  // open one stray legacy field in it. Its own key out-opens that graze, so
+  // the graze claims nothing, and the fresh stamps cannot drag the current
+  // key onto a database it cannot actually read.
+  const { current, attempts } = twoAccountAttempts({ currentKeyIndex: 0, staleKeyIndex: 1 });
+  const sources = selectSources(attempts);
+
+  assert.equal(sources[0], current);
+});
+
+test('a key that only grazes a foreign database is not offered as an account', () => {
+  // The account whose database is gone has nothing here to import: one stray
+  // decrypted field in another account's database is not it.
+  const owner = { score: 90, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: 1, dir: '/old/db' };
+  const grazer = { score: 1, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: 0, dir: '/old/db' };
+
+  const sources = selectSources([owner, grazer]);
+  assert.deepEqual(sources, [owner]);
+});
+
+test('copies of one account collapse to a single source', () => {
+  // One key, two databases: a live install and a restored copy. That is one
+  // account, so the preview gets one source — the copy the ranking picks.
+  const live = { score: 8, records: [{}, {}], recordTime: 9000, highestId: 8800, keyIndex: 0, dir: '/live/db' };
+  const restored = { score: 40, records: new Array(20).fill({}), recordTime: 1000, highestId: 120, keyIndex: 0, dir: '/restored/db' };
+
+  const sources = selectSources([live, restored]);
+  assert.deepEqual(sources, [live]);
+});
+
+test('selectSources returns nothing when nothing was tried', () => {
+  assert.deepEqual(selectSources([]), []);
+});
+
+function stampedRecord(id, updatedAt, status = 'SYNCHRONIZED') {
+  const bytes = [0x6f];
+  pushKeyInt('id', id, bytes);
+  pushKeyStr('status', status, bytes);
+  if (updatedAt !== undefined) pushKeyStr('updated_at', updatedAt, bytes);
+  closeObj(updatedAt === undefined ? 2 : 3, bytes);
+  return [idbKey(1), Buffer.from(bytes)];
+}
+
+test('recordSignals takes the latest stamp and the highest id, needing no key', () => {
+  const entries = [
+    stampedRecord(1, '2026-04-08T16:37:59Z'),
+    stampedRecord(4242, '2026-05-25T10:07:45Z'),
+    stampedRecord(300, '2026-01-02T03:04:05Z'),
+  ];
+
+  assert.deepEqual(recordSignals(entries), {
+    recordTime: Date.parse('2026-05-25T10:07:45Z'),
+    highestId: 4242,
+  });
+});
+
+test('recordSignals still reports an id when no record carries a stamp', () => {
+  // The id is what keeps a restored copy from winning on volume once a schema
+  // change has taken updated_at away.
+  assert.deepEqual(recordSignals([stampedRecord(77)]), { recordTime: 0, highestId: 77 });
+  assert.deepEqual(recordSignals([]), { recordTime: 0, highestId: 0 });
+});
+
+test('recordSignals ignores a stamp it cannot read', () => {
+  assert.deepEqual(recordSignals([stampedRecord(9, 'not-a-date')]), {
+    recordTime: 0,
+    highestId: 9,
+  });
+});
+
+test('deleting a host keeps the live database ahead of a restored copy', () => {
+  // The case where a stale copy would otherwise look richer than the live one:
+  // the host it still holds was deleted here, so this database has fewer
+  // records to open and would lose on volume alone.
+  //
+  // Termius does not drop a deleted record, it marks it — and recordSignals
+  // reads every record in the clear, tombstones included. So the deletion is
+  // itself the newest thing either database has to show, and the live database
+  // wins on the first signal asked, whatever a restore did to the copy since.
+  const live = [
+    stampedRecord(1, '2026-04-08T16:37:59Z'),
+    stampedRecord(2, '2026-05-25T10:07:45Z', 'deleted'),
+  ];
+  const restoredCopy = [
+    stampedRecord(1, '2026-04-08T16:37:59Z'),
+    stampedRecord(2, '2026-04-08T16:38:10Z'),
+  ];
+
+  const liveSignals = recordSignals(live);
+  const staleSignals = recordSignals(restoredCopy);
+  assert.ok(liveSignals.recordTime > staleSignals.recordTime, 'the deletion is the newer stamp');
+
+  // The stale copy still opens the host that was deleted here, so it holds
+  // more and decrypts more — the signals that only speak after age.
+  const liveAttempt = { ...liveSignals, score: 4, records: [{}], keyIndex: 0, dir: '/live/db' };
+  const staleAttempt = { ...staleSignals, score: 8, records: [{}, {}], keyIndex: 0, dir: '/restored/db' };
+
+  assert.equal(isBetterAttempt(staleAttempt, liveAttempt), true, 'age is asked first, and settles it');
+  assert.equal(isBetterAttempt(liveAttempt, staleAttempt), false);
+});
+
+test('the copy that synced furthest wins when no stamps survive', () => {
+  // One key, so one account: a schema change took updated_at away, and only
+  // the ids still record which copy of that account's data went on growing.
+  const restoredStale = {
+    score: 40,
+    records: new Array(20).fill({}),
+    recordTime: 0,
+    highestId: 120,
+    keyIndex: 0,
+    dir: '/restored/db',
+  };
+  const current = {
+    score: 8,
+    records: [{}, {}],
+    recordTime: 0,
+    highestId: 8800,
+    keyIndex: 0,
+    dir: '/live/db',
+  };
+
+  assert.equal(isBetterAttempt(restoredStale, current), true);
+  assert.equal(isBetterAttempt(current, restoredStale), false);
 });
