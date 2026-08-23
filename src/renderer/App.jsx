@@ -609,11 +609,15 @@ export default function App() {
           hostKeyInfo: null,
         };
         const next = [...prev, restored];
+        // Whether the group outlived the attempt is only knowable from `prev`:
+        // a sole member takes its group down with it, and the tab comes back
+        // standalone. Selecting on `tab.groupId` would miss exactly that case
+        // and leave the restored tab — and the log it is holding — unselected.
+        if (!inGroup) setActiveTabId(tab.id);
         return inGroup
           ? next.map((t) => (t.id === tab.groupId ? { ...t, activeMemberId: tab.id } : t))
           : next;
       });
-      if (!tab.groupId) setActiveTabId(tab.id);
       return;
     }
 
