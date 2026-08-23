@@ -518,10 +518,10 @@ test('dbLastWritten reports nothing for a directory it cannot read', () => {
   assert.equal(dbLastWritten(nodePath.join(os.tmpdir(), 'sshclient-no-such-dir-xyz')), 0);
 });
 
-function stampedRecord(id, updatedAt) {
+function stampedRecord(id, updatedAt, status = 'SYNCHRONIZED') {
   const bytes = [0x6f];
   pushKeyInt('id', id, bytes);
-  pushKeyStr('status', 'SYNCHRONIZED', bytes);
+  pushKeyStr('status', status, bytes);
   if (updatedAt !== undefined) pushKeyStr('updated_at', updatedAt, bytes);
   closeObj(updatedAt === undefined ? 2 : 3, bytes);
   return [idbKey(1), Buffer.from(bytes)];
@@ -552,6 +552,37 @@ test('recordSignals ignores a stamp it cannot read', () => {
     recordTime: 0,
     highestId: 9,
   });
+});
+
+test('deleting a host keeps the live database ahead of a restored copy', () => {
+  // The case where a stale copy would otherwise look richer than the live one:
+  // the host it still holds was deleted here, so this database has fewer
+  // records to open and would lose on volume alone.
+  //
+  // Termius does not drop a deleted record, it marks it — and recordSignals
+  // reads every record in the clear, tombstones included. So the deletion is
+  // itself the newest thing either database has to show, and the live database
+  // wins on the first signal asked, long before the file times a restore reset.
+  const live = [
+    stampedRecord(1, '2026-04-08T16:37:59Z'),
+    stampedRecord(2, '2026-05-25T10:07:45Z', 'deleted'),
+  ];
+  const restoredCopy = [
+    stampedRecord(1, '2026-04-08T16:37:59Z'),
+    stampedRecord(2, '2026-04-08T16:38:10Z'),
+  ];
+
+  const liveSignals = recordSignals(live);
+  const staleSignals = recordSignals(restoredCopy);
+  assert.ok(liveSignals.recordTime > staleSignals.recordTime, 'the deletion is the newer stamp');
+
+  // The stale copy still opens the host that was deleted here, and was restored
+  // today, so it wins on both of the signals that come after age.
+  const liveAttempt = { ...liveSignals, score: 4, records: [{}], lastWritten: 1000 };
+  const staleAttempt = { ...staleSignals, score: 8, records: [{}, {}], lastWritten: 9_000_000 };
+
+  assert.equal(isBetterAttempt(staleAttempt, liveAttempt), true, 'age is asked first, and settles it');
+  assert.equal(isBetterAttempt(liveAttempt, staleAttempt), false);
 });
 
 test('the database that synced furthest wins when no stamps survive', () => {
