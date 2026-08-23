@@ -6,6 +6,7 @@ const path = require('path');
 const net = require('net');
 const { StringDecoder } = require('string_decoder');
 const vault = require('./vault');
+const localNetwork = require('./localNetwork');
 
 const sessions = new Map();
 const pending = new Map();
@@ -42,6 +43,40 @@ async function verifyHostKey(sessionId, host, port, fingerprint, onHostKey) {
   const trust = await onHostKey(sessionId, { host, port, fingerprint, changed: false });
   if (trust) vault.trustHostKey(host, port, fingerprint);
   return trust;
+}
+
+// Addresses that only exist on the network this machine is attached to.
+const PRIVATE_IPV4 = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+function isLocalNetworkHost(host) {
+  const name = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!name) return false;
+  if (PRIVATE_IPV4.test(name)) return true;
+  if (name.endsWith('.local')) return true;
+  // Link-local and unique-local IPv6.
+  return /^(fe[89ab][0-9a-f]:|f[cd][0-9a-f]{2}:)/.test(name);
+}
+
+/**
+ * macOS asks each app separately before it may speak to the network it is
+ * plugged into, and an app that has not been granted it does not get a refusal
+ * it can report — the connection fails as though the host were off. The errno
+ * is identical to a genuinely unreachable machine, so on the one platform that
+ * does this, to the one class of address it applies to, say that it might be
+ * the cause. Somebody staring at a router that is plainly switched on should
+ * not have to guess.
+ */
+function describeConnectError(err, host) {
+  if (process.platform === 'darwin' && err?.code === 'EHOSTUNREACH' && isLocalNetworkHost(host)) {
+    // The startup probe already put the question to the system. If it came
+    // back refused, say so plainly instead of offering it as a possibility.
+    const denied = localNetwork.getStatus() === 'denied';
+    return (
+      `${err.message}\n\nmacOS ${denied ? 'is' : 'may be'} denying this app access to your ` +
+      'local network. Check System Settings → Privacy & Security → Local Network.'
+    );
+  }
+  return err.message;
 }
 
 function buildConnectConfig(config) {
@@ -386,6 +421,7 @@ function connect(config, handlers = {}) {
 
   conn.on('error', (err) => {
     pending.delete(sessionId);
+    err.message = describeConnectError(err, connectConfig.host);
     log(`Connection error: ${err.message}`, 'error');
     // Once a session exists the renderer has already moved past "connecting",
     // so an error here is a drop mid-session — remember why, and let the
@@ -822,6 +858,8 @@ function disconnect(sessionId) {
 
 module.exports = {
   connect,
+  describeConnectError,
+  isLocalNetworkHost,
   write,
   resize,
   attach,

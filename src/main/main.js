@@ -12,6 +12,7 @@ const sync = require('./sync');
 const share = require('./share');
 const updater = require('./updater');
 const feedbackPrompt = require('./feedbackPrompt');
+const localNetwork = require('./localNetwork');
 const isMac = process.platform === 'darwin';
 
 const FEEDBACK_URL =
@@ -1044,6 +1045,17 @@ function buildMenu() {
 
 app.whenReady().then(() => {
   buildMenu();
+
+  // Ask macOS about the local network now, while nobody is waiting on a
+  // connection. Left until the first LAN host is clicked, a refusal arrives as
+  // an unexplained EHOSTUNREACH with no prompt to answer; asked here, the
+  // system shows its dialog against an app that has only just opened.
+  localNetwork.probeLocalNetwork().then(({ status, code }) => {
+    if (status === 'denied') {
+      console.warn(`Local network access appears blocked (${code}).`);
+    }
+  });
+
   if (process.platform === 'darwin') {
     app.dock.setIcon(path.join(__dirname, '..', '..', 'src', 'renderer', 'assets', 'icon.png'));
   }
