@@ -623,12 +623,42 @@ function collectRecords(entries, dbNames, masterKey) {
   return found;
 }
 
+function parseRecordTime(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const t = Date.parse(value);
+    if (Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+
 /**
- * When a database was last written to. Termius only writes to the store it is
- * actually using, so of two installs that both hold real data, the one touched
- * most recently is the one still in use. It is the only thing on disk that says
- * which layout is current — how much data a database holds does not, since an
- * install abandoned years ago keeps every host the account has since deleted.
+ * The newest `updated_at` any record in this database carries. Termius writes
+ * that field itself and leaves it in the clear, so it travels with the data:
+ * copying, restoring, or migrating an abandoned database hands its files fresh
+ * modification times, but cannot make its records any newer than the day the
+ * account stopped writing to them. That makes it the sounder answer to which
+ * copy is current, and it needs no key to read.
+ */
+function newestRecordTime(entries) {
+  let newest = 0;
+  for (const [k, v] of entries) {
+    const idb = decodeIdbKey(k);
+    if (!idb) continue;
+    if (idb.indexId !== 0x01 || idb.objectStoreId !== 0x01) continue;
+    const envelope = decodeEnvelope(v);
+    if (!envelope || typeof envelope !== 'object') continue;
+    const t = parseRecordTime(envelope.updated_at);
+    if (t > newest) newest = t;
+  }
+  return newest;
+}
+
+/**
+ * When a database was last written to. A weaker signal than the record stamps
+ * above — a plain file copy resets it — so it only breaks ties between
+ * databases whose records claim the same age, or stand in when a schema change
+ * means no record carries a stamp at all.
  */
 function dbLastWritten(dir) {
   let newest = 0;
@@ -653,17 +683,23 @@ function dbLastWritten(dir) {
  *
  * The two questions this settles are not the same, and neither answer works for
  * the other. Which database is current is a question about the install, and is
- * settled by which was written to last. Which key is right is a question about
- * the account, and is settled by how much that key opened. So recency picks the
- * database, and the decrypted-field count only breaks ties between the keys
- * tried against that one database, where recency is necessarily equal.
+ * settled by age. Which key is right is a question about the account, and is
+ * settled by how much that key opened. So age picks the database, and the
+ * decrypted-field count only breaks ties between the keys tried against that
+ * one database, where age is necessarily equal.
  *
- * Ahead of both: a pairing that opened nothing never displaces one that opened
- * something, so a stale database that no key fits cannot win on being newer.
+ * Age is asked of the records before the filesystem, because a database that
+ * was copied or restored carries file times from the day it was moved rather
+ * than the day it was last used, and would otherwise pass itself off as the
+ * newest thing on the machine.
+ *
+ * Ahead of all of it: a pairing that opened nothing never displaces one that
+ * opened something, so a stale database that no key fits cannot win on age.
  */
 function isBetterAttempt(best, attempt) {
   if (!best) return true;
   if ((attempt.score > 0) !== (best.score > 0)) return attempt.score > 0;
+  if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
   if (attempt.lastWritten !== best.lastWritten) return attempt.lastWritten > best.lastWritten;
   if (attempt.score !== best.score) return attempt.score > best.score;
   return attempt.records.length > best.records.length;
@@ -689,8 +725,8 @@ async function extractTermiusRecords() {
   // records still come back, just with every encrypted field quietly missing.
   // A stale pairing can even open a field or two, so first-that-works is not
   // good enough. Every database is read with every key, and the pairing that
-  // wins is the one from the most recently written database that any key opens
-  // — see isBetterAttempt for why recency and not volume settles it.
+  // wins comes from the newest database any key opens — see isBetterAttempt for
+  // what counts as newest, and why volume does not settle it.
   let best = null;
   let totalEntries = 0;
   let opened = 0;
@@ -708,10 +744,11 @@ async function extractTermiusRecords() {
     totalEntries += entries.length;
 
     const dbNames = buildDbNameMap(entries);
+    const recordTime = newestRecordTime(entries);
     const lastWritten = dbLastWritten(dir);
     for (const masterKey of masterKeys) {
       const records = collectRecords(entries, dbNames, masterKey);
-      const attempt = { score: decryptedFieldCount(records), records, lastWritten };
+      const attempt = { score: decryptedFieldCount(records), records, recordTime, lastWritten };
       if (isBetterAttempt(best, attempt)) best = attempt;
     }
   }
@@ -931,6 +968,7 @@ module.exports = {
   findTermiusDbDirs,
   isBetterAttempt,
   dbLastWritten,
+  newestRecordTime,
   rankLeveldbName,
   windowsCredTargets,
   decodeEnvelope,

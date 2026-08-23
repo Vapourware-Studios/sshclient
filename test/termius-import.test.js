@@ -341,6 +341,7 @@ const {
   findTermiusDbDirs,
   isBetterAttempt,
   dbLastWritten,
+  newestRecordTime,
 } = require('../src/main/termiusImport');
 
 test('findTermiusDbDirs returns every candidate, not just the first', () => {
@@ -402,12 +403,12 @@ test('findTermiusDbDirs throws when no database exists', () => {
   }
 });
 
-// Two keys tried against the same database share its write time.
-const SAME_DB = 1000;
+// Two keys tried against the same database share both of its age signals.
+const SAME_DB = { recordTime: 5000, lastWritten: 1000 };
 
 test('within one database, the key that opens the most wins', () => {
-  const staleKey = { score: 1, records: [{}, {}, {}, {}], lastWritten: SAME_DB };
-  const liveKey = { score: 12, records: [{}, {}], lastWritten: SAME_DB };
+  const staleKey = { score: 1, records: [{}, {}, {}, {}], ...SAME_DB };
+  const liveKey = { score: 12, records: [{}, {}], ...SAME_DB };
 
   // First-that-works would have kept the stale key on its one legacy field.
   assert.equal(isBetterAttempt(null, staleKey), true);
@@ -416,26 +417,49 @@ test('within one database, the key that opens the most wins', () => {
 });
 
 test('within one database, an exact tie falls to the fuller result', () => {
-  const fewer = { score: 4, records: [{}, {}], lastWritten: SAME_DB };
-  const more = { score: 4, records: [{}, {}, {}], lastWritten: SAME_DB };
+  const fewer = { score: 4, records: [{}, {}], ...SAME_DB };
+  const more = { score: 4, records: [{}, {}, {}], ...SAME_DB };
 
   assert.equal(isBetterAttempt(fewer, more), true);
   assert.equal(isBetterAttempt(more, fewer), false);
 });
 
-test('the database written to last wins, however much the stale one holds', () => {
+test('the newer database wins, however much the stale one holds', () => {
   // The abandoned install still holds every host the account has since deleted,
   // so it decrypts more of everything. Volume is not the question being asked.
-  const stale = { score: 90, records: new Array(30).fill({}), lastWritten: 1000 };
-  const current = { score: 6, records: [{}, {}], lastWritten: 2000 };
+  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, lastWritten: 1000 };
+  const current = { score: 6, records: [{}, {}], recordTime: 2000, lastWritten: 2000 };
 
   assert.equal(isBetterAttempt(stale, current), true, 'the newer install wins');
   assert.equal(isBetterAttempt(current, stale), false, 'and does not lose on volume');
 });
 
+test('a database restored after the live one does not win on its fresh file times', () => {
+  // Copying a backup back onto the machine stamps every file with today's date
+  // while the records inside still stop at the day the account left it.
+  const restoredStale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, lastWritten: 9_000_000 };
+  const current = { score: 6, records: [{}, {}], recordTime: 2000, lastWritten: 2000 };
+
+  assert.equal(isBetterAttempt(restoredStale, current), true, 'the records outrank the file times');
+  assert.equal(isBetterAttempt(current, restoredStale), false);
+});
+
+test('file times still settle databases whose records claim the same age', () => {
+  const older = { score: 4, records: [{}, {}], recordTime: 7000, lastWritten: 1000 };
+  const newer = { score: 4, records: [{}, {}], recordTime: 7000, lastWritten: 2000 };
+
+  assert.equal(isBetterAttempt(older, newer), true);
+  assert.equal(isBetterAttempt(newer, older), false);
+});
+
 test('a newer database that no key opens never displaces one that opened', () => {
-  const opened = { score: 3, records: [{}, {}], lastWritten: 1000 };
-  const newerButShut = { score: 0, records: new Array(50).fill({}), lastWritten: 9000 };
+  const opened = { score: 3, records: [{}, {}], recordTime: 1000, lastWritten: 1000 };
+  const newerButShut = {
+    score: 0,
+    records: new Array(50).fill({}),
+    recordTime: 9000,
+    lastWritten: 9000,
+  };
 
   assert.equal(isBetterAttempt(opened, newerButShut), false);
   assert.equal(isBetterAttempt(newerButShut, opened), true);
@@ -462,4 +486,32 @@ test('dbLastWritten takes the newest leveldb file and ignores the rest', () => {
 
 test('dbLastWritten reports nothing for a directory it cannot read', () => {
   assert.equal(dbLastWritten(nodePath.join(os.tmpdir(), 'sshclient-no-such-dir-xyz')), 0);
+});
+
+function stampedRecord(id, updatedAt) {
+  const bytes = [0x6f];
+  pushKeyInt('id', id, bytes);
+  pushKeyStr('status', 'SYNCHRONIZED', bytes);
+  if (updatedAt !== undefined) pushKeyStr('updated_at', updatedAt, bytes);
+  closeObj(updatedAt === undefined ? 2 : 3, bytes);
+  return [idbKey(1), Buffer.from(bytes)];
+}
+
+test('newestRecordTime takes the latest stamp, and needs no key to do it', () => {
+  const entries = [
+    stampedRecord(1, '2026-04-08T16:37:59Z'),
+    stampedRecord(2, '2026-05-25T10:07:45Z'),
+    stampedRecord(3, '2026-01-02T03:04:05Z'),
+  ];
+
+  assert.equal(newestRecordTime(entries), Date.parse('2026-05-25T10:07:45Z'));
+});
+
+test('newestRecordTime reports nothing when no record carries a stamp', () => {
+  assert.equal(newestRecordTime([stampedRecord(7)]), 0);
+  assert.equal(newestRecordTime([]), 0);
+});
+
+test('newestRecordTime ignores a stamp it cannot read', () => {
+  assert.equal(newestRecordTime([stampedRecord(9, 'not-a-date')]), 0);
 });
