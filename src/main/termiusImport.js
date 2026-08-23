@@ -142,12 +142,12 @@ async function copyDbToTemp(srcDir) {
 // freedesktop Secret Service. The service/account pair has also changed
 // between Termius versions, so every reader tries the known spellings.
 //
-// Every key found is tried against every database, and the order is itself a
-// signal: the name current Termius writes is listed ahead of the one only
-// older versions wrote. Each key belongs to one account, and nothing inside
-// the records says which account this machine is signed into, so when two
-// keys open two different databases the key under the current name is taken
-// to be the active account — see isBetterAttempt.
+// Every key found is tried against every database. Each key belongs to one
+// account, and neither the keychain nor the records can prove which account
+// this machine is signed into — the name current Termius writes is only the
+// better guess, so it is listed first and picks the default. When two keys
+// open two different databases, both accounts are offered in the import
+// preview and the user chooses — see extractTermiusRecords.
 const KEY_ACCOUNT = 'localKey';
 const KEY_SERVICES = ['termius-app', 'Termius'];
 const MASTER_KEY_BYTES = 32;
@@ -254,7 +254,7 @@ function readWindowsMasterKeysBase64() {
       } catch {
         continue;
       }
-      if (looksLikeMasterKey(decoded)) found.push(decoded);
+      if (looksLikeMasterKey(decoded)) found.push({ service: target.split('/')[0], b64: decoded });
     }
   }
   if (found.length) return found;
@@ -272,7 +272,7 @@ function readMacMasterKeysBase64() {
         ['find-generic-password', '-s', service, '-a', KEY_ACCOUNT, '-w'],
         { encoding: 'utf8' }
       ).trim();
-      if (looksLikeMasterKey(out)) found.push(out);
+      if (looksLikeMasterKey(out)) found.push({ service, b64: out });
     } catch {}
   }
   if (found.length) return found;
@@ -292,7 +292,7 @@ function readLinuxMasterKeysBase64() {
         { encoding: 'utf8' }
       ).trim();
       sawSecretTool = true;
-      if (looksLikeMasterKey(out)) found.push(out);
+      if (looksLikeMasterKey(out)) found.push({ service, b64: out });
     } catch (err) {
       // ENOENT means secret-tool itself is missing; a non-zero exit only means
       // this particular service name holds nothing.
@@ -318,13 +318,13 @@ function fetchMasterKeys() {
 
   const keys = [];
   const seen = new Set();
-  for (const b64 of candidates) {
+  for (const { service, b64 } of candidates) {
     const bytes = Buffer.from(String(b64).trim(), 'base64');
     if (bytes.length !== MASTER_KEY_BYTES) continue;
     const id = bytes.toString('base64');
     if (seen.has(id)) continue;
     seen.add(id);
-    keys.push(bytes);
+    keys.push({ bytes, service });
   }
   if (!keys.length) throw new Error('Termius master key is not 32 bytes');
   return keys;
@@ -680,16 +680,19 @@ function recordSignals(entries) {
  * of it does. A stale key can still open a legacy field or two, which is why
  * the measure is how much opened, not whether anything did.
  *
- * Between databases opened by different keys, the keychain decides, and
- * nothing inside the records can: each key opens its own account's data, and
- * no record signal measures which account this machine is signed into.
- * `updated_at` is stamped when a record is edited, not when an account is
- * used, so a signed-out account whose hosts changed last week outranks an
- * active account whose hosts sat untouched for a year; ids climb in
- * per-account sequences that never compare; and how much decrypted only
- * measures how much the account accumulated. What does track signing in is
- * the keychain itself — current Termius keeps the active account's key under
- * the first service name read — so the pairing whose key came earlier wins.
+ * Between databases opened by different keys, nothing measurable decides,
+ * because each key opens its own account's data and no signal on the machine
+ * proves which account is the signed-in one. `updated_at` is stamped when a
+ * record is edited, not when an account is used, so a signed-out account
+ * whose hosts changed last week outranks an active account whose hosts sat
+ * untouched for a year; ids climb in per-account sequences that never
+ * compare; decrypted-field counts only measure how much each account
+ * accumulated; and the keychain's service names say which Termius era wrote
+ * each key, not which account is in use. So different-key pairings are
+ * ranked by keychain order — the name current Termius writes is the better
+ * guess — but that guess only chooses the default: every account that
+ * opened a database of its own is offered, and the user makes the call.
+ * See selectSources.
  *
  * Between databases sharing one key — copies of one account — the records
  * are comparable and are asked in order of how hard they are to fake. The
@@ -726,6 +729,53 @@ async function readEntriesFrom(dir) {
   }
 }
 
+/**
+ * Reduces every database-and-key pairing tried to the accounts worth offering.
+ *
+ * A key claims a database only where no other key opens it better. A stale
+ * key can graze a couple of legacy fields in another account's database, and
+ * that database's own key always out-opens it there, so the graze never
+ * counts as the account's data — and never lets that database ride in on the
+ * age of records the key cannot actually read.
+ *
+ * Each key is one account, so the claimed pairings collapse to one champion
+ * per key, found with the same ranking that picks the overall default. The
+ * default comes first. The other accounts follow if they opened a database
+ * of their own — a database the default already claimed holds the default's
+ * data, not a second account.
+ *
+ * More than one source coming back means the machine holds accounts that no
+ * signal can choose between — see isBetterAttempt for why not — and the
+ * choice belongs to the user, in the import preview.
+ */
+function selectSources(attempts) {
+  const topScoreByDir = new Map();
+  for (const attempt of attempts) {
+    const top = topScoreByDir.get(attempt.dir);
+    if (top === undefined || attempt.score > top) topScoreByDir.set(attempt.dir, attempt.score);
+  }
+  const claimed = attempts.filter((attempt) => attempt.score === topScoreByDir.get(attempt.dir));
+
+  let best = null;
+  for (const attempt of claimed) {
+    if (isBetterAttempt(best, attempt)) best = attempt;
+  }
+  if (!best) return [];
+
+  const bestByKey = new Map();
+  for (const attempt of claimed) {
+    const prior = bestByKey.get(attempt.keyIndex) ?? null;
+    if (isBetterAttempt(prior, attempt)) bestByKey.set(attempt.keyIndex, attempt);
+  }
+
+  const sources = [best];
+  for (const [, attempt] of [...bestByKey.entries()].sort((a, b) => a[0] - b[0])) {
+    if (attempt === best) continue;
+    if (attempt.score > 0 && attempt.dir !== best.dir) sources.push(attempt);
+  }
+  return sources;
+}
+
 async function extractTermiusRecords() {
   const dirs = findTermiusDbDirs();
   const masterKeys = fetchMasterKeys();
@@ -736,10 +786,10 @@ async function extractTermiusRecords() {
   // which is current, and picking the wrong one does not fail loudly: the
   // records still come back, just with every encrypted field quietly missing.
   // A stale pairing can even open a field or two, so first-that-works is not
-  // good enough. Every database is read with every key, and the pairing that
-  // wins comes from the newest database any key opens — see isBetterAttempt for
-  // what counts as newest, and why volume does not settle it.
-  let best = null;
+  // good enough. Every database is read with every key; the ranked pairings
+  // pick a default and every other account found stays on offer — see
+  // isBetterAttempt and selectSources.
+  const attempts = [];
   let totalEntries = 0;
   let opened = 0;
   let lastError = null;
@@ -757,17 +807,17 @@ async function extractTermiusRecords() {
 
     const dbNames = buildDbNameMap(entries);
     const { recordTime, highestId } = recordSignals(entries);
-    for (const [keyIndex, masterKey] of masterKeys.entries()) {
-      const records = collectRecords(entries, dbNames, masterKey);
-      const attempt = {
+    for (const [keyIndex, { bytes, service }] of masterKeys.entries()) {
+      const records = collectRecords(entries, dbNames, bytes);
+      attempts.push({
         score: decryptedFieldCount(records),
         records,
         recordTime,
         highestId,
         keyIndex,
+        service,
         dir,
-      };
-      if (isBetterAttempt(best, attempt)) best = attempt;
+      });
     }
   }
 
@@ -779,14 +829,14 @@ async function extractTermiusRecords() {
     );
   }
 
-  const records = best ? best.records : [];
-  if (records.length === 0) {
+  const sources = selectSources(attempts).filter((s) => s.records.length > 0);
+  if (sources.length === 0) {
     throw new Error(
       `Extracted 0 records from ${totalEntries} leveldb entries. Termius's IndexedDB schema may have changed, or Termius is not installed / not logged in on this machine.`
     );
   }
 
-  return records;
+  return sources;
 }
 
 function str(v) {
@@ -964,14 +1014,31 @@ function buildConnections(idx, keyLocalIdByTermiusId, identityBySshConfigId) {
   return connections;
 }
 
-async function previewTermiusImport() {
-  const records = await extractTermiusRecords();
+function buildPreview(records) {
   const idx = indexRecords(records);
   const { keys, keyLocalIdByTermiusId } = buildKeys(idx);
   const identityBySshConfigId = buildIdentityBySshConfigId(idx);
   const connections = buildConnections(idx, keyLocalIdByTermiusId, identityBySshConfigId);
   const snippets = buildSnippets(idx);
   return { keys, connections, snippets };
+}
+
+/**
+ * One preview per account found, the default first. A single source is the
+ * usual case; more than one means the machine holds data from accounts that
+ * nothing on it can rank with certainty, so the preview offers all of them
+ * and the dialog asks the user which account to import from.
+ */
+async function previewTermiusImport() {
+  const found = await extractTermiusRecords();
+  const sources = found.map((source, i) => ({
+    id: i,
+    service: source.service,
+    dbPath: source.dir,
+    newestActivity: source.recordTime > 0 ? source.recordTime : null,
+    ...buildPreview(source.records),
+  }));
+  return { ...sources[0], sources };
 }
 
 module.exports = {
@@ -985,6 +1052,7 @@ module.exports = {
   termiusDbCandidates,
   findTermiusDbDirs,
   isBetterAttempt,
+  selectSources,
   recordSignals,
   rankLeveldbName,
   windowsCredTargets,

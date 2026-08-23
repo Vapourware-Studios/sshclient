@@ -281,10 +281,10 @@ test('windowsCredTargets covers both keytar service names', () => {
 });
 
 test('the current service name is tried ahead of the legacy one', () => {
-  // Every key found is tried against every database, so this order decides
-  // nothing until two keys open a database equally well and no other signal
-  // separates them. The first key found wins that tie, so the name current
-  // Termius writes has to come before the one only older versions wrote.
+  // Every key found is tried against every database, and when two accounts
+  // both hold data here the order only picks which one the preview shows
+  // first — the name current Termius writes is the better guess, so it has
+  // to come before the one only older versions wrote.
   const targets = withPlatform('win32', () => windowsCredTargets());
   assert.ok(
     targets.indexOf('termius-app/localKey') < targets.indexOf('Termius/localKey'),
@@ -352,6 +352,7 @@ test('a stale key of the right length still yields nothing, so the live one is r
 const {
   findTermiusDbDirs,
   isBetterAttempt,
+  selectSources,
   recordSignals,
 } = require('../src/main/termiusImport');
 
@@ -488,7 +489,8 @@ test('a signed-out account cannot win on fresher record stamps', () => {
   // signed-out account whose hosts changed last week outranks, on every
   // record signal there is, an active account whose hosts sat untouched for a
   // year. So between different keys none of the record signals is asked; the
-  // keychain names the signed-in account, and its pairing wins.
+  // keychain names the likelier account, its pairing becomes the default the
+  // preview opens on, and the other account stays on offer — selectSources.
   const signedOut = {
     score: 90,
     records: new Array(30).fill({}),
@@ -542,6 +544,76 @@ test('a newer database that no key opens never displaces one that opened', () =>
 
   assert.equal(isBetterAttempt(opened, newerButShut), false);
   assert.equal(isBetterAttempt(newerButShut, opened), true);
+});
+
+// Two accounts, each with its own database and key. The signed-out one has
+// been around longer, so it holds more of everything and its records carry
+// the fresher stamps. Each key also grazes the other account's database for
+// a stray legacy field or nothing at all.
+function twoAccountAttempts({ currentKeyIndex, staleKeyIndex }) {
+  const current = { score: 6, records: [{}, {}], recordTime: 1000, highestId: 12, keyIndex: currentKeyIndex, dir: '/new/db' };
+  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: staleKeyIndex, dir: '/old/db' };
+  const currentGrazesOld = { score: 1, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: currentKeyIndex, dir: '/old/db' };
+  const staleGrazesNew = { score: 0, records: [{}, {}], recordTime: 1000, highestId: 12, keyIndex: staleKeyIndex, dir: '/new/db' };
+  return { current, stale, attempts: [current, stale, currentGrazesOld, staleGrazesNew] };
+}
+
+test('two accounts that each open their own database are both offered', () => {
+  // Nothing on the machine proves which account is signed in, so neither is
+  // silently dropped — the user chooses in the preview. The current-name key
+  // is the better guess, so its account is the default in front.
+  const { attempts } = twoAccountAttempts({ currentKeyIndex: 0, staleKeyIndex: 1 });
+  const sources = selectSources(attempts);
+
+  assert.deepEqual(sources.map((s) => s.dir), ['/new/db', '/old/db']);
+  assert.deepEqual(sources.map((s) => s.keyIndex), [0, 1]);
+});
+
+test('reversing the service-name order changes the default, never the offer', () => {
+  // The active account's key can sit under the legacy name while a signed-out
+  // account retains the current one. The order is only a guess, so the guess
+  // may lead — but the active account must still be on the table.
+  const { attempts } = twoAccountAttempts({ currentKeyIndex: 1, staleKeyIndex: 0 });
+  const sources = selectSources(attempts);
+
+  assert.deepEqual(sources.map((s) => s.dir).sort(), ['/new/db', '/old/db']);
+  assert.equal(sources[0].keyIndex, 0, 'the first-listed key still fronts the offer');
+  assert.equal(sources.length, 2, 'and the other account is still there to pick');
+});
+
+test('a grazed foreign database never becomes the default', () => {
+  // The stale database carries the freshest stamps, and the current key does
+  // open one stray legacy field in it. Its own key out-opens that graze, so
+  // the graze claims nothing, and the fresh stamps cannot drag the current
+  // key onto a database it cannot actually read.
+  const { current, attempts } = twoAccountAttempts({ currentKeyIndex: 0, staleKeyIndex: 1 });
+  const sources = selectSources(attempts);
+
+  assert.equal(sources[0], current);
+});
+
+test('a key that only grazes a foreign database is not offered as an account', () => {
+  // The account whose database is gone has nothing here to import: one stray
+  // decrypted field in another account's database is not it.
+  const owner = { score: 90, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: 1, dir: '/old/db' };
+  const grazer = { score: 1, records: new Array(30).fill({}), recordTime: 9000, highestId: 90_000, keyIndex: 0, dir: '/old/db' };
+
+  const sources = selectSources([owner, grazer]);
+  assert.deepEqual(sources, [owner]);
+});
+
+test('copies of one account collapse to a single source', () => {
+  // One key, two databases: a live install and a restored copy. That is one
+  // account, so the preview gets one source — the copy the ranking picks.
+  const live = { score: 8, records: [{}, {}], recordTime: 9000, highestId: 8800, keyIndex: 0, dir: '/live/db' };
+  const restored = { score: 40, records: new Array(20).fill({}), recordTime: 1000, highestId: 120, keyIndex: 0, dir: '/restored/db' };
+
+  const sources = selectSources([live, restored]);
+  assert.deepEqual(sources, [live]);
+});
+
+test('selectSources returns nothing when nothing was tried', () => {
+  assert.deepEqual(selectSources([]), []);
 });
 
 function stampedRecord(id, updatedAt, status = 'SYNCHRONIZED') {
