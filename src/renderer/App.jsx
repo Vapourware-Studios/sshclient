@@ -573,26 +573,54 @@ export default function App() {
    * session — so the account of why the last attempt failed was thrown away by
    * the very click made to look into it. Carry it over, marked, so a host that
    * fails the same way twice says so instead of showing one lonely attempt.
+   *
+   * And when the retry cannot even be started, put the tab back rather than
+   * letting it disappear into a banner: the failure it was already showing is
+   * still the thing the user is trying to read, and taking the tab away takes
+   * the log with it.
    */
   async function retryTab(tab) {
     const previous = sessionLogs[tab.id] ?? [];
 
     setTabs((prev) => prev.filter((t) => t.id !== tab.id));
 
-    // The old lines are held, not dropped, until there is somewhere to put
-    // them: clearing first would throw away the account of the failure at the
-    // exact moment the attempt to understand it is under way.
+    // The old lines are held, not dropped, until their fate is known.
     let sessionId = null;
+    let failure = null;
     try {
       sessionId = await openSession(tab.connectConfig, tab.title, tab.type, {
         groupId: tab.groupId,
       });
-    } catch {}
+    } catch (err) {
+      failure = err.message || 'Could not start the connection';
+    }
+
+    // The attempt never got off the ground. openSession has already cleared
+    // the tab it opened — and, if this was a group's last member, the group
+    // with it — so restore what was there, and let the log stand.
+    if (failure !== null) {
+      setTabs((prev) => {
+        const inGroup = Boolean(tab.groupId) && prev.some((t) => t.id === tab.groupId);
+        const restored = {
+          ...tab,
+          groupId: inGroup ? tab.groupId : undefined,
+          status: 'error',
+          error: failure,
+          hostKeyInfo: null,
+        };
+        const next = [...prev, restored];
+        return inGroup
+          ? next.map((t) => (t.id === tab.groupId ? { ...t, activeMemberId: tab.id } : t))
+          : next;
+      });
+      if (!tab.groupId) setActiveTabId(tab.id);
+      return;
+    }
 
     setSessionLogs((prev) => {
       const { [tab.id]: _removed, ...rest } = prev;
-      // Nothing came back — openSession has already taken the tab away, so
-      // there is no view left to read these in and keeping them only leaks.
+      // Nothing came back and nothing failed: the tab was closed while the
+      // connection was still opening, so these lines were deliberately let go.
       if (!sessionId || previous.length === 0) return rest;
 
       // Lines for the new session can already have arrived; they belong last.
