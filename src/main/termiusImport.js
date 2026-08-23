@@ -139,12 +139,12 @@ const KEY_SERVICES = ['Termius', 'termius-app'];
 const MASTER_KEY_BYTES = 32;
 
 /**
- * A key left behind by an older Termius under one service name would otherwise
- * mask the live one: the first non-empty answer won, and its length was only
- * checked afterwards — by which point the remaining names had been passed over
- * and the import failed with a key it should never have accepted. Ordering the
- * names differently only changes which stale entry wins, so judge the value
- * instead: a candidate counts only if it is the right size to be the key.
+ * A key left behind by an older Termius sits under a different service name
+ * beside the live one, and it is a real key — the same 32 bytes, just for an
+ * account nobody uses any more. Neither the order of the names nor the size of
+ * the value can tell the two apart, so this only rules out what plainly is not
+ * a key; which of the survivors is the right one is settled later, against the
+ * database itself.
  */
 function looksLikeMasterKey(b64) {
   try {
@@ -219,7 +219,8 @@ function decodeKeytarBlob(buf) {
   throw new Error('Credential blob is neither valid UTF-8 nor UTF-16LE');
 }
 
-function readWindowsMasterKeyBase64() {
+function readWindowsMasterKeysBase64() {
+  const found = [];
   for (const bin of powershellBinaries()) {
     for (const target of windowsCredTargets()) {
       let out;
@@ -239,15 +240,17 @@ function readWindowsMasterKeyBase64() {
       } catch {
         continue;
       }
-      if (looksLikeMasterKey(decoded)) return decoded;
+      if (looksLikeMasterKey(decoded)) found.push(decoded);
     }
   }
+  if (found.length) return found;
   throw new Error(
     'Termius key not found in Credential Manager — is Termius installed and logged in on this Windows account?'
   );
 }
 
-function readMacMasterKeyBase64() {
+function readMacMasterKeysBase64() {
+  const found = [];
   for (const service of KEY_SERVICES) {
     try {
       const out = execFileSync(
@@ -255,15 +258,17 @@ function readMacMasterKeyBase64() {
         ['find-generic-password', '-s', service, '-a', KEY_ACCOUNT, '-w'],
         { encoding: 'utf8' }
       ).trim();
-      if (looksLikeMasterKey(out)) return out;
+      if (looksLikeMasterKey(out)) found.push(out);
     } catch {}
   }
+  if (found.length) return found;
   throw new Error(
     'Termius key not found in Keychain — is Termius installed and logged in on this machine?'
   );
 }
 
-function readLinuxMasterKeyBase64() {
+function readLinuxMasterKeysBase64() {
+  const found = [];
   let sawSecretTool = false;
   for (const service of KEY_SERVICES) {
     try {
@@ -273,13 +278,14 @@ function readLinuxMasterKeyBase64() {
         { encoding: 'utf8' }
       ).trim();
       sawSecretTool = true;
-      if (looksLikeMasterKey(out)) return out;
+      if (looksLikeMasterKey(out)) found.push(out);
     } catch (err) {
       // ENOENT means secret-tool itself is missing; a non-zero exit only means
       // this particular service name holds nothing.
       if (err?.code !== 'ENOENT') sawSecretTool = true;
     }
   }
+  if (found.length) return found;
   if (!sawSecretTool) {
     throw new Error(
       'secret-tool is not installed, so the Termius key cannot be read from the keyring. Install it (libsecret-tools on Debian/Ubuntu, libsecret on Arch, libsecret-tools on Fedora) and try again.'
@@ -290,15 +296,24 @@ function readLinuxMasterKeyBase64() {
   );
 }
 
-function fetchMasterKey() {
-  let b64;
-  if (process.platform === 'win32') b64 = readWindowsMasterKeyBase64();
-  else if (process.platform === 'darwin') b64 = readMacMasterKeyBase64();
-  else b64 = readLinuxMasterKeyBase64();
+function fetchMasterKeys() {
+  let candidates;
+  if (process.platform === 'win32') candidates = readWindowsMasterKeysBase64();
+  else if (process.platform === 'darwin') candidates = readMacMasterKeysBase64();
+  else candidates = readLinuxMasterKeysBase64();
 
-  const bytes = Buffer.from(b64.trim(), 'base64');
-  if (bytes.length !== MASTER_KEY_BYTES) throw new Error('Termius master key is not 32 bytes');
-  return bytes;
+  const keys = [];
+  const seen = new Set();
+  for (const b64 of candidates) {
+    const bytes = Buffer.from(String(b64).trim(), 'base64');
+    if (bytes.length !== MASTER_KEY_BYTES) continue;
+    const id = bytes.toString('base64');
+    if (seen.has(id)) continue;
+    seen.add(id);
+    keys.push(bytes);
+  }
+  if (!keys.length) throw new Error('Termius master key is not 32 bytes');
+  return keys;
 }
 
 async function readAllEntries(dir) {
@@ -568,21 +583,19 @@ function isInactiveStatus(status) {
   return s === 'deleted' || s === 'removed' || s === 'delete' || s.endsWith('_failed');
 }
 
-async function extractTermiusRecords() {
-  const dir = findTermiusDbDir();
-  const masterKey = fetchMasterKey();
+/**
+ * How much the key actually opened. A record survives the wrong key — its id
+ * and status are in the clear — so counting records says nothing about whether
+ * the key was right. Only the fields that had to be decrypted do.
+ */
+function decryptedFieldCount(records) {
+  let count = 0;
+  for (const rec of records) count += Object.keys(rec.decrypted ?? {}).length;
+  return count;
+}
 
-  const temp = await copyDbToTemp(dir);
-  let entries;
-  try {
-    entries = await readAllEntries(temp);
-  } finally {
-    await fsp.rm(temp, { recursive: true, force: true }).catch(() => {});
-  }
-
-  const dbNames = buildDbNameMap(entries);
-  const records = [];
-
+function collectRecords(entries, dbNames, masterKey) {
+  const found = [];
   for (const [k, v] of entries) {
     const idb = decodeIdbKey(k);
     if (!idb) continue;
@@ -598,7 +611,40 @@ async function extractTermiusRecords() {
     if (!rec) continue;
     if (isInactiveStatus(rec.status)) continue;
 
-    records.push({ dbName, termiusId: rec.termiusId, foreignKeys: rec.foreignKeys, decrypted: rec.body });
+    found.push({ dbName, termiusId: rec.termiusId, foreignKeys: rec.foreignKeys, decrypted: rec.body });
+  }
+  return found;
+}
+
+async function extractTermiusRecords() {
+  const dir = findTermiusDbDir();
+  const masterKeys = fetchMasterKeys();
+
+  const temp = await copyDbToTemp(dir);
+  let entries;
+  try {
+    entries = await readAllEntries(temp);
+  } finally {
+    await fsp.rm(temp, { recursive: true, force: true }).catch(() => {});
+  }
+
+  const dbNames = buildDbNameMap(entries);
+  let records = [];
+
+  // An account signed out long ago leaves its key in the keychain next to the
+  // live one, the same length and equally well-formed. Nothing about the value
+  // says which is current — and the wrong one does not fail loudly either: the
+  // records still come back, just with every encrypted field quietly missing.
+  // What separates them is how much was actually decrypted.
+  for (const masterKey of masterKeys) {
+    const found = collectRecords(entries, dbNames, masterKey);
+    if (decryptedFieldCount(found) > 0) {
+      records = found;
+      break;
+    }
+    // Keep the first attempt regardless, so that if no key opens anything the
+    // error below can still say how much was there to be opened.
+    if (records.length === 0) records = found;
   }
 
   if (records.length === 0) {
@@ -796,6 +842,9 @@ async function previewTermiusImport() {
 }
 
 module.exports = {
+  collectRecords,
+  decryptedFieldCount,
+  fetchMasterKeys,
   looksLikeMasterKey,
   previewTermiusImport,
   extractTermiusRecords,

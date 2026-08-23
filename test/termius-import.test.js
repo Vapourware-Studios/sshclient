@@ -12,6 +12,8 @@ const {
   buildIdentityBySshConfigId,
   buildConnections,
   buildSnippets,
+  collectRecords,
+  decryptedFieldCount,
 } = require('../src/main/termiusImport');
 
 function pushVarint(v, out) {
@@ -290,4 +292,47 @@ test('a stale credential under one service name does not mask the live key', () 
   assert.equal(looksLikeMasterKey(undefined), false);
   // Whitespace around the value is how the shell tools hand it back.
   assert.equal(looksLikeMasterKey(`  ${key}\n`), true);
+});
+
+// An IndexedDB row key: 0x00, then db / object-store / index ids.
+function idbKey(dbId) {
+  return Buffer.from([0x00, dbId, 0x01, 0x01]);
+}
+
+function sealed(masterKey, plaintext) {
+  const nonce = nacl.randomBytes(24);
+  const box = nacl.secretbox(new Uint8Array(Buffer.from(plaintext)), nonce, masterKey);
+  return Buffer.concat([Buffer.from([0x04, 0x00]), Buffer.from(nonce), Buffer.from(box)]).toString(
+    'base64'
+  );
+}
+
+test('a stale key of the right length still yields nothing, so the live one is reached', () => {
+  const live = nacl.randomBytes(32);
+  const stale = nacl.randomBytes(32);
+  // Both are real keys as far as any shape check goes.
+  assert.equal(live.length, stale.length);
+
+  const bytes = [0x6f];
+  pushKeyInt('id', 4242, bytes);
+  pushKeyStr('status', 'SYNCHRONIZED', bytes);
+  pushKeyStr('label', sealed(live, 'web-01'), bytes);
+  closeObj(3, bytes);
+
+  const entries = [[idbKey(1), Buffer.from(bytes)]];
+  const dbNames = new Map([[1, 'host']]);
+
+  // The wrong key does not fail loudly: the record still comes back, because
+  // its id and status were never encrypted. Only the encrypted field is gone —
+  // so record count says nothing and the decrypted-field count says everything.
+  const withStale = collectRecords(entries, dbNames, Buffer.from(stale));
+  assert.equal(withStale.length, 1, 'the record survives the wrong key');
+  assert.equal(decryptedFieldCount(withStale), 0, 'but nothing was opened');
+
+  const found = collectRecords(entries, dbNames, Buffer.from(live));
+  assert.equal(decryptedFieldCount(found), 1);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].dbName, 'host');
+  assert.equal(found[0].termiusId, 4242);
+  assert.equal(found[0].decrypted.label, 'web-01');
 });
