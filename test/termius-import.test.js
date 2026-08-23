@@ -341,7 +341,7 @@ const {
   findTermiusDbDirs,
   isBetterAttempt,
   dbLastWritten,
-  newestRecordTime,
+  recordSignals,
 } = require('../src/main/termiusImport');
 
 test('findTermiusDbDirs returns every candidate, not just the first', () => {
@@ -404,7 +404,7 @@ test('findTermiusDbDirs throws when no database exists', () => {
 });
 
 // Two keys tried against the same database share both of its age signals.
-const SAME_DB = { recordTime: 5000, lastWritten: 1000 };
+const SAME_DB = { recordTime: 5000, highestId: 500, lastWritten: 1000 };
 
 test('within one database, the key that opens the most wins', () => {
   const staleKey = { score: 1, records: [{}, {}, {}, {}], ...SAME_DB };
@@ -427,8 +427,8 @@ test('within one database, an exact tie falls to the fuller result', () => {
 test('the newer database wins, however much the stale one holds', () => {
   // The abandoned install still holds every host the account has since deleted,
   // so it decrypts more of everything. Volume is not the question being asked.
-  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, lastWritten: 1000 };
-  const current = { score: 6, records: [{}, {}], recordTime: 2000, lastWritten: 2000 };
+  const stale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, highestId: 900, lastWritten: 1000 };
+  const current = { score: 6, records: [{}, {}], recordTime: 2000, highestId: 10, lastWritten: 2000 };
 
   assert.equal(isBetterAttempt(stale, current), true, 'the newer install wins');
   assert.equal(isBetterAttempt(current, stale), false, 'and does not lose on volume');
@@ -437,27 +437,28 @@ test('the newer database wins, however much the stale one holds', () => {
 test('a database restored after the live one does not win on its fresh file times', () => {
   // Copying a backup back onto the machine stamps every file with today's date
   // while the records inside still stop at the day the account left it.
-  const restoredStale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, lastWritten: 9_000_000 };
-  const current = { score: 6, records: [{}, {}], recordTime: 2000, lastWritten: 2000 };
+  const restoredStale = { score: 90, records: new Array(30).fill({}), recordTime: 1000, highestId: 900, lastWritten: 9_000_000 };
+  const current = { score: 6, records: [{}, {}], recordTime: 2000, highestId: 10, lastWritten: 2000 };
 
   assert.equal(isBetterAttempt(restoredStale, current), true, 'the records outrank the file times');
   assert.equal(isBetterAttempt(current, restoredStale), false);
 });
 
 test('file times still settle databases whose records claim the same age', () => {
-  const older = { score: 4, records: [{}, {}], recordTime: 7000, lastWritten: 1000 };
-  const newer = { score: 4, records: [{}, {}], recordTime: 7000, lastWritten: 2000 };
+  const older = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 1000 };
+  const newer = { score: 4, records: [{}, {}], recordTime: 7000, highestId: 7, lastWritten: 2000 };
 
   assert.equal(isBetterAttempt(older, newer), true);
   assert.equal(isBetterAttempt(newer, older), false);
 });
 
 test('a newer database that no key opens never displaces one that opened', () => {
-  const opened = { score: 3, records: [{}, {}], recordTime: 1000, lastWritten: 1000 };
+  const opened = { score: 3, records: [{}, {}], recordTime: 1000, highestId: 10, lastWritten: 1000 };
   const newerButShut = {
     score: 0,
     records: new Array(50).fill({}),
     recordTime: 9000,
+    highestId: 9000,
     lastWritten: 9000,
   };
 
@@ -497,21 +498,51 @@ function stampedRecord(id, updatedAt) {
   return [idbKey(1), Buffer.from(bytes)];
 }
 
-test('newestRecordTime takes the latest stamp, and needs no key to do it', () => {
+test('recordSignals takes the latest stamp and the highest id, needing no key', () => {
   const entries = [
     stampedRecord(1, '2026-04-08T16:37:59Z'),
-    stampedRecord(2, '2026-05-25T10:07:45Z'),
-    stampedRecord(3, '2026-01-02T03:04:05Z'),
+    stampedRecord(4242, '2026-05-25T10:07:45Z'),
+    stampedRecord(300, '2026-01-02T03:04:05Z'),
   ];
 
-  assert.equal(newestRecordTime(entries), Date.parse('2026-05-25T10:07:45Z'));
+  assert.deepEqual(recordSignals(entries), {
+    recordTime: Date.parse('2026-05-25T10:07:45Z'),
+    highestId: 4242,
+  });
 });
 
-test('newestRecordTime reports nothing when no record carries a stamp', () => {
-  assert.equal(newestRecordTime([stampedRecord(7)]), 0);
-  assert.equal(newestRecordTime([]), 0);
+test('recordSignals still reports an id when no record carries a stamp', () => {
+  // The id is what keeps a restored copy from winning on file times alone once
+  // a schema change has taken updated_at away.
+  assert.deepEqual(recordSignals([stampedRecord(77)]), { recordTime: 0, highestId: 77 });
+  assert.deepEqual(recordSignals([]), { recordTime: 0, highestId: 0 });
 });
 
-test('newestRecordTime ignores a stamp it cannot read', () => {
-  assert.equal(newestRecordTime([stampedRecord(9, 'not-a-date')]), 0);
+test('recordSignals ignores a stamp it cannot read', () => {
+  assert.deepEqual(recordSignals([stampedRecord(9, 'not-a-date')]), {
+    recordTime: 0,
+    highestId: 9,
+  });
+});
+
+test('the database that synced furthest wins when no stamps survive', () => {
+  // Both restored today, so file times say the stale one is newest; only the
+  // ids still record which account data went on growing.
+  const restoredStale = {
+    score: 40,
+    records: new Array(20).fill({}),
+    recordTime: 0,
+    highestId: 120,
+    lastWritten: 9_000_000,
+  };
+  const current = {
+    score: 8,
+    records: [{}, {}],
+    recordTime: 0,
+    highestId: 8800,
+    lastWritten: 1000,
+  };
+
+  assert.equal(isBetterAttempt(restoredStale, current), true);
+  assert.equal(isBetterAttempt(current, restoredStale), false);
 });

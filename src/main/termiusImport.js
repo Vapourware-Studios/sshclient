@@ -633,15 +633,22 @@ function parseRecordTime(value) {
 }
 
 /**
- * The newest `updated_at` any record in this database carries. Termius writes
- * that field itself and leaves it in the clear, so it travels with the data:
- * copying, restoring, or migrating an abandoned database hands its files fresh
- * modification times, but cannot make its records any newer than the day the
- * account stopped writing to them. That makes it the sounder answer to which
- * copy is current, and it needs no key to read.
+ * What the records themselves say about how current a database is, read in the
+ * clear and without a key. Two signals, because a schema change can take either
+ * one away:
+ *
+ *   - the newest `updated_at` any record carries;
+ *   - the highest id, which Termius assigns server-side and only ever climbs as
+ *     an account syncs new records, so the database that went on syncing
+ *     longest holds the highest one.
+ *
+ * Both live inside the data, so copying, restoring, or migrating a database
+ * cannot advance either. That is exactly what the file's own timestamps cannot
+ * promise, and why these are asked first.
  */
-function newestRecordTime(entries) {
-  let newest = 0;
+function recordSignals(entries) {
+  let recordTime = 0;
+  let highestId = 0;
   for (const [k, v] of entries) {
     const idb = decodeIdbKey(k);
     if (!idb) continue;
@@ -649,9 +656,10 @@ function newestRecordTime(entries) {
     const envelope = decodeEnvelope(v);
     if (!envelope || typeof envelope !== 'object') continue;
     const t = parseRecordTime(envelope.updated_at);
-    if (t > newest) newest = t;
+    if (t > recordTime) recordTime = t;
+    if (typeof envelope.id === 'number' && envelope.id > highestId) highestId = envelope.id;
   }
-  return newest;
+  return { recordTime, highestId };
 }
 
 /**
@@ -691,7 +699,8 @@ function dbLastWritten(dir) {
  * Age is asked of the records before the filesystem, because a database that
  * was copied or restored carries file times from the day it was moved rather
  * than the day it was last used, and would otherwise pass itself off as the
- * newest thing on the machine.
+ * newest thing on the machine. File times are consulted only once both record
+ * signals are silent or tied, where there is nothing else left to go on.
  *
  * Ahead of all of it: a pairing that opened nothing never displaces one that
  * opened something, so a stale database that no key fits cannot win on age.
@@ -700,6 +709,7 @@ function isBetterAttempt(best, attempt) {
   if (!best) return true;
   if ((attempt.score > 0) !== (best.score > 0)) return attempt.score > 0;
   if (attempt.recordTime !== best.recordTime) return attempt.recordTime > best.recordTime;
+  if (attempt.highestId !== best.highestId) return attempt.highestId > best.highestId;
   if (attempt.lastWritten !== best.lastWritten) return attempt.lastWritten > best.lastWritten;
   if (attempt.score !== best.score) return attempt.score > best.score;
   return attempt.records.length > best.records.length;
@@ -744,11 +754,17 @@ async function extractTermiusRecords() {
     totalEntries += entries.length;
 
     const dbNames = buildDbNameMap(entries);
-    const recordTime = newestRecordTime(entries);
+    const { recordTime, highestId } = recordSignals(entries);
     const lastWritten = dbLastWritten(dir);
     for (const masterKey of masterKeys) {
       const records = collectRecords(entries, dbNames, masterKey);
-      const attempt = { score: decryptedFieldCount(records), records, recordTime, lastWritten };
+      const attempt = {
+        score: decryptedFieldCount(records),
+        records,
+        recordTime,
+        highestId,
+        lastWritten,
+      };
       if (isBetterAttempt(best, attempt)) best = attempt;
     }
   }
@@ -968,7 +984,7 @@ module.exports = {
   findTermiusDbDirs,
   isBetterAttempt,
   dbLastWritten,
-  newestRecordTime,
+  recordSignals,
   rankLeveldbName,
   windowsCredTargets,
   decodeEnvelope,
