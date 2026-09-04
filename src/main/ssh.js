@@ -101,6 +101,36 @@ function buildConnectConfig(config) {
 
   if (config.password) connectConfig.password = config.password;
 
+  if (config.flags) {
+    const tokens = config.flags.trim().split(/\s+/);
+    for (const token of tokens) {
+      if (!token || !token.includes('=')) continue;
+      const eqIdx = token.indexOf('=');
+      const rawKey = token.slice(0, eqIdx);
+      const rawVal = token.slice(eqIdx + 1);
+
+      const key = rawKey.trim();
+      const val = rawVal.trim();
+      if (!key) continue;
+
+      const lower = key.charAt(0).toLowerCase() + key.slice(1);
+
+      if (/^(serverAliveInterval|keepAliveInterval|keepaliveInterval)$/i.test(key)) {
+        connectConfig.keepaliveInterval = Number(val) * 1000;
+      } else if (/^(serverAliveCountMax|keepAliveCountMax|keepaliveCountMax)$/i.test(key)) {
+        connectConfig.keepaliveCountMax = Number(val);
+      } else if (/^compression$/i.test(key)) {
+        connectConfig.compression = val === 'yes' || val === '1' || val === 'true';
+      } else if (/^readyTimeout$/i.test(key)) {
+        connectConfig.readyTimeout = Number(val);
+      } else if (/^agentForwarding$/i.test(key)) {
+        connectConfig.agentForward = val === 'yes' || val === '1' || val === 'true';
+      } else {
+        connectConfig[lower] = val;
+      }
+    }
+  }
+
   return connectConfig;
 }
 

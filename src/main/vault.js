@@ -292,7 +292,7 @@ function listHosts() {
   const rows = db.prepare('SELECT * FROM hosts ORDER BY created_at ASC').all();
   return rows.map((row) => {
     const data = decryptHostData(row);
-    return {
+      return {
       id: row.id,
       label: data.label || '',
       host: data.host,
@@ -300,6 +300,7 @@ function listHosts() {
       username: data.username,
       privateKeyPath: data.privateKeyPath || undefined,
       keyId: data.keyId || undefined,
+      flags: data.flags || '',
       color: data.color || null,
       icon: data.icon || null,
       lastConnectedAt: data.lastConnectedAt || null,
@@ -344,6 +345,15 @@ function validateHost(host) {
     errors.push('A password, a private key, or a Keychain key is required');
   }
 
+  if (host.flags) {
+    const tokens = host.flags.trim().split(/\s+/);
+    for (const token of tokens) {
+      if (!token.includes('=')) {
+        errors.push(`Invalid flag format: "${token}" (expected key=value)`);
+      }
+    }
+  }
+
   return errors;
 }
 
@@ -372,6 +382,7 @@ function saveHost(host) {
     username: merged.username,
     privateKeyPath: merged.privateKeyPath || undefined,
     keyId: merged.keyId || undefined,
+    flags: merged.flags || '',
     color: merged.color || undefined,
     icon: merged.icon || undefined,
     lastConnectedAt: merged.lastConnectedAt || undefined,
