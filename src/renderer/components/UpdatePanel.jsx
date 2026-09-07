@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpCircle,
   CheckCircle2,
@@ -66,17 +66,21 @@ export default function UpdatePanel() {
   const [installing, setInstalling] = useState(false);
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(null);
+  // The snapshot in a check result is taken before the GitHub request, so a
+  // status event that lands while it is in flight is the newer truth.
+  const statusSeq = useRef(0);
 
   const check = useCallback(async () => {
     setChecking(true);
     setMessage('');
+    const seenAtStart = statusSeq.current;
     try {
       const result = await window.api.updateCheck();
       setInfo(result || { error: 'Update check failed.' });
       // A download that finished before this panel was ever opened only exists
       // in the main process's state — without adopting it, Settings would offer
       // to start an update that is already sitting there waiting for a restart.
-      if (result?.progress) setProgress(result.progress);
+      if (result?.progress && statusSeq.current === seenAtStart) setProgress(result.progress);
     } finally {
       setChecking(false);
     }
@@ -86,7 +90,14 @@ export default function UpdatePanel() {
     check();
   }, [check]);
 
-  useEffect(() => window.api.onUpdateStatus?.((status) => setProgress(status)), []);
+  useEffect(
+    () =>
+      window.api.onUpdateStatus?.((status) => {
+        statusSeq.current += 1;
+        setProgress(status);
+      }),
+    []
+  );
 
   async function install() {
     setInstalling(true);
