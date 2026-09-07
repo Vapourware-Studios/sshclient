@@ -521,12 +521,15 @@ export default function NewConnectionDialog({
                 <Label htmlFor="flags">SSH Flags (optional)</Label>
                 <Input
                   id="flags"
-                  placeholder="e.g. ServerAliveInterval=30 StrictHostKeyChecking=no"
+                  placeholder="e.g. ServerAliveInterval=30 Compression=yes"
                   value={form.flags}
                   onChange={(e) => update('flags', e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Space-separated key=value pairs passed to the SSH connection.
+                  Space-separated Key=value pairs. Supported:{' '}
+                  ServerAliveInterval, ServerAliveCountMax, ConnectTimeout, Compression,
+                  ForwardAgent. Anything else is rejected when you connect, rather than
+                  quietly ignored.
                 </p>
               </div>
 

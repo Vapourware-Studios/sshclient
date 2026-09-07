@@ -1,7 +1,7 @@
 {
   "name": "sshclient",
   "version": "0.1.8",
-  "description": "A Termius-like SSH + SFTP client, built from scratch as a learning project",
+  "description": "A custom SSH and SFTP client",
   "main": "src/main/main.js",
   "desktopName": "sshclient.desktop",
   "scripts": {

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
+const { parseFlags } = require('./sshFlags');
 
 const SCRYPT_KEYLEN = 32;
 const SCRYPT_PARAMS = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
@@ -292,7 +293,7 @@ function listHosts() {
   const rows = db.prepare('SELECT * FROM hosts ORDER BY created_at ASC').all();
   return rows.map((row) => {
     const data = decryptHostData(row);
-      return {
+    return {
       id: row.id,
       label: data.label || '',
       host: data.host,
@@ -345,14 +346,9 @@ function validateHost(host) {
     errors.push('A password, a private key, or a Keychain key is required');
   }
 
-  if (host.flags) {
-    const tokens = host.flags.trim().split(/\s+/);
-    for (const token of tokens) {
-      if (!token.includes('=')) {
-        errors.push(`Invalid flag format: "${token}" (expected key=value)`);
-      }
-    }
-  }
+  // The same parser the connection uses, so a host can never be saved with
+  // flags that would be rejected the moment it is connected.
+  if (host.flags) errors.push(...parseFlags(host.flags).errors);
 
   return errors;
 }

@@ -7,6 +7,7 @@ const net = require('net');
 const { StringDecoder } = require('string_decoder');
 const vault = require('./vault');
 const localNetwork = require('./localNetwork');
+const { parseFlags } = require('./sshFlags');
 
 const sessions = new Map();
 const pending = new Map();
@@ -102,33 +103,12 @@ function buildConnectConfig(config) {
   if (config.password) connectConfig.password = config.password;
 
   if (config.flags) {
-    const tokens = config.flags.trim().split(/\s+/);
-    for (const token of tokens) {
-      if (!token || !token.includes('=')) continue;
-      const eqIdx = token.indexOf('=');
-      const rawKey = token.slice(0, eqIdx);
-      const rawVal = token.slice(eqIdx + 1);
-
-      const key = rawKey.trim();
-      const val = rawVal.trim();
-      if (!key) continue;
-
-      const lower = key.charAt(0).toLowerCase() + key.slice(1);
-
-      if (/^(serverAliveInterval|keepAliveInterval|keepaliveInterval)$/i.test(key)) {
-        connectConfig.keepaliveInterval = Number(val) * 1000;
-      } else if (/^(serverAliveCountMax|keepAliveCountMax|keepaliveCountMax)$/i.test(key)) {
-        connectConfig.keepaliveCountMax = Number(val);
-      } else if (/^compression$/i.test(key)) {
-        connectConfig.compression = val === 'yes' || val === '1' || val === 'true';
-      } else if (/^readyTimeout$/i.test(key)) {
-        connectConfig.readyTimeout = Number(val);
-      } else if (/^agentForwarding$/i.test(key)) {
-        connectConfig.agentForward = val === 'yes' || val === '1' || val === 'true';
-      } else {
-        connectConfig[lower] = val;
-      }
-    }
+    // Parsed after the host, port, user and credentials are in place, but only
+    // ever able to set the options named in the table — so a flag cannot reach
+    // any of them.
+    const { config: flagConfig, errors } = parseFlags(config.flags);
+    if (errors.length > 0) throw new Error(errors.join('; '));
+    Object.assign(connectConfig, flagConfig);
   }
 
   return connectConfig;
