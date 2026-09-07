@@ -52,6 +52,11 @@ contextBridge.exposeInMainWorld('api', {
   onLocalError: (callback) => subscribe('local:error', callback),
 
   onUpdateStart: (callback) => subscribe('update:start', callback),
+  onUpdateStatus: (callback) => subscribe('update:status', callback),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  updateOpenReleasePage: () => ipcRenderer.invoke('update:openReleasePage'),
+  appInfo: () => ipcRenderer.invoke('app:info'),
 
   serialList: () => ipcRenderer.invoke('serial:list'),
   serialConnect: (config) => ipcRenderer.invoke('serial:connect', config),

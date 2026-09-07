@@ -1033,6 +1033,36 @@ ipcMain.handle('feedback:optOut', () => {
   feedbackPrompt.optOut();
 });
 
+ipcMain.handle('update:check', async () => {
+  try {
+    return await updater.check();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('update:install', async () => {
+  try {
+    return await updater.install();
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('update:openReleasePage', () => updater.openReleasePage());
+
+// The About panel and any bug report the user files both want the exact build
+// they are running, not just the app version.
+ipcMain.handle('app:info', () => ({
+  version: app.getVersion(),
+  platform: process.platform,
+  arch: process.arch,
+  electron: process.versions.electron,
+  node: process.versions.node,
+  chrome: process.versions.chrome,
+  packaged: app.isPackaged,
+}));
+
 function buildMenu() {
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(
