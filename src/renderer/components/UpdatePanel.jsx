@@ -73,6 +73,10 @@ export default function UpdatePanel() {
     try {
       const result = await window.api.updateCheck();
       setInfo(result || { error: 'Update check failed.' });
+      // A download that finished before this panel was ever opened only exists
+      // in the main process's state — without adopting it, Settings would offer
+      // to start an update that is already sitting there waiting for a restart.
+      if (result?.progress) setProgress(result.progress);
     } finally {
       setChecking(false);
     }
@@ -87,6 +91,7 @@ export default function UpdatePanel() {
   async function install() {
     setInstalling(true);
     setMessage('');
+    if (progress?.state === 'error') setProgress(null);
     try {
       const result = await window.api.updateInstall();
       if (result?.error) {
@@ -116,6 +121,10 @@ export default function UpdatePanel() {
   // is the indeterminate kind — but it still has to block a second click.
   const busy = progress?.state === 'installing';
   const ready = progress?.state === 'downloaded';
+  // An update that died halfway takes its progress bar with it, so the failure
+  // has to be said out loud — otherwise the panel just goes quiet, still
+  // showing the message from when the download started.
+  const failed = progress?.state === 'error' ? progress.error : null;
 
   return (
     <Card>
@@ -180,7 +189,14 @@ export default function UpdatePanel() {
               </p>
             )}
 
-            {(downloading || busy || ready) && (
+            {failed && (
+              <p className="flex items-start gap-2 text-xs text-destructive">
+                <TriangleAlert className="size-3.5 shrink-0 translate-y-px" />
+                <span>The update stopped: {failed}</span>
+              </p>
+            )}
+
+            {!failed && (downloading || busy || ready) && (
               <div className="flex flex-col gap-1.5">
                 <ProgressBar percent={ready || busy ? 100 : progress.percent || 0} pulse={busy} />
                 <span className="text-xs text-muted-foreground">
@@ -196,7 +212,13 @@ export default function UpdatePanel() {
             <div className="flex flex-wrap gap-2">
               <Button size="sm" onClick={install} disabled={installing || downloading || busy}>
                 {installing && <Loader2 className="size-3.5 animate-spin" />}
-                {info.action === 'page' ? 'Open download page' : ready ? 'Restart and install' : 'Update now'}
+                {info.action === 'page'
+                  ? 'Open download page'
+                  : ready
+                    ? 'Restart and install'
+                    : failed
+                      ? 'Try again'
+                      : 'Update now'}
               </Button>
               <Button
                 variant="outline"

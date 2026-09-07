@@ -64,6 +64,16 @@ const SUPPORTED_FLAGS = [
   'ForwardAgent',
 ];
 
+/**
+ * The agent to forward to. Unix-likes advertise theirs in the environment;
+ * Windows has no socket path — ssh2 takes the literal string 'pageant', which
+ * covers Pageant and the OpenSSH agent service both.
+ */
+function agentSocket() {
+  if (process.env.SSH_AUTH_SOCK) return process.env.SSH_AUTH_SOCK;
+  return process.platform === 'win32' ? 'pageant' : null;
+}
+
 function coerce(spec, name, raw) {
   if (spec.type === 'bool') {
     const val = raw.toLowerCase();
@@ -133,10 +143,22 @@ function parseFlags(input) {
     config[spec.key] = result.value;
   }
 
-  // ssh2 refuses to connect with agent forwarding on and no agent to forward,
-  // and its own error for it says nothing about the flag that caused it.
-  if (config.agentForward && !process.env.SSH_AUTH_SOCK) {
-    errors.push('ForwardAgent needs a running SSH agent (SSH_AUTH_SOCK is not set)');
+  // ssh2 keeps the switch and the socket apart: `agentForward` only says the
+  // channel should be requested, and without `agent` pointing at a real socket
+  // there is nothing behind it — the connect fails, and its error names neither
+  // the flag nor the missing socket.
+  if (config.agentForward) {
+    const socket = agentSocket();
+    if (!socket) {
+      errors.push(
+        process.platform === 'win32'
+          ? 'ForwardAgent needs Pageant or the OpenSSH agent service running'
+          : 'ForwardAgent needs a running SSH agent (SSH_AUTH_SOCK is not set)'
+      );
+      delete config.agentForward;
+    } else {
+      config.agent = socket;
+    }
   }
 
   return { config, errors };

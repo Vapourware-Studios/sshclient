@@ -92,20 +92,48 @@ test('malformed tokens are reported without stopping the rest', () => {
   assert.match(errors[2], /ServerAliveInterval needs a value/);
 });
 
-test('agent forwarding is refused when there is no agent to forward', () => {
+test('agent forwarding carries the socket, not just the switch', (t) => {
   const original = process.env.SSH_AUTH_SOCK;
-  try {
-    process.env.SSH_AUTH_SOCK = '/tmp/agent.sock';
-    assert.equal(parseFlags('ForwardAgent=yes').config.agentForward, true);
-
-    delete process.env.SSH_AUTH_SOCK;
-    const { errors } = parseFlags('ForwardAgent=yes');
-    assert.match(errors[0], /needs a running SSH agent/);
-
-    // Turning it off never needs an agent.
-    assert.deepEqual(parseFlags('ForwardAgent=no').errors, []);
-  } finally {
+  t.after(() => {
     if (original === undefined) delete process.env.SSH_AUTH_SOCK;
     else process.env.SSH_AUTH_SOCK = original;
+  });
+
+  process.env.SSH_AUTH_SOCK = '/tmp/agent.sock';
+  const { config, errors } = parseFlags('ForwardAgent=yes');
+  assert.deepEqual(errors, []);
+  // ssh2 needs both: the request and something to answer it.
+  assert.deepEqual(config, { agentForward: true, agent: '/tmp/agent.sock' });
+
+  // Turning it off never needs an agent, and never names one.
+  assert.deepEqual(parseFlags('ForwardAgent=no'), {
+    config: { agentForward: false },
+    errors: [],
+  });
+});
+
+test('agent forwarding is refused, not half-configured, without an agent', (t) => {
+  const original = process.env.SSH_AUTH_SOCK;
+  t.after(() => {
+    if (original === undefined) delete process.env.SSH_AUTH_SOCK;
+    else process.env.SSH_AUTH_SOCK = original;
+  });
+
+  delete process.env.SSH_AUTH_SOCK;
+  const { config, errors } = parseFlags('ForwardAgent=yes');
+  if (process.platform === 'win32') {
+    // Windows has no socket path; ssh2 takes 'pageant' as the agent itself.
+    assert.deepEqual(errors, []);
+    assert.equal(config.agent, 'pageant');
+    return;
   }
+  assert.match(errors[0], /needs a running SSH agent/);
+  assert.equal('agentForward' in config, false);
+  assert.equal('agent' in config, false);
+});
+
+test('the agent socket cannot be pointed somewhere else by a flag', () => {
+  const { config, errors } = parseFlags('agent=/tmp/evil.sock');
+  assert.deepEqual(config, {});
+  assert.match(errors[0], /comes from the saved host/);
 });
