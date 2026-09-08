@@ -44,12 +44,21 @@ function ReleaseNotes({ notes }) {
   );
 }
 
+// Tailwind only ships the utilities it can see spelled out, and a bar this
+// short reads the same at 5% resolution as it does at 1% — so the fill widths
+// are a fixed ladder of classes rather than a computed style.
+const FILL_WIDTHS = [
+  'w-[2%]', 'w-[5%]', 'w-[10%]', 'w-[15%]', 'w-[20%]', 'w-[25%]', 'w-[30%]',
+  'w-[35%]', 'w-[40%]', 'w-[45%]', 'w-[50%]', 'w-[55%]', 'w-[60%]', 'w-[65%]',
+  'w-[70%]', 'w-[75%]', 'w-[80%]', 'w-[85%]', 'w-[90%]', 'w-[95%]', 'w-full',
+];
+
 function ProgressBar({ percent, pulse }) {
+  const step = Math.round(Math.max(0, Math.min(100, percent || 0)) / 5);
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
       <span
-        className={`block h-full w-[var(--update-progress)] rounded-full bg-primary transition-[width] duration-300 ${pulse ? 'animate-pulse' : ''}`}
-        style={{ '--update-progress': `${Math.max(2, Math.min(100, percent))}%` }}
+        className={`block h-full rounded-full bg-primary transition-[width] duration-300 ${FILL_WIDTHS[step]} ${pulse ? 'animate-pulse' : ''}`}
       />
     </div>
   );
