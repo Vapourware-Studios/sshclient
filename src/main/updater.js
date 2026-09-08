@@ -607,6 +607,8 @@ function ensureElectronUpdater() {
   return autoUpdater;
 }
 
+let electronTimerStarted = false;
+
 function initElectronUpdater() {
   const autoUpdater = ensureElectronUpdater();
 
@@ -614,6 +616,7 @@ function initElectronUpdater() {
   const check = () => autoUpdater.checkForUpdates().catch(() => {});
 
   check();
+  electronTimerStarted = true;
   // Unref'd so a pending re-check never holds the process open at quit.
   setInterval(check, RECHECK_INTERVAL_MS).unref?.();
 }
@@ -657,6 +660,11 @@ async function offerDownloadPage(latest) {
   if (response === 0) shell.openExternal(latest.url);
 }
 
+// A release is only ever put in front of you once per run. The check repeats so
+// a release published while the app is open is still found, but somebody who
+// said "Later" should not be asked again every six hours.
+let offeredVersion = null;
+
 async function autoCheck() {
   const desc = await describeInstall();
 
@@ -664,7 +672,9 @@ async function autoCheck() {
   // so electron-updater can download the new one and swap it in. It runs its
   // own periodic check, so it takes over from here.
   if (desc.channel === 'appimage' || desc.channel === 'electron') {
-    initElectronUpdater();
+    // Once it is running it re-checks on its own; the periodic check has
+    // nothing left to do on this channel.
+    if (!electronTimerStarted) initElectronUpdater();
     return;
   }
 
@@ -673,6 +683,8 @@ async function autoCheck() {
   // handed to the tool that installed the app instead of failing silently.
   const latest = await fetchLatestRelease();
   if (!latest || compareSemver(latest.version, app.getVersion()) <= 0) return;
+  if (offeredVersion === latest.version) return;
+  offeredVersion = latest.version;
 
   const plan = await buildPlan(desc, latest);
   if (plan.kind === 'page') {
@@ -769,9 +781,17 @@ let started = false;
 function init() {
   if (!app.isPackaged || started) return;
   started = true;
-  autoCheck().catch((err) =>
-    console.error('[updater] update check failed:', err?.message || err)
-  );
+
+  const run = () =>
+    autoCheck().catch((err) =>
+      console.error('[updater] update check failed:', err?.message || err)
+    );
+
+  run();
+  // Every channel re-checks, not just the ones electron-updater drives: an app
+  // left running on Homebrew, a Linux package or the AUR would otherwise never
+  // see a release published after launch. Unref'd so it never delays a quit.
+  setInterval(run, RECHECK_INTERVAL_MS).unref?.();
 }
 
 module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset };
