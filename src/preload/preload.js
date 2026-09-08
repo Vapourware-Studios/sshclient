@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('api', {
   onSshHostKey: (callback) => subscribe('ssh:hostkey', callback),
   sshHostKeyResponse: (sessionId, trust) =>
     ipcRenderer.invoke('ssh:hostKeyResponse', { sessionId, trust }),
+  onSshPassword: (callback) => subscribe('ssh:password', callback),
+  sshPasswordResponse: (sessionId, password) =>
+    ipcRenderer.invoke('ssh:passwordResponse', { sessionId, password }),
 
   sftpHome: (sessionId) => ipcRenderer.invoke('sftp:home', sessionId),
   sftpList: (sessionId, path) => ipcRenderer.invoke('sftp:list', { sessionId, path }),

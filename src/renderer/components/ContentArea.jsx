@@ -8,6 +8,7 @@ import {
   ConnectErrorView,
   DisconnectedView,
   HostKeyPromptView,
+  PasswordPromptView,
 } from '@/components/ConnectionStatus';
 
 export default function ContentArea({
@@ -18,6 +19,7 @@ export default function ContentArea({
   onCloseTab,
   onRetryTab,
   onRespondToHostKey,
+  onRespondToPassword,
   onConnect,
   onEdit,
   onDelete,
@@ -71,6 +73,7 @@ export default function ContentArea({
             onCloseMember={onCloseTab}
             onRetryTab={onRetryTab}
             onRespondToHostKey={onRespondToHostKey}
+            onRespondToPassword={onRespondToPassword}
           />
         ))}
 
@@ -110,7 +113,16 @@ export default function ContentArea({
         />
       )}
 
-      {statusTab?.status === 'connecting' && !statusTab.hostKeyInfo && (
+      {statusTab?.status === 'connecting' && !statusTab.hostKeyInfo && statusTab.passwordPrompt && (
+        <PasswordPromptView
+          title={statusTab.title}
+          info={statusTab.passwordPrompt}
+          onSubmit={(password) => onRespondToPassword(statusTab.id, password)}
+          onCancel={() => onRespondToPassword(statusTab.id, null)}
+        />
+      )}
+
+      {statusTab?.status === 'connecting' && !statusTab.hostKeyInfo && !statusTab.passwordPrompt && (
         <ConnectingView
           title={statusTab.title}
           stage={statusTab.stage}

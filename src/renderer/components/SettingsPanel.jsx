@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowUpCircle,
   Download,
   EyeOff,
@@ -38,9 +39,21 @@ const SECTIONS = [
   { id: 'about', label: 'About', Icon: Info, blurb: 'Version, licence and where to shout at us.' },
 ];
 
-function SectionNav({ section, onChange }) {
+function SectionNav({ section, onChange, onBack }) {
   return (
-    <nav className="flex shrink-0 gap-1 overflow-x-auto border-b p-2 lg:w-56 lg:flex-col lg:overflow-visible lg:border-b-0 lg:border-r lg:p-3">
+    <nav className="flex shrink-0 flex-col gap-1 border-b bg-sidebar p-2 text-sidebar-foreground lg:w-56 lg:border-b-0 lg:border-r lg:p-3">
+      {onBack && (
+        <>
+          <button
+            onClick={onBack}
+            className="flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+          >
+            <ArrowLeft className="size-4 shrink-0" />
+            <span className="truncate">Back to vault</span>
+          </button>
+          <p className="px-2.5 pb-1 pt-3 text-xs font-medium text-muted-foreground">Settings</p>
+        </>
+      )}
       {SECTIONS.map(({ id, label, Icon }) => (
         <button
           key={id}
@@ -348,7 +361,7 @@ function AboutCard({ onFeedback }) {
   );
 }
 
-export default function SettingsPanel({ onHostsChange }) {
+export default function SettingsPanel({ onHostsChange, onBack }) {
   const [section, setSection] = useState('account');
   const [termiusOpen, setTermiusOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -356,7 +369,7 @@ export default function SettingsPanel({ onHostsChange }) {
 
   return (
     <div className="flex h-full flex-col lg:flex-row">
-      <SectionNav section={section} onChange={setSection} />
+      <SectionNav section={section} onChange={setSection} onBack={onBack} />
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="mx-auto flex max-w-2xl flex-col gap-4">

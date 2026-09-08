@@ -102,6 +102,10 @@ function createWindow() {
     },
   });
 
+  // On macOS the app outlives its window; anything still waiting on the
+  // renderer that just went away has to be let go.
+  win.on('closed', settleAllPrompts);
+
   win.on('enter-full-screen', () =>
     win.webContents.send('window:fullscreen', { fullScreen: true })
   );
@@ -139,6 +143,31 @@ function createWindow() {
 }
 
 const pendingHostKeyDecisions = new Map();
+const pendingPasswordPrompts = new Map();
+
+/**
+ * A prompt only lives as long as the connection waiting on it. Close the tab,
+ * lose the session, or shut the window, and nothing will ever answer it — so
+ * settle it as a refusal: ssh2 stops waiting, and the resolver is not held for
+ * the rest of the process.
+ */
+function settlePrompts(sessionId) {
+  const trust = pendingHostKeyDecisions.get(sessionId);
+  if (trust) {
+    pendingHostKeyDecisions.delete(sessionId);
+    trust(false);
+  }
+  const password = pendingPasswordPrompts.get(sessionId);
+  if (password) {
+    pendingPasswordPrompts.delete(sessionId);
+    password(null);
+  }
+}
+
+function settleAllPrompts() {
+  const ids = new Set([...pendingHostKeyDecisions.keys(), ...pendingPasswordPrompts.keys()]);
+  for (const id of ids) settlePrompts(id);
+}
 
 ipcMain.handle('ping', async (event, message) => {
   console.log('[main] got a ping from the UI, message:', message);
@@ -185,11 +214,14 @@ ipcMain.handle('ssh:connect', (event, config) => {
       // Viewers first: they are the ones waiting on the network, and the tab
       // this window has to repaint is already on this machine.
       onClose: (sessionId, detail = {}) => {
+        settlePrompts(sessionId);
         share.onSessionClosed(sessionId);
         win?.webContents.send('ssh:closed', { sessionId, ...detail });
       },
-      onError: (sessionId, err) =>
-        win?.webContents.send('ssh:error', { sessionId, message: err.message }),
+      onError: (sessionId, err) => {
+        settlePrompts(sessionId);
+        win?.webContents.send('ssh:error', { sessionId, message: err.message });
+      },
       onLog: (sessionId, line, level) =>
         win?.webContents.send('ssh:log', { sessionId, line, level }),
       onRecording: (sessionId, recording) => {
@@ -199,6 +231,11 @@ ipcMain.handle('ssh:connect', (event, config) => {
         new Promise((resolve) => {
           pendingHostKeyDecisions.set(sessionId, resolve);
           win?.webContents.send('ssh:hostkey', { sessionId, ...info });
+        }),
+      onPassword: (sessionId, info) =>
+        new Promise((resolve) => {
+          pendingPasswordPrompts.set(sessionId, resolve);
+          win?.webContents.send('ssh:password', { sessionId, ...info });
         }),
       onHostsUpdated: (hosts) => win?.webContents.send('hosts:changed', { hosts }),
     });
@@ -216,6 +253,14 @@ ipcMain.handle('ssh:hostKeyResponse', (event, { sessionId, trust }) => {
   }
 });
 
+ipcMain.handle('ssh:passwordResponse', (event, { sessionId, password }) => {
+  const resolve = pendingPasswordPrompts.get(sessionId);
+  if (resolve) {
+    pendingPasswordPrompts.delete(sessionId);
+    resolve(password || null);
+  }
+});
+
 ipcMain.handle('ssh:write', (event, { sessionId, data }) => {
   ssh.write(sessionId, data);
 });
@@ -226,6 +271,7 @@ ipcMain.handle('ssh:resize', (event, { sessionId, cols, rows }) => {
 });
 
 ipcMain.handle('ssh:disconnect', (event, sessionId) => {
+  settlePrompts(sessionId);
   ssh.disconnect(sessionId);
 });
 
@@ -1143,6 +1189,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  settleAllPrompts();
   share.shutdown('quit');
   vault.shutdown();
 });
