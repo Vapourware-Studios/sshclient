@@ -148,3 +148,7 @@ vite.config.ts.timestamp-*
 .claude
 
 .DS_Store
+
+# npm config with local mirrors — machine-specific, never shared
+.npmrc
+.nmprc

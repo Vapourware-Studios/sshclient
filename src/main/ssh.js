@@ -7,6 +7,7 @@ const net = require('net');
 const { StringDecoder } = require('string_decoder');
 const vault = require('./vault');
 const localNetwork = require('./localNetwork');
+const { parseFlags } = require('./sshFlags');
 
 const sessions = new Map();
 const pending = new Map();
@@ -100,6 +101,15 @@ function buildConnectConfig(config) {
   }
 
   if (config.password) connectConfig.password = config.password;
+
+  if (config.flags) {
+    // Parsed after the host, port, user and credentials are in place, but only
+    // ever able to set the options named in the table — so a flag cannot reach
+    // any of them.
+    const { config: flagConfig, errors } = parseFlags(config.flags);
+    if (errors.length > 0) throw new Error(errors.join('; '));
+    Object.assign(connectConfig, flagConfig);
+  }
 
   return connectConfig;
 }

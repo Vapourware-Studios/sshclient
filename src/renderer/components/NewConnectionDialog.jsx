@@ -19,6 +19,7 @@ const EMPTY_FORM = {
   privateKeyPath: '',
   passphrase: '',
   keyId: '',
+  flags: '',
   saveToVault: false,
   color: null,
   icon: null,
@@ -83,6 +84,7 @@ export default function NewConnectionDialog({
         username: editingHost.username || '',
         privateKeyPath: editingHost.privateKeyPath || '',
         keyId: editingHost.keyId || '',
+        flags: editingHost.flags || '',
         saveToVault: true,
         color: editingHost.color || null,
         icon: editingHost.icon || null,
@@ -181,6 +183,7 @@ export default function NewConnectionDialog({
           host: form.host,
           port: Number(form.port) || 22,
           username: form.username,
+          flags: form.flags,
           color: form.color,
           icon: form.icon,
           ...credential,
@@ -198,6 +201,7 @@ export default function NewConnectionDialog({
           host: form.host,
           port: Number(form.port) || 22,
           username: form.username,
+          flags: form.flags,
           color: form.color,
           icon: form.icon,
           ...credential,
@@ -211,6 +215,7 @@ export default function NewConnectionDialog({
           host: form.host,
           port: Number(form.port) || 22,
           username: form.username,
+          flags: form.flags,
           ...credential,
         };
       }
@@ -511,6 +516,22 @@ export default function NewConnectionDialog({
                   </div>
                 </TabsContent>
               </Tabs>
+
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="flags">SSH Flags (optional)</Label>
+                <Input
+                  id="flags"
+                  placeholder="e.g. ServerAliveInterval=30 Compression=yes"
+                  value={form.flags}
+                  onChange={(e) => update('flags', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Space-separated Key=value pairs. Supported:{' '}
+                  ServerAliveInterval, ServerAliveCountMax, ConnectTimeout, Compression,
+                  ForwardAgent. Anything else is rejected when you connect, rather than
+                  quietly ignored.
+                </p>
+              </div>
 
               {mode === 'add' && (
                 <div className="flex flex-col gap-2">

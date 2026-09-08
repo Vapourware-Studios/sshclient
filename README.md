@@ -51,9 +51,7 @@ Linux — grab the package your distro speaks from the same releases page:
 | `.rpm` (Fedora/RHEL) | `sudo rpm -i sshclient-*.rpm` |
 | `.pacman` (Arch/Manjaro) | `sudo pacman -U sshclient-*.pacman` |
 
-The app checks for new releases itself on every format: the AppImage swaps
-itself out, and the packaged installs download the new package and hand you the
-install command in an in-app terminal.
+See **Staying up to date** below for how each of these upgrades itself.
 
 Mac OS
 
@@ -66,6 +64,40 @@ or
 [![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://github.com/vapourware-studios/sshclient/releases)
 
 - You are done!
+
+## Staying up to date
+
+The app checks GitHub for a new release when you unlock the vault, and every few
+hours after that. You can also ask it yourself any time: **Settings → Updates**
+shows the version you are on, which mechanism this particular install updates
+through, the changelog for the newest release, and a **Check for updates**
+button.
+
+How the update is applied depends on how you installed it — the app works that
+out for itself:
+
+| Install | What "Update now" does |
+| --- | --- |
+| `.AppImage`, Windows installer | Downloads the new build and swaps it in, then offers a restart |
+| Homebrew cask | Runs `brew upgrade` for you in the background, then offers a restart |
+| AUR (`yay` / `paru` / `pamac`) | Opens an in-app terminal with the helper's upgrade command |
+| `.deb` / `.rpm` / `.pacman` | Downloads the matching package and hands you the install command (asks for root) |
+| Anything else | Opens the release page |
+
+Nothing installs behind your back — every path starts with a prompt you agree
+to and ends with a restart you agree to.
+
+## Settings
+
+Settings is split into its own sections, reachable from the rail on the left of
+the Settings tab:
+
+- **Account** — sign in, link devices, run a sync now
+- **Appearance** — themes, custom CSS, and the macOS Liquid Glass material
+- **Security & Privacy** — change the master password, blur host IPs for screen sharing
+- **Import** — pull hosts and keys in from Termius
+- **Updates** — the panel described above
+- **About** — version, build, licence, feedback. There may or may not be something hidden in it.
 
 ## Contributing
 
@@ -111,6 +143,8 @@ contact us: [website](https://vapourware-studios.net/contact/) or email us at he
 | Serial terminal + session recording | ![Done][done] |
 | Termius host/key import | ![Done][done] |
 | Encrypted cross-device sync | ![Done][done] |
+| In-app update checker (all platforms/formats) | ![Done][done] |
+| Terminal sharing with handover of control | ![Done][done] |
 | Remote & dynamic forwarding (`-R` / SOCKS) | ![In Progress][wip] |
 | `known_hosts` import (UI stubbed) | ![In Progress][wip] |
 | Intel (x64) Mac builds | ![In Progress][wip] |

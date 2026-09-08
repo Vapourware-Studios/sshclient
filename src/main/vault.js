@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
+const { parseFlags } = require('./sshFlags');
 
 const SCRYPT_KEYLEN = 32;
 const SCRYPT_PARAMS = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
@@ -300,6 +301,7 @@ function listHosts() {
       username: data.username,
       privateKeyPath: data.privateKeyPath || undefined,
       keyId: data.keyId || undefined,
+      flags: data.flags || '',
       color: data.color || null,
       icon: data.icon || null,
       lastConnectedAt: data.lastConnectedAt || null,
@@ -344,6 +346,10 @@ function validateHost(host) {
     errors.push('A password, a private key, or a Keychain key is required');
   }
 
+  // The same parser the connection uses, so a host can never be saved with
+  // flags that would be rejected the moment it is connected.
+  if (host.flags) errors.push(...parseFlags(host.flags).errors);
+
   return errors;
 }
 
@@ -372,6 +378,7 @@ function saveHost(host) {
     username: merged.username,
     privateKeyPath: merged.privateKeyPath || undefined,
     keyId: merged.keyId || undefined,
+    flags: merged.flags || '',
     color: merged.color || undefined,
     icon: merged.icon || undefined,
     lastConnectedAt: merged.lastConnectedAt || undefined,
