@@ -48,8 +48,8 @@ function ProgressBar({ percent, pulse }) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
       <span
-        className={`block h-full rounded-full bg-primary transition-[width] duration-300 ${pulse ? 'animate-pulse' : ''}`}
-        style={{ width: `${Math.max(2, Math.min(100, percent))}%` }}
+        className={`block h-full w-[var(--update-progress)] rounded-full bg-primary transition-[width] duration-300 ${pulse ? 'animate-pulse' : ''}`}
+        style={{ '--update-progress': `${Math.max(2, Math.min(100, percent))}%` }}
       />
     </div>
   );
