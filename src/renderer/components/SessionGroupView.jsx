@@ -5,6 +5,7 @@ import {
   ConnectErrorView,
   DisconnectedView,
   HostKeyPromptView,
+  PasswordPromptView,
 } from '@/components/ConnectionStatus';
 import { HostIcon } from '@/lib/host-icons.jsx';
 import { toneForId, toneStyle } from '@/lib/tone';
@@ -108,6 +109,7 @@ export default function SessionGroupView({
   onCloseMember,
   onRetryTab,
   onRespondToHostKey,
+  onRespondToPassword,
 }) {
   const activeMember = members.find((m) => m.id === group.activeMemberId) ?? members[0] ?? null;
   const hidden = visible ? '' : 'invisible pointer-events-none';
@@ -157,14 +159,25 @@ export default function SessionGroupView({
           />
         )}
 
-        {activeMember?.status === 'connecting' && !activeMember.hostKeyInfo && (
-          <ConnectingView
+        {activeMember?.status === 'connecting' && !activeMember.hostKeyInfo && activeMember.passwordPrompt && (
+          <PasswordPromptView
             title={activeMember.title}
-            stage={activeMember.stage}
-            logs={sessionLogs[activeMember.id] ?? []}
-            onCancel={() => onCloseMember(activeMember.id)}
+            info={activeMember.passwordPrompt}
+            onSubmit={(password) => onRespondToPassword(activeMember.id, password)}
+            onCancel={() => onRespondToPassword(activeMember.id, null)}
           />
         )}
+
+        {activeMember?.status === 'connecting' &&
+          !activeMember.hostKeyInfo &&
+          !activeMember.passwordPrompt && (
+            <ConnectingView
+              title={activeMember.title}
+              stage={activeMember.stage}
+              logs={sessionLogs[activeMember.id] ?? []}
+              onCancel={() => onCloseMember(activeMember.id)}
+            />
+          )}
 
         {activeMember?.status === 'disconnected' && (
           <DisconnectedView

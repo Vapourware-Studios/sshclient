@@ -153,7 +153,7 @@ export default function App() {
         setTabs((prev) =>
           prev.map((t) =>
             t.id === sessionId && t.status === 'connecting'
-              ? { ...t, status: 'error', error: message, hostKeyInfo: null }
+              ? { ...t, status: 'error', error: message, hostKeyInfo: null, passwordPrompt: null }
               : t
           )
         );
@@ -167,6 +167,12 @@ export default function App() {
 
     const unsubHostKey = window.api.onSshHostKey(({ sessionId, ...info }) => {
       patchTab(sessionId, { hostKeyInfo: info });
+    });
+
+    // The server turned down every credential the host was saved with but will
+    // take a password. Park the connecting view on a prompt instead of failing.
+    const unsubPassword = window.api.onSshPassword(({ sessionId, ...info }) => {
+      patchTab(sessionId, { passwordPrompt: info });
     });
 
     // A session that was up and then went away keeps its tab, parked on the
@@ -228,6 +234,7 @@ export default function App() {
       unsubReady();
       unsubError();
       unsubHostKey();
+      unsubPassword();
       unsubClosed();
       unsubLocalClosed();
       unsubSerialClosed();
@@ -610,6 +617,7 @@ export default function App() {
           status: 'error',
           error: failure,
           hostKeyInfo: null,
+          passwordPrompt: null,
         };
         const next = [...prev, restored];
         // Whether the group outlived the attempt is only knowable from `prev`:
@@ -760,6 +768,11 @@ export default function App() {
     if (!result.error) setHosts(result.hosts);
   }
 
+  async function respondToPassword(tabId, password) {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, passwordPrompt: null } : t)));
+    await window.api.sshPasswordResponse(tabId, password);
+  }
+
   async function respondToHostKey(tabId, trust) {
     setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, hostKeyInfo: null } : t)));
     await window.api.sshHostKeyResponse(tabId, trust);
@@ -824,6 +837,7 @@ export default function App() {
               onCloseTab={closeTab}
               onRetryTab={retryTab}
               onRespondToHostKey={respondToHostKey}
+              onRespondToPassword={respondToPassword}
               onConnect={connectToHost}
               onEdit={openEditHostDialog}
               onDelete={deleteHost}

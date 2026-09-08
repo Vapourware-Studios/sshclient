@@ -139,6 +139,7 @@ function createWindow() {
 }
 
 const pendingHostKeyDecisions = new Map();
+const pendingPasswordPrompts = new Map();
 
 ipcMain.handle('ping', async (event, message) => {
   console.log('[main] got a ping from the UI, message:', message);
@@ -200,6 +201,11 @@ ipcMain.handle('ssh:connect', (event, config) => {
           pendingHostKeyDecisions.set(sessionId, resolve);
           win?.webContents.send('ssh:hostkey', { sessionId, ...info });
         }),
+      onPassword: (sessionId, info) =>
+        new Promise((resolve) => {
+          pendingPasswordPrompts.set(sessionId, resolve);
+          win?.webContents.send('ssh:password', { sessionId, ...info });
+        }),
       onHostsUpdated: (hosts) => win?.webContents.send('hosts:changed', { hosts }),
     });
     return { sessionId };
@@ -213,6 +219,14 @@ ipcMain.handle('ssh:hostKeyResponse', (event, { sessionId, trust }) => {
   if (resolve) {
     pendingHostKeyDecisions.delete(sessionId);
     resolve(Boolean(trust));
+  }
+});
+
+ipcMain.handle('ssh:passwordResponse', (event, { sessionId, password }) => {
+  const resolve = pendingPasswordPrompts.get(sessionId);
+  if (resolve) {
+    pendingPasswordPrompts.delete(sessionId);
+    resolve(password || null);
   }
 });
 

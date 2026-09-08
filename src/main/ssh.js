@@ -14,6 +14,7 @@ const pending = new Map();
 
 const MAX_HISTORY_CHARS = 200000;
 const MAX_RECORDING_CHARS = 2000000;
+const MAX_PASSWORD_PROMPTS = 3;
 
 function stripControlSequences(text) {
   return text
@@ -114,6 +115,68 @@ function buildConnectConfig(config) {
   return connectConfig;
 }
 
+/**
+ * Auth, in the order a person would try it: whatever the host was saved with
+ * first, and only if the server turns all of that down — and says it will take
+ * a password — do we stop and ask for one. The prompt is the difference between
+ * "All configured authentication methods failed" and simply typing a password,
+ * which is what someone with a password-login server expects to happen.
+ */
+function createAuthHandler(connectConfig, { requestPassword, log }) {
+  const { username } = connectConfig;
+  const queue = [{ type: 'none' }];
+
+  if (connectConfig.privateKey) {
+    queue.push({
+      type: 'publickey',
+      key: connectConfig.privateKey,
+      passphrase: connectConfig.passphrase,
+    });
+  }
+  if (connectConfig.agent) queue.push({ type: 'agent', agent: connectConfig.agent });
+  if (connectConfig.password) queue.push({ type: 'password', password: connectConfig.password });
+
+  let prompts = 0;
+
+  return (methodsLeft, partialSuccess, callback) => {
+    // `methodsLeft` is null until the server has told us what it accepts; until
+    // then nothing is ruled out.
+    const allowed = (type) =>
+      !methodsLeft || methodsLeft.includes(type === 'agent' ? 'publickey' : type);
+
+    while (queue.length > 0) {
+      const attempt = queue.shift();
+      if (allowed(attempt.type)) return callback({ ...attempt, username });
+    }
+
+    const password = methodsLeft?.includes('password');
+    const interactive = methodsLeft?.includes('keyboard-interactive');
+    if (!requestPassword || (!password && !interactive) || prompts >= MAX_PASSWORD_PROMPTS) {
+      return callback(false);
+    }
+
+    const retry = prompts > 0;
+    prompts += 1;
+    log(retry ? 'Password rejected, asking again…' : 'Server is asking for a password…');
+
+    requestPassword({ username, host: connectConfig.host, retry })
+      .then((entered) => {
+        if (!entered) {
+          log('Password entry cancelled', 'error');
+          return callback(false);
+        }
+        if (password) return callback({ type: 'password', username, password: entered });
+        callback({
+          type: 'keyboard-interactive',
+          username,
+          prompt: (name, instructions, lang, questions, finish) =>
+            finish(questions.map(() => entered)),
+        });
+      })
+      .catch(() => callback(false));
+  };
+}
+
 function installPublicKeyAsync(conn, publicKey) {
   const line = publicKey.trim();
   if (!line || line.includes('\n')) {
@@ -206,8 +269,18 @@ function installPublicKey(conn, publicKey, log) {
 }
 
 function connect(config, handlers = {}) {
-  const { onProgress, onReady, onData, onClose, onError, onHostKey, onLog, onRecording, onHostsUpdated } =
-    handlers;
+  const {
+    onProgress,
+    onReady,
+    onData,
+    onClose,
+    onError,
+    onHostKey,
+    onPassword,
+    onLog,
+    onRecording,
+    onHostsUpdated,
+  } = handlers;
 
   if (config.mode === 'keycopy' && !config.publicKey) {
     throw new Error('A public key is required to copy a key to a host');
@@ -236,6 +309,12 @@ function connect(config, handlers = {}) {
       })
       .catch(() => callback(false));
   };
+
+  connectConfig.tryKeyboard = true;
+  connectConfig.authHandler = createAuthHandler(connectConfig, {
+    log,
+    requestPassword: onPassword ? (info) => onPassword(sessionId, info) : null,
+  });
 
   onProgress?.(sessionId, 'connecting');
   log(`Connecting to ${connectConfig.host}:${connectConfig.port} as ${connectConfig.username}`);

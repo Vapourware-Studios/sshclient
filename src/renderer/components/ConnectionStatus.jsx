@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Check,
   ChevronDown,
   ChevronUp,
+  KeyRound,
   Loader2,
   PlugZap,
   PowerOff,
@@ -24,6 +26,34 @@ export const SSH_STEPS = [
 ];
 
 const STEP_DWELL_MS = 450;
+
+// Connecting is the one moment the app makes you wait, so it may as well say
+// something. The real progress is the step list below these — this is flavour,
+// and it never claims anything about what the connection is actually doing.
+const QUIPS = [
+  'Waking up the server',
+  'Politely knocking on port 22',
+  'Asking the router for directions',
+  'Its always DNS!',
+  'MAN! this internet is slow!',
+  'Waiting for the server to finish its coffee',
+  'Bribing the firewall, ITS ASKING FOR $200!',
+];
+
+const QUIP_ROTATE_MS = 2400;
+
+function useQuip() {
+  // Starting somewhere random keeps the same host from greeting you with the
+  // same line every single time.
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * QUIPS.length));
+
+  useEffect(() => {
+    const timer = setInterval(() => setIndex((i) => (i + 1) % QUIPS.length), QUIP_ROTATE_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  return QUIPS[index];
+}
 
 function usePacedIndex(targetIndex) {
   const [index, setIndex] = useState(0);
@@ -146,6 +176,7 @@ function ShowLogsButton({ show, onToggle }) {
 
 export function ConnectingView({ title, stage, logs, onCancel }) {
   const [showLogs, setShowLogs] = useState(false);
+  const quip = useQuip();
   const targetIndex = SSH_STEPS.findIndex((s) => s.id === stage);
   const currentIndex = usePacedIndex(targetIndex < 0 ? 0 : targetIndex);
 
@@ -164,7 +195,9 @@ export function ConnectingView({ title, stage, logs, onCancel }) {
         <p className="text-sm font-medium">
           <HostTitle title={title} />
         </p>
-        <p className="text-xs text-muted-foreground">Establishing secure connection</p>
+        <p key={quip} className="text-xs text-muted-foreground animate-rise-in">
+          {quip}…
+        </p>
       </div>
 
       <div className="animate-rise-in [animation-delay:0.16s]">
@@ -234,6 +267,62 @@ export function HostKeyPromptView({ title, info, onTrust, onReject }) {
           Trust & continue
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The server refused the saved credentials but offers password login. Asking is
+ * the whole point: the alternative is a dead end that says every method failed,
+ * when typing a password would have worked.
+ */
+export function PasswordPromptView({ title, info, onSubmit, onCancel }) {
+  const [password, setPassword] = useState('');
+
+  function submit(event) {
+    event.preventDefault();
+    if (password) onSubmit(password);
+  }
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-5 bg-background px-6 text-center animate-view-in">
+      <div className="relative flex size-16 items-center justify-center rounded-full bg-primary/10 animate-step-pop">
+        <span className="absolute inset-0 rounded-full border border-primary/30 animate-halo" />
+        <KeyRound className="size-7 text-primary" />
+      </div>
+
+      <div className="flex w-full max-w-sm flex-col gap-1 animate-rise-in [animation-delay:0.08s]">
+        <p className="text-sm font-medium">
+          Password for <HostTitle title={title} />
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {info?.retry
+            ? 'That password was rejected. Try again.'
+            : `The server turned down the saved credentials but accepts a password for ${info?.username}.`}
+        </p>
+      </div>
+
+      <form onSubmit={submit} className="flex w-full max-w-sm flex-col gap-2 animate-rise-in [animation-delay:0.16s]">
+        <Input
+          autoFocus
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          aria-label="Password"
+        />
+        <div className="flex justify-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={!password}>
+            Continue
+          </Button>
+        </div>
+      </form>
+      <p className="text-xs text-muted-foreground">
+        Used for this connection only — it is not saved to the vault.
+      </p>
     </div>
   );
 }
