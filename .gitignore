@@ -152,3 +152,4 @@ vite.config.ts.timestamp-*
 # npm config with local mirrors — machine-specific, never shared
 .npmrc
 .nmprc
+/docs/*

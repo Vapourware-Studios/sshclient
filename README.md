@@ -54,11 +54,14 @@ Linux — install a native package from the [releases page](https://github.com/V
 
 Older releases use `.pacman` for Arch packages; install those with `sudo pacman -U ./sshclient-*.pacman`.
 
-Repository-based installation is being prepared; `apt install sshclient` and
-`pacman -S sshclient` require a configured package repository and are not yet
-available from the distributions' default repositories. No shell installer is
-required. See [Linux support and testing](docs/linux.md) for build commands,
-serial access and the current validation coverage.
+Repository-based installation is being prepared in
+[linux-packages](https://github.com/Vapourware-Studios/linux-packages);
+`apt install sshclient` and `pacman -S sshclient` require a configured package
+repository and are not yet available from the distributions' default
+repositories. No shell installer is required.
+
+Serial devices use normal device permissions: if access is denied the app names
+the device's group (`uucp` on Arch, `dialout` elsewhere) and how to join it.
 
 Mac OS
 
