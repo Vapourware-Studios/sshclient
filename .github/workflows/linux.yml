@@ -20,7 +20,7 @@ jobs:
           - arch: x64
             runner: ubuntu-22.04
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     # Compile native modules against the same older glibc on both CPUs.
     container:
