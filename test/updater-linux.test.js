@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload } = require('../src/main/updater');
+const { compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads } = require('../src/main/updater');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -69,4 +69,28 @@ test('Linux package verification rejects corrupted downloads and missing checksu
   await assert.rejects(verifyLinuxDownload(file, `${digest}  other.deb\n`), /missing/);
   fs.appendFileSync(file, 'changed');
   await assert.rejects(verifyLinuxDownload(file, `${digest}  demo.deb\n`), /SHA-256/);
+});
+
+test('sweeps only update downloads older than the upgrade window', async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-'));
+  try {
+    const stale = path.join(temp, 'sshclient-update-old');
+    const fresh = path.join(temp, 'sshclient-update-new');
+    const other = path.join(temp, 'something-else');
+    for (const dir of [stale, fresh, other]) {
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, 'demo.deb'), 'demo');
+    }
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(stale, hourAgo, hourAgo);
+    fs.utimesSync(other, hourAgo, hourAgo);
+
+    await sweepOldDownloads(temp);
+
+    assert.equal(fs.existsSync(stale), false);
+    assert.equal(fs.existsSync(fresh), true);
+    assert.equal(fs.existsSync(other), true);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });

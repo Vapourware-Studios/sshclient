@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('api', {
   shareGrant: (sessionId, memberId) => ipcRenderer.invoke('share:grant', { sessionId, memberId }),
   shareRevoke: (sessionId) => ipcRenderer.invoke('share:revoke', sessionId),
   shareKick: (sessionId, memberId) => ipcRenderer.invoke('share:kick', { sessionId, memberId }),
+  shareCheckInvite: () => ipcRenderer.invoke('share:checkInvite'),
   shareAcceptInvite: (shareId) => ipcRenderer.invoke('share:acceptInvite', shareId),
   shareDeclineInvite: () => ipcRenderer.invoke('share:declineInvite'),
   shareLeave: (shareId) => ipcRenderer.invoke('share:leave', shareId),

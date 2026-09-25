@@ -167,18 +167,21 @@ async function promptRestart(detail) {
  * Watches an out-of-process package manager finish the upgrade the user just
  * ran in the in-app terminal, then offers the restart that picks it up.
  */
-function pollForUpgrade(readInstalledVersion, targetVersion, detail) {
+const UPGRADE_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
+function pollForUpgrade(readInstalledVersion, targetVersion, detail, onDone = () => {}) {
   const POLL_MS = 4000;
-  const TIMEOUT_MS = 10 * 60 * 1000;
   const start = Date.now();
   const timer = setInterval(async () => {
-    if (Date.now() - start > TIMEOUT_MS) {
+    if (Date.now() - start > UPGRADE_POLL_TIMEOUT_MS) {
       clearInterval(timer);
+      onDone();
       return;
     }
     const installed = await readInstalledVersion();
     if (installed && compareSemver(installed, targetVersion) >= 0) {
       clearInterval(timer);
+      onDone();
       promptRestart(detail);
     }
   }, POLL_MS);
@@ -340,9 +343,34 @@ async function aurHelperFor(pkg) {
 }
 
 /** Where a downloaded package is staged before the install command runs. */
+const UPDATE_DIR_PREFIX = 'sshclient-update-';
+
+// A download is normally removed once its upgrade lands or is given up on, but
+// quitting first skips that — so each new download clears out the old ones.
+// Anything younger than the upgrade window may still be waiting in a terminal.
+async function sweepOldDownloads(tempDir = app.getPath('temp'), now = Date.now()) {
+  let entries;
+  try {
+    entries = await fsp.readdir(tempDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(UPDATE_DIR_PREFIX)) continue;
+    const dir = path.join(tempDir, entry.name);
+    try {
+      const { mtimeMs } = await fsp.stat(dir);
+      if (now - mtimeMs > UPGRADE_POLL_TIMEOUT_MS) await fsp.rm(dir, { recursive: true, force: true });
+    } catch {
+      // Gone already, or not ours to remove.
+    }
+  }
+}
+
 async function assetPath(asset) {
   if (asset.name !== path.basename(asset.name)) throw new Error('Invalid release asset filename.');
-  const dir = await fsp.mkdtemp(path.join(app.getPath('temp'), 'sshclient-update-'));
+  await sweepOldDownloads();
+  const dir = await fsp.mkdtemp(path.join(app.getPath('temp'), UPDATE_DIR_PREFIX));
   return path.join(dir, asset.name);
 }
 
@@ -436,6 +464,7 @@ async function buildPlan(desc, latest) {
   const asset = spec ? pickLinuxAsset(latest.assets, desc.channel, process.arch) : null;
   if (!spec || !asset) return { kind: 'page' };
 
+  let downloadDir = null;
   return {
     kind: 'terminal',
     needsRoot: true,
@@ -446,6 +475,7 @@ async function buildPlan(desc, latest) {
       const checksums = latest.assets.find((a) => a.name === `SHA256SUMS-linux-${process.arch}`);
       if (!checksums) throw new Error('This release has no Linux package checksums. Download a verified release from the release page.');
       const file = await assetPath(asset);
+      downloadDir = path.dirname(file);
       try {
         await download(asset.url, file);
         const manifestFile = path.join(path.dirname(file), checksums.name);
@@ -456,6 +486,13 @@ async function buildPlan(desc, latest) {
         await fsp.rm(path.dirname(file), { recursive: true, force: true });
         throw err;
       }
+    },
+    // Once the upgrade lands or the wait for it runs out, the package is spent.
+    cleanup: async () => {
+      if (!downloadDir) return;
+      const dir = downloadDir;
+      downloadDir = null;
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
     },
     readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
     restartDetail: 'SSH Client has been updated. Restart now to finish?',
@@ -545,7 +582,7 @@ async function executePlan(plan, latest) {
 
   notifyRenderer('update:start', { targetVersion: latest.version, command });
   notifyRenderer('update:status', { state: 'terminal', version: latest.version });
-  pollForUpgrade(plan.readInstalledVersion, latest.version, plan.restartDetail);
+  pollForUpgrade(plan.readInstalledVersion, latest.version, plan.restartDetail, () => plan.cleanup?.());
   return { mode: 'terminal', command };
 }
 
@@ -827,4 +864,4 @@ function init() {
   setInterval(run, RECHECK_INTERVAL_MS).unref?.();
 }
 
-module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload };
+module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads };
