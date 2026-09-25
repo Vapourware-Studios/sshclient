@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
 const { SerialPort } = require('serialport');
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 
 const sessions = new Map();
 
@@ -8,6 +10,19 @@ const MAX_HISTORY_CHARS = 200000;
 
 function listPorts() {
   return SerialPort.list();
+}
+
+function portError(err, device) {
+  if (process.platform !== 'linux' || !/EACCES|permission denied/i.test(`${err.code} ${err.message}`)) return err;
+  let group;
+  try {
+    const { gid } = fs.statSync(device);
+    group = execFileSync('getent', ['group', String(gid)], { encoding: 'utf8', timeout: 3000 }).split(':')[0];
+  } catch {}
+  const fix = ['dialout', 'uucp'].includes(group)
+    ? `Run sudo usermod -aG ${group} "$(id -un)", then log out of your desktop and log back in.`
+    : 'Ask your administrator to grant your account access to this serial device.';
+  return new Error(`Permission denied opening ${device}. ${fix}`, { cause: err });
 }
 
 function connect(config = {}, handlers = {}) {
@@ -53,7 +68,7 @@ function connect(config = {}, handlers = {}) {
 
     port.open((err) => {
       if (err) {
-        reject(err);
+        reject(portError(err, config.path));
         return;
       }
       sessions.set(sessionId, session);
@@ -86,4 +101,4 @@ function disconnect(sessionId) {
   }
 }
 
-module.exports = { listPorts, connect, write, attach, disconnect };
+module.exports = { listPorts, connect, write, attach, disconnect, portError };

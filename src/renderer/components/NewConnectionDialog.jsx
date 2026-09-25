@@ -282,7 +282,7 @@ export default function NewConnectionDialog({
                 <Label htmlFor="local-shell">Shell (optional)</Label>
                 <Input
                   id="local-shell"
-                  placeholder={window.api.platform === 'win32' ? 'powershell.exe' : '/bin/zsh'}
+                  placeholder={window.api.platform === 'win32' ? 'powershell.exe' : window.api.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'}
                   value={localForm.shell}
                   onChange={(e) => updateLocal('shell', e.target.value)}
                 />

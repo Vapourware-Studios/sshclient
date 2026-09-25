@@ -84,10 +84,6 @@ jobs:
             os: blacksmith-6vcpu-macos-latest
             flag: --mac
 
-          - name: Linux
-            os: blacksmith-2vcpu-ubuntu-2404
-            flag: --linux
-
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -194,15 +190,6 @@ jobs:
               -Encoding utf8 `
               -Append
 
-      # electron-builder shells out to fpm for the deb/rpm/pacman targets:
-      # rpm needs rpmbuild, and the Arch package is a .tar.zst that fpm builds
-      # with bsdtar. Neither ships on the Ubuntu runner by default.
-      - name: Install Linux packaging tools
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm libarchive-tools zstd
-
       - name: Install dependencies
         run: npm ci
 
@@ -214,19 +201,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # electron-builder uploads every platform's artifacts to a draft release.
+  build-linux:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    uses: ./.github/workflows/linux.yml
+
+  # electron-builder uploads macOS and Windows artifacts to a draft release.
   # Publishing that draft before all platforms have uploaded makes the
   # remaining uploads fail silently ("existing type not compatible with
   # publishing type"), so the draft is only published here, after every
   # build job has finished.
   publish:
     name: Publish release
-    needs: build
+    needs: [build, build-linux]
     runs-on: blacksmith-2vcpu-ubuntu-2404
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Download tested Linux packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: release-linux
+
+      - name: Upload Linux packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          gh release upload "v$VERSION" release-linux/* --clobber
 
       - name: Publish draft release
         shell: bash
@@ -253,6 +261,84 @@ jobs:
             -F draft=false -f make_latest=true
 
           echo "Published $TAG"
+
+  update-linux-packages:
+    name: Update Linux package repository
+    needs: publish
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: linux-packages-push
+      cancel-in-progress: false
+    steps:
+      - name: Check out sshclient
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Mint a token for TheCoolRaven
+        id: bot
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
+          private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: linux-packages
+      - name: Check out linux-packages
+        uses: actions/checkout@v4
+        with:
+          repository: Vapourware-Studios/linux-packages
+          token: ${{ steps.bot.outputs.token }}
+          path: linux-packages
+      - name: Install repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils dpkg-dev rpm createrepo-c pacman-package-manager libarchive-tools zstd gnupg
+      - name: Verify repository tooling
+        working-directory: linux-packages
+        run: python3 -m unittest discover -s test -v
+      - name: Build signed repositories
+        env:
+          LINUX_PACKAGE_SIGNING_KEY: ${{ secrets.LINUX_PACKAGE_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LINUX_PACKAGE_SIGNING_KEY"
+          export GNUPGHOME="$RUNNER_TEMP/linux-repo-gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s' "$LINUX_PACKAGE_SIGNING_KEY" | gpg --batch --import
+          VERSION=$(node -p "require('./package.json').version")
+          python3 linux-packages/scripts/build_repository.py \
+            --version "$VERSION" \
+            --work-dir "$RUNNER_TEMP/linux-package-work" \
+            --output "$RUNNER_TEMP/linux-package-site"
+      - name: Commit and publish with TheCoolRaven
+        working-directory: linux-packages
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Linux packages are already up to date."
+            exit 0
+          fi
+          VERSION=$(python3 -c 'import json; print(json.load(open("release.json"))["version"])')
+          ARCHIVE=$(python3 -c 'import json; print(json.load(open("release.json"))["archive"])')
+          git config user.name 'thecoolraven[bot]'
+          git config user.email '306463211+thecoolraven[bot]@users.noreply.github.com'
+          git add release.json README.md
+          python3 scripts/check_staged.py
+          git commit -m "sshclient ${VERSION}"
+          test "$(git log -1 --format='%an <%ae>')" = 'thecoolraven[bot] <306463211+thecoolraven[bot]@users.noreply.github.com>'
+          git push
+          if ! gh release view "v$VERSION" --repo Vapourware-Studios/linux-packages >/dev/null 2>&1; then
+            gh release create "v$VERSION" --repo Vapourware-Studios/linux-packages \
+              --target "$(git rev-parse HEAD)" --draft --title "SSH Client $VERSION" \
+              --notes "Signed Linux package repositories for SSH Client $VERSION."
+          fi
+          gh release upload "v$VERSION" "$RUNNER_TEMP/linux-package-work/$ARCHIVE" \
+            --repo Vapourware-Studios/linux-packages --clobber
+          gh release edit "v$VERSION" --repo Vapourware-Studios/linux-packages --draft=false --latest
 
   update-tap:
     name: Update Homebrew tap

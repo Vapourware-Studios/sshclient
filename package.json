@@ -1,6 +1,6 @@
 {
   "name": "sshclient",
-  "version": "0.1.10",
+  "version": "0.2.1",
   "description": "A custom SSH and SFTP client",
   "main": "src/main/main.js",
   "desktopName": "sshclient.desktop",
@@ -15,7 +15,9 @@
     "dist:win": "vite build && electron-builder --win",
     "dist:linux": "vite build && electron-builder --linux",
     "dist:linux:arch": "vite build && electron-builder --linux pacman",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "test:linux:smoke": "electron scripts/linux-smoke.cjs",
+    "release:linux:checksums": "node scripts/linux-checksums.cjs"
   },
   "author": "Vapourware-Studios",
   "license": "GPL-3.0-only",
@@ -74,9 +76,85 @@
       "maintainer": "Vapourware-Studios <noreply@vapourware-studios.net>",
       "desktop": {
         "entry": {
-          "MimeType": "x-scheme-handler/sshclient"
+          "MimeType": "x-scheme-handler/sshclient;"
         }
-      }
+      },
+      "artifactName": "${name}-${version}-linux-${arch}.${ext}"
+    },
+    "files": [
+      "src/main/**/*",
+      "src/preload/**/*",
+      "src/renderer/assets/icon.png",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnss3",
+        "libnspr4",
+        "libxss1",
+        "libxtst6",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libgbm1",
+        "libasound2",
+        "libsecret-1-0",
+        "libsecret-tools",
+        "xdg-utils",
+        "udev"
+      ]
+    },
+    "rpm": {
+      "depends": [
+        "gtk3",
+        "nss",
+        "nspr",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "libgbm.so.1()(64bit)",
+        "libasound.so.2()(64bit)",
+        "libsecret-1.so.0()(64bit)",
+        "/usr/bin/secret-tool",
+        "xdg-utils",
+        "/usr/bin/udevadm"
+      ]
+    },
+    "pacman": {
+      "depends": [
+        "alsa-lib",
+        "at-spi2-core",
+        "bash",
+        "cairo",
+        "dbus",
+        "expat",
+        "gcc-libs",
+        "glib2",
+        "glibc",
+        "gtk3",
+        "libcups",
+        "libdrm",
+        "libsecret",
+        "libx11",
+        "libxcb",
+        "libxcomposite",
+        "libxdamage",
+        "libxext",
+        "libxfixes",
+        "libxkbcommon",
+        "libxrandr",
+        "mesa",
+        "nspr",
+        "nss",
+        "pango",
+        "systemd-libs",
+        "xdg-utils",
+        "systemd"
+      ],
+      "artifactName": "${name}-${version}-linux-${arch}.pkg.tar.zst",
+      "compression": "zstd"
     }
   },
   "devDependencies": {

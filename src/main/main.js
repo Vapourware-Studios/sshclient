@@ -1174,7 +1174,7 @@ app.whenReady().then(() => {
 
   // Cold-start deep link (Win/Linux pass it in argv).
   const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));
-  if (deepLink) sync.handleDeepLink(deepLink);
+  if (deepLink) routeDeepLink(deepLink);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

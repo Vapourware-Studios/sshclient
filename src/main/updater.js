@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const https = require('https');
+const crypto = require('node:crypto');
 
 const REPO_OWNER = 'Vapourware-Studios';
 const REPO_NAME = 'sshclient';
@@ -188,21 +189,43 @@ function pollForUpgrade(readInstalledVersion, targetVersion, detail) {
 // the command that installs a downloaded package of that format.
 const LINUX_PACKAGE_KINDS = {
   pacman: {
-    ext: '.pacman',
-    arches: { x64: ['x86_64'], arm64: ['aarch64', 'arm64'] },
-    install: (file) => `sudo pacman -U "${file}"`,
+    extensions: ['.pacman', '.pkg.tar.zst', '.pkg.tar.xz'],
+    arches: { x64: ['x86_64', 'x64'], arm64: ['aarch64', 'arm64'] },
   },
   deb: {
-    ext: '.deb',
-    arches: { x64: ['amd64', 'x86_64'], arm64: ['arm64', 'aarch64'] },
-    install: (file) => `sudo dpkg -i "${file}"`,
+    extensions: ['.deb'],
+    arches: { x64: ['amd64', 'x86_64', 'x64'], arm64: ['arm64', 'aarch64'] },
   },
   rpm: {
-    ext: '.rpm',
-    arches: { x64: ['x86_64'], arm64: ['aarch64', 'arm64'] },
-    install: (file) => `sudo rpm -U "${file}"`,
+    extensions: ['.rpm'],
+    arches: { x64: ['x86_64', 'x64'], arm64: ['aarch64', 'arm64'] },
   },
 };
+
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+async function linuxInstallCommand(kind, file, has = which) {
+  const quoted = shellQuote(file);
+  if (kind === 'pacman') return `sudo pacman -U -- ${quoted}`;
+  if (kind === 'deb') return `sudo apt-get install -- ${quoted}`;
+  if (kind === 'rpm') {
+    for (const manager of ['dnf', 'zypper', 'yum']) {
+      if (await has(manager)) return `sudo ${manager} install -- ${quoted}`;
+    }
+  }
+  throw new Error('No supported package manager found to install this update and its dependencies.');
+}
+
+async function verifyLinuxDownload(file, manifest) {
+  const filename = path.basename(file);
+  const line = manifest.split(/\r?\n/).find((line) => line.slice(66) === filename && /^[a-f0-9]{64} [ *]/.test(line));
+  if (!line) throw new Error('The release checksum is missing for this package.');
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  if (hash.digest('hex') !== line.slice(0, 64)) throw new Error('The downloaded package failed SHA-256 verification. Try downloading it again.');
+}
 
 /**
  * Picks the release asset matching this install's package format and CPU. Both
@@ -213,9 +236,9 @@ function pickLinuxAsset(assets, kind, arch) {
   const spec = LINUX_PACKAGE_KINDS[kind];
   if (!spec || !Array.isArray(assets)) return null;
   const tokens = spec.arches[arch] || [];
-  const sameKind = assets.filter((a) => a?.name?.toLowerCase().endsWith(spec.ext));
+  const sameKind = assets.filter((a) => spec.extensions.some((ext) => a?.name?.toLowerCase().endsWith(ext)));
   for (const token of tokens) {
-    const match = sameKind.find((a) => a.name.toLowerCase().includes(token));
+    const match = sameKind.find((a) => new RegExp(`(?:^|[-_.])${token}(?:[-_.]|$)`).test(a.name.toLowerCase()));
     if (match) return match;
   }
   return null;
@@ -318,8 +341,8 @@ async function aurHelperFor(pkg) {
 
 /** Where a downloaded package is staged before the install command runs. */
 async function assetPath(asset) {
-  const dir = path.join(app.getPath('temp'), 'sshclient-update');
-  await fsp.mkdir(dir, { recursive: true });
+  if (asset.name !== path.basename(asset.name)) throw new Error('Invalid release asset filename.');
+  const dir = await fsp.mkdtemp(path.join(app.getPath('temp'), 'sshclient-update-'));
   return path.join(dir, asset.name);
 }
 
@@ -420,9 +443,19 @@ async function buildPlan(desc, latest) {
     // The package has to be on disk before there is a command worth running,
     // so the file name is only known once the download has happened.
     prepare: async () => {
+      const checksums = latest.assets.find((a) => a.name === `SHA256SUMS-linux-${process.arch}`);
+      if (!checksums) throw new Error('This release has no Linux package checksums. Download a verified release from the release page.');
       const file = await assetPath(asset);
-      await download(asset.url, file);
-      return spec.install(file);
+      try {
+        await download(asset.url, file);
+        const manifestFile = path.join(path.dirname(file), checksums.name);
+        await download(checksums.url, manifestFile);
+        await verifyLinuxDownload(file, await fsp.readFile(manifestFile, 'utf8'));
+        return await linuxInstallCommand(desc.channel, file);
+      } catch (err) {
+        await fsp.rm(path.dirname(file), { recursive: true, force: true });
+        throw err;
+      }
     },
     readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
     restartDetail: 'SSH Client has been updated. Restart now to finish?',
@@ -794,4 +827,4 @@ function init() {
   setInterval(run, RECHECK_INTERVAL_MS).unref?.();
 }
 
-module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset };
+module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload };

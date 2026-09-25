@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { compareSemver, pickLinuxAsset } = require('../src/main/updater');
+const { compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload } = require('../src/main/updater');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const crypto = require('node:crypto');
 
 const ASSETS = [
   { name: 'SSH Client-0.1.8-arm64.dmg', url: 'https://example.com/dmg' },
@@ -30,4 +34,39 @@ test('pickLinuxAsset returns null when nothing matches', () => {
   assert.equal(pickLinuxAsset(ASSETS, 'appimage', 'x64'), null);
   assert.equal(pickLinuxAsset(ASSETS, 'pacman', 'ia32'), null);
   assert.equal(pickLinuxAsset(null, 'pacman', 'x64'), null);
+});
+
+test('new Linux artifact names and native Arch extensions match their CPU', () => {
+  for (const [kind, arch, name] of [
+    ['pacman', 'x64', 'sshclient-1.2.3-linux-x64.pacman'],
+    ['pacman', 'arm64', 'sshclient-1.2.3-linux-aarch64.pacman'],
+    ['pacman', 'x64', 'sshclient-1.2.3-x86_64.pkg.tar.zst'],
+    ['deb', 'arm64', 'sshclient-1.2.3-linux-arm64.deb'],
+    ['rpm', 'arm64', 'sshclient-1.2.3-linux-aarch64.rpm'],
+  ]) {
+    assert.equal(pickLinuxAsset([{ name }], kind, arch).name, name);
+    assert.equal(pickLinuxAsset([{ name }], kind, arch === 'x64' ? 'arm64' : 'x64'), null);
+  }
+});
+
+test('Linux upgrades resolve dependencies and quote package paths as literal arguments', async () => {
+  assert.equal(await linuxInstallCommand('deb', '/tmp/demo.deb'), "sudo apt-get install -- '/tmp/demo.deb'");
+  assert.equal(await linuxInstallCommand('pacman', '/tmp/demo.pacman'), "sudo pacman -U -- '/tmp/demo.pacman'");
+  for (const manager of ['dnf', 'zypper', 'yum']) {
+    assert.equal(await linuxInstallCommand('rpm', '/tmp/demo.rpm', async (name) => name === manager), `sudo ${manager} install -- '/tmp/demo.rpm'`);
+  }
+  await assert.rejects(linuxInstallCommand('rpm', '/tmp/demo.rpm', async () => false), /package manager/);
+  assert.equal(await linuxInstallCommand('deb', "/tmp/demo's $(touch demo).deb"), "sudo apt-get install -- '/tmp/demo'\"'\"'s $(touch demo).deb'");
+});
+
+test('Linux package verification rejects corrupted downloads and missing checksums', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sshclient-checksum-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'demo.deb');
+  fs.writeFileSync(file, 'demo');
+  const digest = crypto.createHash('sha256').update('demo').digest('hex');
+  await verifyLinuxDownload(file, `${digest}  demo.deb\n`);
+  await assert.rejects(verifyLinuxDownload(file, `${digest}  other.deb\n`), /missing/);
+  fs.appendFileSync(file, 'changed');
+  await assert.rejects(verifyLinuxDownload(file, `${digest}  demo.deb\n`), /SHA-256/);
 });
