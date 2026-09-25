@@ -281,9 +281,7 @@ jobs:
           app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
           private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: |
-            linux-packages
-            sshclient-mainpage
+          repositories: linux-packages
       - name: Check out linux-packages
         uses: actions/checkout@v4
         with:
@@ -338,27 +336,9 @@ jobs:
               --target "$(git rev-parse HEAD)" --draft --title "SSH Client $VERSION" \
               --notes "Signed Linux package repositories for SSH Client $VERSION."
           fi
-          # The signed metadata bundle, plus the re-signed RPMs: rpmsign
-          # rewrites the package, so the copy the RPM index checksums is this
-          # one, not the application release's.
           gh release upload "v$VERSION" "$RUNNER_TEMP/linux-package-work/$ARCHIVE" \
-            "$RUNNER_TEMP/linux-package-work/release-assets/"*.rpm \
             --repo Vapourware-Studios/linux-packages --clobber
           gh release edit "v$VERSION" --repo Vapourware-Studios/linux-packages --draft=false --latest
-
-      # Serving is a separate concern from publishing: the worker that fronts
-      # packages.vapourware-studios.net redeploys with the new metadata.
-      - name: Deploy the package repository
-        env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
-          gh api --method POST \
-            repos/Vapourware-Studios/sshclient-mainpage/dispatches \
-            -f event_type=linux-packages \
-            -F "client_payload[version]=$VERSION"
 
   update-tap:
     name: Update Homebrew tap
