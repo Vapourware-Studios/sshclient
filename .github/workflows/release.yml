@@ -340,6 +340,39 @@ jobs:
             --repo Vapourware-Studios/linux-packages --clobber
           gh release edit "v$VERSION" --repo Vapourware-Studios/linux-packages --draft=false --latest
 
+      # apt and pacman read their repositories straight out of these fixed
+      # tags, so an installed config keeps working without ever changing URL.
+      # They are never "latest": that stays on the versioned release.
+      - name: Publish the package repositories
+        working-directory: linux-packages
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/linux-package-work/release-assets"
+          if [[ ! -d "$ASSETS" ]]; then
+            echo "Nothing new to publish."
+            exit 0
+          fi
+          for directory in "$ASSETS"/*/; do
+            TAG=$(basename "$directory")
+            if ! gh release view "$TAG" --repo Vapourware-Studios/linux-packages >/dev/null 2>&1; then
+              gh release create "$TAG" --repo Vapourware-Studios/linux-packages \
+                --title "$TAG" --latest=false \
+                --notes "Rolling package repository. Configured automatically by the setup in the README."
+            fi
+            # Upload the packages before the indexes, so the index never names
+            # a file that has not landed yet.
+            find "$directory" -maxdepth 1 -type f \
+              \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' -o -name '*.sig' \) \
+              -exec gh release upload "$TAG" {} --repo Vapourware-Studios/linux-packages --clobber +
+            find "$directory" -maxdepth 1 -type f \
+              ! \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' -o -name '*.sig' \) \
+              -exec gh release upload "$TAG" {} --repo Vapourware-Studios/linux-packages --clobber +
+            echo "Published $TAG"
+          done
+
   update-tap:
     name: Update Homebrew tap
     needs: publish
