@@ -32,9 +32,14 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential python3 rpm libarchive-tools zstd \
+            ca-certificates curl git build-essential g++-12 python3 rpm libarchive-tools zstd \
             libgtk-3-0 libnss3 libgbm1 libasound2 libsecret-tools udev \
             xvfb xauth dbus-x11
+          # Electron's V8 headers need a newer compiler than 22.04's GCC 11.
+          # GCC 12 links against the libstdc++ 22.04 already ships, so the
+          # glibc and libstdc++ floor stays the same.
+          echo "CC=gcc-12" >> "$GITHUB_ENV"
+          echo "CXX=g++-12" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
