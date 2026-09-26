@@ -382,6 +382,8 @@ ipcMain.handle('share:kick', (event, { sessionId, memberId }) => {
 });
 
 // A share link only opens a terminal once the user has said yes to it here.
+// A cold-start link is parsed before the renderer listens, so it asks again.
+ipcMain.handle('share:checkInvite', () => share.offerPendingJoin());
 ipcMain.handle('share:acceptInvite', (event, shareId) => share.acceptInvite(shareId));
 ipcMain.handle('share:declineInvite', () => share.declineInvite());
 ipcMain.handle('share:leave', (event, shareId) => share.leaveShare(shareId));
@@ -666,6 +668,7 @@ ipcMain.handle('vault:setup', (event, password) => {
   try {
     vault.setup(password);
     sync.onVaultUnlocked();
+    share.onVaultUnlocked();
     updater.init();
     return { ok: true };
   } catch (err) {
@@ -677,6 +680,7 @@ ipcMain.handle('vault:unlock', (event, password) => {
   try {
     vault.unlock(password);
     sync.onVaultUnlocked();
+    share.onVaultUnlocked();
     updater.init();
     return { ok: true };
   } catch (err) {
@@ -1174,7 +1178,7 @@ app.whenReady().then(() => {
 
   // Cold-start deep link (Win/Linux pass it in argv).
   const deepLink = process.argv.find((arg) => arg.startsWith('sshclient://'));
-  if (deepLink) sync.handleDeepLink(deepLink);
+  if (deepLink) routeDeepLink(deepLink);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

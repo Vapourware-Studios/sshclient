@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const https = require('https');
+const crypto = require('node:crypto');
 
 const REPO_OWNER = 'Vapourware-Studios';
 const REPO_NAME = 'sshclient';
@@ -166,18 +167,21 @@ async function promptRestart(detail) {
  * Watches an out-of-process package manager finish the upgrade the user just
  * ran in the in-app terminal, then offers the restart that picks it up.
  */
-function pollForUpgrade(readInstalledVersion, targetVersion, detail) {
+const UPGRADE_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
+function pollForUpgrade(readInstalledVersion, targetVersion, detail, onDone = () => {}) {
   const POLL_MS = 4000;
-  const TIMEOUT_MS = 10 * 60 * 1000;
   const start = Date.now();
   const timer = setInterval(async () => {
-    if (Date.now() - start > TIMEOUT_MS) {
+    if (Date.now() - start > UPGRADE_POLL_TIMEOUT_MS) {
       clearInterval(timer);
+      // The user may still be waiting to run the terminal command.
       return;
     }
     const installed = await readInstalledVersion();
     if (installed && compareSemver(installed, targetVersion) >= 0) {
       clearInterval(timer);
+      onDone();
       promptRestart(detail);
     }
   }, POLL_MS);
@@ -188,21 +192,69 @@ function pollForUpgrade(readInstalledVersion, targetVersion, detail) {
 // the command that installs a downloaded package of that format.
 const LINUX_PACKAGE_KINDS = {
   pacman: {
-    ext: '.pacman',
-    arches: { x64: ['x86_64'], arm64: ['aarch64', 'arm64'] },
-    install: (file) => `sudo pacman -U "${file}"`,
+    extensions: ['.pacman', '.pkg.tar.zst', '.pkg.tar.xz'],
+    arches: { x64: ['x86_64', 'x64'], arm64: ['aarch64', 'arm64'] },
   },
   deb: {
-    ext: '.deb',
-    arches: { x64: ['amd64', 'x86_64'], arm64: ['arm64', 'aarch64'] },
-    install: (file) => `sudo dpkg -i "${file}"`,
+    extensions: ['.deb'],
+    arches: { x64: ['amd64', 'x86_64', 'x64'], arm64: ['arm64', 'aarch64'] },
   },
   rpm: {
-    ext: '.rpm',
-    arches: { x64: ['x86_64'], arm64: ['aarch64', 'arm64'] },
-    install: (file) => `sudo rpm -U "${file}"`,
+    extensions: ['.rpm'],
+    arches: { x64: ['x86_64', 'x64'], arm64: ['aarch64', 'arm64'] },
   },
 };
+
+function shellQuote(value) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+async function linuxInstallCommand(kind, file, has = which) {
+  const quoted = shellQuote(file);
+  if (kind === 'pacman') return `sudo pacman -U -- ${quoted}`;
+  if (kind === 'deb') return `sudo apt-get install -- ${quoted}`;
+  if (kind === 'rpm') {
+    for (const manager of ['dnf', 'zypper', 'yum']) {
+      if (await has(manager)) return `sudo ${manager} install -- ${quoted}`;
+    }
+  }
+  throw new Error('No supported package manager found to install this update and its dependencies.');
+}
+
+async function repositoryUpgradeCommand(install, has = which, read = fsp.readFile, query = run) {
+  if (install.pkg !== 'sshclient') return null;
+  if (install.kind === 'pacman') {
+    const server = await query('pacman-conf', ['--repo', 'vapourware-studios', 'Server']);
+    if (server?.includes('github.com/Vapourware-Studios/linux-packages/releases/download/repo-arch-')) {
+      return 'sudo pacman -Syu -- sshclient';
+    }
+    return null;
+  }
+  const configPaths = install.kind === 'deb'
+    ? ['/etc/apt/sources.list.d/vapourware-studios.sources']
+    : ['/etc/yum.repos.d/vapourware-studios.repo', '/etc/zypp/repos.d/vapourware-studios.repo'];
+  for (const configPath of configPaths) {
+    let config;
+    try { config = await read(configPath, 'utf8'); } catch { continue; }
+    if (!config.includes('Vapourware-Studios/linux-packages/') || /^(?:Enabled:\s*no|enabled\s*=\s*0)\s*$/im.test(config)) continue;
+    if (install.kind === 'deb') return 'sudo apt-get update && sudo apt-get install --only-upgrade -- sshclient';
+    if (install.kind === 'rpm') {
+      if (await has('dnf')) return 'sudo dnf upgrade --refresh -- sshclient';
+      if (await has('zypper')) return 'sudo zypper refresh && sudo zypper update -- sshclient';
+      if (await has('yum')) return 'sudo yum update -- sshclient';
+    }
+  }
+  return null;
+}
+
+async function verifyLinuxDownload(file, manifest) {
+  const filename = path.basename(file);
+  const line = manifest.split(/\r?\n/).find((line) => line.slice(66) === filename && /^[a-f0-9]{64} [ *]/.test(line));
+  if (!line) throw new Error('The release checksum is missing for this package.');
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  if (hash.digest('hex') !== line.slice(0, 64)) throw new Error('The downloaded package failed SHA-256 verification. Try downloading it again.');
+}
 
 /**
  * Picks the release asset matching this install's package format and CPU. Both
@@ -213,9 +265,9 @@ function pickLinuxAsset(assets, kind, arch) {
   const spec = LINUX_PACKAGE_KINDS[kind];
   if (!spec || !Array.isArray(assets)) return null;
   const tokens = spec.arches[arch] || [];
-  const sameKind = assets.filter((a) => a?.name?.toLowerCase().endsWith(spec.ext));
+  const sameKind = assets.filter((a) => spec.extensions.some((ext) => a?.name?.toLowerCase().endsWith(ext)));
   for (const token of tokens) {
-    const match = sameKind.find((a) => a.name.toLowerCase().includes(token));
+    const match = sameKind.find((a) => new RegExp(`(?:^|[-_.])${token}(?:[-_.]|$)`).test(a.name.toLowerCase()));
     if (match) return match;
   }
   return null;
@@ -317,9 +369,36 @@ async function aurHelperFor(pkg) {
 }
 
 /** Where a downloaded package is staged before the install command runs. */
-async function assetPath(asset) {
-  const dir = path.join(app.getPath('temp'), 'sshclient-update');
-  await fsp.mkdir(dir, { recursive: true });
+const UPDATE_DIR_PREFIX = 'sshclient-update-';
+const activeDownloadDirs = new Set();
+
+// Keep staged commands usable for the lifetime of this process. Older files
+// from a previous app session can be swept once its terminals are gone.
+async function sweepOldDownloads(tempDir = app.getPath('temp'), now = Date.now()) {
+  let entries;
+  try {
+    entries = await fsp.readdir(tempDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(UPDATE_DIR_PREFIX)) continue;
+    const dir = path.join(tempDir, entry.name);
+    if (activeDownloadDirs.has(dir)) continue;
+    try {
+      const { mtimeMs } = await fsp.stat(dir);
+      if (now - mtimeMs > UPGRADE_POLL_TIMEOUT_MS) await fsp.rm(dir, { recursive: true, force: true });
+    } catch {
+      // Gone already, or not ours to remove.
+    }
+  }
+}
+
+async function assetPath(asset, tempDir = app.getPath('temp')) {
+  if (asset.name !== path.basename(asset.name)) throw new Error('Invalid release asset filename.');
+  await sweepOldDownloads(tempDir);
+  const dir = await fsp.mkdtemp(path.join(tempDir, UPDATE_DIR_PREFIX));
+  activeDownloadDirs.add(dir);
   return path.join(dir, asset.name);
 }
 
@@ -409,10 +488,20 @@ async function buildPlan(desc, latest) {
     };
   }
 
+  const repositoryCommand = desc.install ? await repositoryUpgradeCommand(desc.install) : null;
+  if (repositoryCommand) {
+    return {
+      kind: 'terminal', needsRoot: true, usesRepository: true, command: repositoryCommand,
+      readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
+      restartDetail: 'SSH Client has been updated through your package repository. Restart now to finish?',
+    };
+  }
+
   const spec = LINUX_PACKAGE_KINDS[desc.channel];
   const asset = spec ? pickLinuxAsset(latest.assets, desc.channel, process.arch) : null;
   if (!spec || !asset) return { kind: 'page' };
 
+  let downloadDir = null;
   return {
     kind: 'terminal',
     needsRoot: true,
@@ -420,9 +509,29 @@ async function buildPlan(desc, latest) {
     // The package has to be on disk before there is a command worth running,
     // so the file name is only known once the download has happened.
     prepare: async () => {
+      const checksums = latest.assets.find((a) => a.name === `SHA256SUMS-linux-${process.arch}`);
+      if (!checksums) throw new Error('This release has no Linux package checksums. Download a verified release from the release page.');
       const file = await assetPath(asset);
-      await download(asset.url, file);
-      return spec.install(file);
+      downloadDir = path.dirname(file);
+      try {
+        await download(asset.url, file);
+        const manifestFile = path.join(path.dirname(file), checksums.name);
+        await download(checksums.url, manifestFile);
+        await verifyLinuxDownload(file, await fsp.readFile(manifestFile, 'utf8'));
+        return await linuxInstallCommand(desc.channel, file);
+      } catch (err) {
+        await fsp.rm(path.dirname(file), { recursive: true, force: true });
+        activeDownloadDirs.delete(path.dirname(file));
+        throw err;
+      }
+    },
+    // Only a confirmed upgrade makes the staged package safe to remove.
+    cleanup: async () => {
+      if (!downloadDir) return;
+      const dir = downloadDir;
+      downloadDir = null;
+      activeDownloadDirs.delete(dir);
+      await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
     },
     readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
     restartDetail: 'SSH Client has been updated. Restart now to finish?',
@@ -512,7 +621,7 @@ async function executePlan(plan, latest) {
 
   notifyRenderer('update:start', { targetVersion: latest.version, command });
   notifyRenderer('update:status', { state: 'terminal', version: latest.version });
-  pollForUpgrade(plan.readInstalledVersion, latest.version, plan.restartDetail);
+  pollForUpgrade(plan.readInstalledVersion, latest.version, plan.restartDetail, () => plan.cleanup?.());
   return { mode: 'terminal', command };
 }
 
@@ -700,6 +809,8 @@ async function autoCheck() {
     detail:
       plan.kind === 'auto'
         ? `You're on ${app.getVersion()}. This installs it for you in the background; you'll be asked to restart when it's done.`
+        : plan.usesRepository
+          ? `You're on ${app.getVersion()}. This opens an in-app terminal to update through your configured package repository. Press Enter to run the command; your package manager may ask for your password.`
         : plan.needsRoot
           ? `You're on ${app.getVersion()}. This downloads the new package and opens an in-app terminal with the install command ready — press Enter to run it. It asks for your password because replacing a system package needs root.`
           : `You're on ${app.getVersion()}. This opens an in-app terminal with the upgrade command ready — press Enter to run it.`,
@@ -794,4 +905,4 @@ function init() {
   setInterval(run, RECHECK_INTERVAL_MS).unref?.();
 }
 
-module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset };
+module.exports = { assetPath, pollForUpgrade, repositoryUpgradeCommand, init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads };

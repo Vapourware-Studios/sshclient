@@ -207,6 +207,8 @@ export function SharingProvider({ children }) {
         setToasts((prev) => prev.filter((t) => t.key !== 'invite'));
       }
     });
+    // A link that launched the app landed before this listener existed.
+    window.api.shareCheckInvite();
 
     const unsubEvent = window.api.onShareEvent((event) => {
       if (event.kind === 'typing') {

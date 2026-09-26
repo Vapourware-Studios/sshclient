@@ -42,16 +42,28 @@ Windows
 
 [![downloads](https://shieldcn.dev/github/vapourware-studios/sshclient/downloads.svg?theme=green)](https://github.com/vapourware-studios/sshclient/releases)
 
-Linux — grab the package your distro speaks from the same releases page:
+Linux — install a native package from the [releases page](https://github.com/Vapourware-Studios/sshclient/releases). The package manager installs its dependencies and the application-menu entry:
 
 | Format | Install |
 | --- | --- |
-| `.AppImage` | `chmod +x SSH*.AppImage && ./SSH*.AppImage` — updates itself in place |
-| `.deb` (Debian/Ubuntu) | `sudo dpkg -i sshclient_*.deb` |
-| `.rpm` (Fedora/RHEL) | `sudo rpm -i sshclient-*.rpm` |
-| `.pacman` (Arch/Manjaro) | `sudo pacman -U sshclient-*.pacman` |
+| `.pkg.tar.zst` (Arch/Manjaro) | `sudo pacman -U ./sshclient-*.pkg.tar.zst` |
+| `.deb` (Debian/Ubuntu) | `sudo apt install ./sshclient-*.deb` |
+| `.rpm` (Fedora) | `sudo dnf install ./sshclient-*.rpm` |
+| `.rpm` (openSUSE) | `sudo zypper install ./sshclient-*.rpm` |
+| `.AppImage` (portable) | `chmod +x sshclient-*.AppImage && ./sshclient-*.AppImage` |
 
-See **Staying up to date** below for how each of these upgrades itself.
+Older releases use `.pacman` for Arch packages; install those with `sudo pacman -U ./sshclient-*.pacman`.
+
+For installation by package name and normal system updates, follow the
+[one-time repository setup](https://github.com/Vapourware-Studios/linux-packages#one-time-setup).
+Then use `sudo apt install sshclient`, `sudo pacman -Syu sshclient`,
+`sudo dnf install sshclient`, or `sudo zypper install sshclient`.
+The setup page reports publication availability. These packages come from the
+Vapourware-Studios repository, separate from your distribution's default
+repositories. No shell installer or GitHub Pages deployment is used.
+
+Serial devices use normal device permissions: if access is denied the app names
+the device's group (`uucp` on Arch, `dialout` elsewhere) and how to join it.
 
 Mac OS
 
@@ -81,7 +93,8 @@ out for itself:
 | `.AppImage`, Windows installer | Downloads the new build and swaps it in, then offers a restart |
 | Homebrew cask | Runs `brew upgrade` for you in the background, then offers a restart |
 | AUR (`yay` / `paru` / `pamac`) | Opens an in-app terminal with the helper's upgrade command |
-| `.deb` / `.rpm` / `.pacman` | Downloads the matching package and hands you the install command (asks for root) |
+| Configured Vapourware-Studios repository | Opens the native package manager to refresh and upgrade the signed package |
+| Direct `.deb` / `.rpm` / Arch package | Verifies the download checksum and opens the native package-manager command, which resolves dependencies and asks for root |
 | Anything else | Opens the release page |
 
 Nothing installs behind your back — every path starts with a prompt you agree

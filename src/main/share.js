@@ -874,6 +874,11 @@ function onAccountChanged() {
   offerPendingJoin();
 }
 
+/** Unlocking is the other thing a held invite waits on. */
+function onVaultUnlocked() {
+  offerPendingJoin();
+}
+
 function onVaultLocked() {
   shutdown('locked');
 }
@@ -904,6 +909,7 @@ module.exports = {
   onSessionClosed,
   listShares,
   handleJoinLink,
+  offerPendingJoin,
   acceptInvite,
   declineInvite,
   leaveShare,
@@ -913,6 +919,7 @@ module.exports = {
   viewerAttach,
   listViewers,
   onAccountChanged,
+  onVaultUnlocked,
   onVaultLocked,
   shutdown,
 };

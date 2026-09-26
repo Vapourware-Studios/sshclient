@@ -1,15 +1,11 @@
 const os = require('os');
 const crypto = require('crypto');
 const pty = require('node-pty');
+const { defaultShell } = require('./shell');
 
 const sessions = new Map();
 
 const MAX_HISTORY_CHARS = 200000;
-
-function defaultShell() {
-  if (process.platform === 'win32') return process.env.COMSPEC || 'powershell.exe';
-  return process.env.SHELL || '/bin/zsh';
-}
 
 function connect(config = {}, handlers = {}) {
   const { onData, onClose, onError } = handlers;
