@@ -63,4 +63,23 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           VERSION: ${{ inputs.version }}
-        run: gh workflow run verify-install.yml --repo Vapourware-Studios/linux-packages --ref main --field "version=$VERSION"
+        timeout-minutes: 31
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPOSITORY=Vapourware-Studios/linux-packages
+          RUN_ID=$(gh api --method POST "repos/$REPOSITORY/actions/workflows/verify-install.yml/dispatches" \
+            -H "X-GitHub-Api-Version: 2026-03-10" -f ref=main -f "inputs[version]=$VERSION" --jq .workflow_run_id)
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          echo "Checking https://github.com/$REPOSITORY/actions/runs/$RUN_ID"
+          for attempt in {1..90}; do
+            RESULT=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" \
+              --jq 'if .status == "completed" then .conclusion else "pending" end')
+            case "$RESULT" in
+              success) exit 0 ;;
+              pending) sleep 20 ;;
+              *) echo "::error::Published installation checks finished with $RESULT"; exit 1 ;;
+            esac
+          done
+          echo "::error::Published installation checks timed out"
+          exit 1
