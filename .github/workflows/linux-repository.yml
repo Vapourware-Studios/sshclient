@@ -26,14 +26,14 @@ jobs:
     steps:
       - name: Mint a token for TheCoolRaven
         id: bot
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
           private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: linux-packages
       - name: Check out package repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Vapourware-Studios/linux-packages
           ref: main
@@ -59,3 +59,8 @@ jobs:
           printf '%s' "$LINUX_PACKAGE_SIGNING_KEY" | gpg --batch --import
           unset LINUX_PACKAGE_SIGNING_KEY
           python3 scripts/publish_repository.py --version "$VERSION" --work-dir "$RUNNER_TEMP/linux-package-work"
+      - name: Verify published installations
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: gh workflow run verify-install.yml --repo Vapourware-Studios/linux-packages --ref main --field "version=$VERSION"

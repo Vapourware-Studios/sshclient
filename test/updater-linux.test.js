@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { repositoryUpgradeCommand, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads } = require('../src/main/updater');
+const { assetPath, pollForUpgrade, repositoryUpgradeCommand, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads } = require('../src/main/updater');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -113,4 +113,22 @@ test('repository installations keep updates with the signed package manager', as
   assert.equal(await repositoryUpgradeCommand({ kind: 'deb', pkg: 'sshclient' }, async () => true,
     async () => (await read()) + '\nEnabled: no'), null);
   assert.equal(await repositoryUpgradeCommand({ kind: 'deb', pkg: 'demo' }, async () => true, read), null);
+});
+
+
+test('pending update commands retain their package after the polling window', async (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'pending-update-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const file = await assetPath({ name: 'demo.deb' }, temp);
+  fs.writeFileSync(file, 'demo');
+  const old = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(path.dirname(file), old, old);
+  await sweepOldDownloads(temp);
+  assert.equal(fs.existsSync(file), true);
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] });
+  let cleaned = false;
+  pollForUpgrade(async () => null, '1.2.3', 'demo', () => { cleaned = true; });
+  t.mock.timers.tick(11 * 60 * 1000);
+  await Promise.resolve();
+  assert.equal(cleaned, false);
 });

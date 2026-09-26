@@ -1,8 +1,6 @@
 name: Linux
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_call:
   workflow_dispatch:
@@ -34,14 +32,14 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential clang-15 python3 rpm libarchive-tools zstd \
             libgtk-3-0 libnss3 libgbm1 libasound2 libsecret-tools udev \
-            xvfb xauth dbus-x11
+            xvfb xauth dbus-x11 desktop-file-utils
           # Electron's V8 headers put a GNU attribute after [[deprecated]] on
           # a class, which GCC 11 and 12 reject. Clang 15 from the same archive
           # accepts it and builds against the same glibc and libstdc++.
           echo "CC=clang-15" >> "$GITHUB_ENV"
           echo "CXX=clang++-15" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
@@ -50,6 +48,11 @@ jobs:
       - run: npm run build
       - name: Package all Linux formats
         run: npx electron-builder --linux --${{ matrix.arch }} --publish never
+      - name: Install and validate the native Debian package
+        run: |
+          apt-get install -y ./release/*.deb
+          dpkg-query -W sshclient
+          desktop-file-validate /usr/share/applications/sshclient.desktop
       - name: Test packaged resources with the sandbox enabled
         shell: bash
         run: |
@@ -63,7 +66,7 @@ jobs:
             release/linux${{ matrix.arch == 'arm64' && '-arm64' || '' }}-unpacked/resources/app.asar
       - name: Prepare native packages and checksums
         run: npm run release:linux:checksums -- ${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-${{ matrix.arch }}
           if-no-files-found: error

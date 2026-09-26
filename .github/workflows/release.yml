@@ -23,12 +23,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22.12.0"
           cache: npm
@@ -92,10 +92,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22.12.0"
           cache: npm
@@ -222,10 +222,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Download tested Linux packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: linux-*
           merge-multiple: true
@@ -282,7 +282,7 @@ jobs:
 
     steps:
       - name: Check out sshclient
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Releases are published by the org's own app rather than by GitHub's
       # generic bot, so the tap's history says who shipped each version. The
@@ -290,7 +290,7 @@ jobs:
       # an hour later — no long-lived PAT sitting in the secrets.
       - name: Mint a token for TheCoolRaven
         id: bot
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
           private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
@@ -298,7 +298,7 @@ jobs:
           repositories: homebrew-tap
 
       - name: Check out homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Vapourware-Studios/homebrew-tap
           token: ${{ steps.bot.outputs.token }}

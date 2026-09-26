@@ -175,7 +175,7 @@ function pollForUpgrade(readInstalledVersion, targetVersion, detail, onDone = ()
   const timer = setInterval(async () => {
     if (Date.now() - start > UPGRADE_POLL_TIMEOUT_MS) {
       clearInterval(timer);
-      onDone();
+      // The user may still be waiting to run the terminal command.
       return;
     }
     const installed = await readInstalledVersion();
@@ -370,10 +370,10 @@ async function aurHelperFor(pkg) {
 
 /** Where a downloaded package is staged before the install command runs. */
 const UPDATE_DIR_PREFIX = 'sshclient-update-';
+const activeDownloadDirs = new Set();
 
-// A download is normally removed once its upgrade lands or is given up on, but
-// quitting first skips that — so each new download clears out the old ones.
-// Anything younger than the upgrade window may still be waiting in a terminal.
+// Keep staged commands usable for the lifetime of this process. Older files
+// from a previous app session can be swept once its terminals are gone.
 async function sweepOldDownloads(tempDir = app.getPath('temp'), now = Date.now()) {
   let entries;
   try {
@@ -384,6 +384,7 @@ async function sweepOldDownloads(tempDir = app.getPath('temp'), now = Date.now()
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith(UPDATE_DIR_PREFIX)) continue;
     const dir = path.join(tempDir, entry.name);
+    if (activeDownloadDirs.has(dir)) continue;
     try {
       const { mtimeMs } = await fsp.stat(dir);
       if (now - mtimeMs > UPGRADE_POLL_TIMEOUT_MS) await fsp.rm(dir, { recursive: true, force: true });
@@ -393,10 +394,11 @@ async function sweepOldDownloads(tempDir = app.getPath('temp'), now = Date.now()
   }
 }
 
-async function assetPath(asset) {
+async function assetPath(asset, tempDir = app.getPath('temp')) {
   if (asset.name !== path.basename(asset.name)) throw new Error('Invalid release asset filename.');
-  await sweepOldDownloads();
-  const dir = await fsp.mkdtemp(path.join(app.getPath('temp'), UPDATE_DIR_PREFIX));
+  await sweepOldDownloads(tempDir);
+  const dir = await fsp.mkdtemp(path.join(tempDir, UPDATE_DIR_PREFIX));
+  activeDownloadDirs.add(dir);
   return path.join(dir, asset.name);
 }
 
@@ -519,14 +521,16 @@ async function buildPlan(desc, latest) {
         return await linuxInstallCommand(desc.channel, file);
       } catch (err) {
         await fsp.rm(path.dirname(file), { recursive: true, force: true });
+        activeDownloadDirs.delete(path.dirname(file));
         throw err;
       }
     },
-    // Once the upgrade lands or the wait for it runs out, the package is spent.
+    // Only a confirmed upgrade makes the staged package safe to remove.
     cleanup: async () => {
       if (!downloadDir) return;
       const dir = downloadDir;
       downloadDir = null;
+      activeDownloadDirs.delete(dir);
       await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
     },
     readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
@@ -901,4 +905,4 @@ function init() {
   setInterval(run, RECHECK_INTERVAL_MS).unref?.();
 }
 
-module.exports = { repositoryUpgradeCommand, init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads };
+module.exports = { assetPath, pollForUpgrade, repositoryUpgradeCommand, init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads };
