@@ -221,6 +221,32 @@ async function linuxInstallCommand(kind, file, has = which) {
   throw new Error('No supported package manager found to install this update and its dependencies.');
 }
 
+async function repositoryUpgradeCommand(install, has = which, read = fsp.readFile, query = run) {
+  if (install.pkg !== 'sshclient') return null;
+  if (install.kind === 'pacman') {
+    const server = await query('pacman-conf', ['--repo', 'vapourware-studios', 'Server']);
+    if (server?.includes('github.com/Vapourware-Studios/linux-packages/releases/download/repo-arch-')) {
+      return 'sudo pacman -Syu -- sshclient';
+    }
+    return null;
+  }
+  const configPaths = install.kind === 'deb'
+    ? ['/etc/apt/sources.list.d/vapourware-studios.sources']
+    : ['/etc/yum.repos.d/vapourware-studios.repo', '/etc/zypp/repos.d/vapourware-studios.repo'];
+  for (const configPath of configPaths) {
+    let config;
+    try { config = await read(configPath, 'utf8'); } catch { continue; }
+    if (!config.includes('Vapourware-Studios/linux-packages/') || /^(?:Enabled:\s*no|enabled\s*=\s*0)\s*$/im.test(config)) continue;
+    if (install.kind === 'deb') return 'sudo apt-get update && sudo apt-get install --only-upgrade -- sshclient';
+    if (install.kind === 'rpm') {
+      if (await has('dnf')) return 'sudo dnf upgrade --refresh -- sshclient';
+      if (await has('zypper')) return 'sudo zypper refresh && sudo zypper update -- sshclient';
+      if (await has('yum')) return 'sudo yum update -- sshclient';
+    }
+  }
+  return null;
+}
+
 async function verifyLinuxDownload(file, manifest) {
   const filename = path.basename(file);
   const line = manifest.split(/\r?\n/).find((line) => line.slice(66) === filename && /^[a-f0-9]{64} [ *]/.test(line));
@@ -457,6 +483,15 @@ async function buildPlan(desc, latest) {
       command: desc.helper,
       readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
       restartDetail: 'SSH Client has been updated. Restart now to finish?',
+    };
+  }
+
+  const repositoryCommand = desc.install ? await repositoryUpgradeCommand(desc.install) : null;
+  if (repositoryCommand) {
+    return {
+      kind: 'terminal', needsRoot: true, usesRepository: true, command: repositoryCommand,
+      readInstalledVersion: () => getLinuxInstalledVersion(desc.install),
+      restartDetail: 'SSH Client has been updated through your package repository. Restart now to finish?',
     };
   }
 
@@ -770,6 +805,8 @@ async function autoCheck() {
     detail:
       plan.kind === 'auto'
         ? `You're on ${app.getVersion()}. This installs it for you in the background; you'll be asked to restart when it's done.`
+        : plan.usesRepository
+          ? `You're on ${app.getVersion()}. This opens an in-app terminal to update through your configured package repository. Press Enter to run the command; your package manager may ask for your password.`
         : plan.needsRoot
           ? `You're on ${app.getVersion()}. This downloads the new package and opens an in-app terminal with the install command ready — press Enter to run it. It asks for your password because replacing a system package needs root.`
           : `You're on ${app.getVersion()}. This opens an in-app terminal with the upgrade command ready — press Enter to run it.`,
@@ -864,4 +901,4 @@ function init() {
   setInterval(run, RECHECK_INTERVAL_MS).unref?.();
 }
 
-module.exports = { init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads };
+module.exports = { repositoryUpgradeCommand, init, check, install, openReleasePage, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads };

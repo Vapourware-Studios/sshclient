@@ -19,6 +19,7 @@ jobs:
 
     outputs:
       changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
 
     steps:
       - name: Check out repository
@@ -37,6 +38,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
 
           # Manual runs always proceed with a build.
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
@@ -263,139 +267,11 @@ jobs:
           echo "Published $TAG"
 
   update-linux-packages:
-    name: Update Linux package repository
-    needs: publish
-    runs-on: ubuntu-24.04
-    concurrency:
-      group: linux-packages-push
-      cancel-in-progress: false
-    steps:
-      - name: Check out sshclient
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Mint a token for TheCoolRaven
-        id: bot
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
-          private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: linux-packages
-      - name: Check out linux-packages
-        uses: actions/checkout@v4
-        with:
-          repository: Vapourware-Studios/linux-packages
-          token: ${{ steps.bot.outputs.token }}
-          path: linux-packages
-      # The concurrency group only keeps two pushes apart — it doesn't run them
-      # in version order. A rerun or slower job for an older release must not
-      # land after a newer one and roll the repository metadata back.
-      - name: Refuse to roll the repository back
-        id: order
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
-          CURRENT=$(python3 -c 'import json, sys
-          try:
-              print(json.load(open("linux-packages/release.json"))["version"])
-          except FileNotFoundError:
-              print("0.0.0")')
-          NEWEST=$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)
-          if [[ "$NEWEST" != "$VERSION" ]]; then
-            echo "Linux packages are already at $CURRENT (> $VERSION); skipping to avoid a rollback."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Install repository tools
-        if: steps.order.outputs.skip != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y apt-utils dpkg-dev rpm createrepo-c pacman-package-manager libarchive-tools zstd gnupg
-      - name: Verify repository tooling
-        if: steps.order.outputs.skip != 'true'
-        working-directory: linux-packages
-        run: python3 -m unittest discover -s test -v
-      - name: Build signed repositories
-        if: steps.order.outputs.skip != 'true'
-        env:
-          LINUX_PACKAGE_SIGNING_KEY: ${{ secrets.LINUX_PACKAGE_SIGNING_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$LINUX_PACKAGE_SIGNING_KEY"
-          export GNUPGHOME="$RUNNER_TEMP/linux-repo-gnupg"
-          install -d -m 700 "$GNUPGHOME"
-          trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
-          printf '%s' "$LINUX_PACKAGE_SIGNING_KEY" | gpg --batch --import
-          VERSION=$(node -p "require('./package.json').version")
-          python3 linux-packages/scripts/build_repository.py \
-            --version "$VERSION" \
-            --work-dir "$RUNNER_TEMP/linux-package-work" \
-            --output "$RUNNER_TEMP/linux-package-site"
-      - name: Commit and publish with TheCoolRaven
-        if: steps.order.outputs.skip != 'true'
-        working-directory: linux-packages
-        env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet; then
-            echo "Linux packages are already up to date."
-            exit 0
-          fi
-          VERSION=$(python3 -c 'import json; print(json.load(open("release.json"))["version"])')
-          ARCHIVE=$(python3 -c 'import json; print(json.load(open("release.json"))["archive"])')
-          git config user.name 'thecoolraven[bot]'
-          git config user.email '306463211+thecoolraven[bot]@users.noreply.github.com'
-          git add release.json README.md
-          python3 scripts/check_staged.py
-          git commit -m "sshclient ${VERSION}"
-          test "$(git log -1 --format='%an <%ae>')" = 'thecoolraven[bot] <306463211+thecoolraven[bot]@users.noreply.github.com>'
-          git push
-          if ! gh release view "v$VERSION" --repo Vapourware-Studios/linux-packages >/dev/null 2>&1; then
-            gh release create "v$VERSION" --repo Vapourware-Studios/linux-packages \
-              --target "$(git rev-parse HEAD)" --draft --title "SSH Client $VERSION" \
-              --notes "Signed Linux package repositories for SSH Client $VERSION."
-          fi
-          gh release upload "v$VERSION" "$RUNNER_TEMP/linux-package-work/$ARCHIVE" \
-            --repo Vapourware-Studios/linux-packages --clobber
-          gh release edit "v$VERSION" --repo Vapourware-Studios/linux-packages --draft=false --latest
-
-      # apt and pacman read their repositories straight out of these fixed
-      # tags, so an installed config keeps working without ever changing URL.
-      # They are never "latest": that stays on the versioned release.
-      - name: Publish the package repositories
-        if: steps.order.outputs.skip != 'true'
-        working-directory: linux-packages
-        env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          ASSETS="$RUNNER_TEMP/linux-package-work/release-assets"
-          if [[ ! -d "$ASSETS" ]]; then
-            echo "Nothing new to publish."
-            exit 0
-          fi
-          for directory in "$ASSETS"/*/; do
-            TAG=$(basename "$directory")
-            if ! gh release view "$TAG" --repo Vapourware-Studios/linux-packages >/dev/null 2>&1; then
-              gh release create "$TAG" --repo Vapourware-Studios/linux-packages \
-                --title "$TAG" --latest=false \
-                --notes "Rolling package repository. Configured automatically by the setup in the README."
-            fi
-            # Upload the packages before the indexes, so the index never names
-            # a file that has not landed yet.
-            find "$directory" -maxdepth 1 -type f \
-              \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' -o -name '*.sig' \) \
-              -exec gh release upload "$TAG" {} --repo Vapourware-Studios/linux-packages --clobber +
-            find "$directory" -maxdepth 1 -type f \
-              ! \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' -o -name '*.sig' \) \
-              -exec gh release upload "$TAG" {} --repo Vapourware-Studios/linux-packages --clobber +
-            echo "Published $TAG"
-          done
+    needs: [publish, check-version]
+    uses: ./.github/workflows/linux-repository.yml
+    with:
+      version: ${{ needs.check-version.outputs.version }}
+    secrets: inherit
 
   update-tap:
     name: Update Homebrew tap

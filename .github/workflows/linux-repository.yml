@@ -1,0 +1,61 @@
+name: Publish Linux repositories
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published application version (without v)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-packages-push
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Mint a token for TheCoolRaven
+        id: bot
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.THECOOLRAVEN_APP_ID }}
+          private-key: ${{ secrets.THECOOLRAVEN_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: linux-packages
+      - name: Check out package repository
+        uses: actions/checkout@v4
+        with:
+          repository: Vapourware-Studios/linux-packages
+          ref: main
+          token: ${{ steps.bot.outputs.token }}
+      - name: Install repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils dpkg-dev rpm createrepo-c pacman-package-manager libarchive-tools zstd gnupg dnf dnf-plugins-core
+      - name: Verify signatures and native package-manager downloads
+        run: python3 -m unittest discover -s test -v
+      - name: Sign and publish with TheCoolRaven
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          VERSION: ${{ inputs.version }}
+          LINUX_PACKAGE_SIGNING_KEY: ${{ secrets.LINUX_PACKAGE_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LINUX_PACKAGE_SIGNING_KEY"
+          export GNUPGHOME="$RUNNER_TEMP/linux-repo-gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
+          printf '%s' "$LINUX_PACKAGE_SIGNING_KEY" | gpg --batch --import
+          unset LINUX_PACKAGE_SIGNING_KEY
+          python3 scripts/publish_repository.py --version "$VERSION" --work-dir "$RUNNER_TEMP/linux-package-work"

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads } = require('../src/main/updater');
+const { repositoryUpgradeCommand, compareSemver, pickLinuxAsset, linuxInstallCommand, verifyLinuxDownload, sweepOldDownloads } = require('../src/main/updater');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -93,4 +93,24 @@ test('sweeps only update downloads older than the upgrade window', async () => {
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+
+test('repository installations keep updates with the signed package manager', async () => {
+  const read = async () => 'URIs: https://github.com/Vapourware-Studios/linux-packages/releases/download/repo-apt/';
+  assert.equal(await repositoryUpgradeCommand({ kind: 'deb', pkg: 'sshclient' }, async () => true, read),
+    'sudo apt-get update && sudo apt-get install --only-upgrade -- sshclient');
+  for (const [manager, command] of [['dnf', 'sudo dnf upgrade --refresh -- sshclient'],
+    ['zypper', 'sudo zypper refresh && sudo zypper update -- sshclient'], ['yum', 'sudo yum update -- sshclient']]) {
+    assert.equal(await repositoryUpgradeCommand({ kind: 'rpm', pkg: 'sshclient' }, async (bin) => bin === manager, read), command);
+  }
+  assert.equal(await repositoryUpgradeCommand({ kind: 'pacman', pkg: 'sshclient' }, async () => true, read,
+    async () => 'https://github.com/Vapourware-Studios/linux-packages/releases/download/repo-arch-x86_64'),
+    'sudo pacman -Syu -- sshclient');
+  assert.equal(await repositoryUpgradeCommand({ kind: 'pacman', pkg: 'sshclient' }, async () => true, read, async () => null), null);
+  assert.equal(await repositoryUpgradeCommand({ kind: 'deb', pkg: 'sshclient' }, async () => true,
+    async () => { throw new Error('missing config'); }), null);
+  assert.equal(await repositoryUpgradeCommand({ kind: 'deb', pkg: 'sshclient' }, async () => true,
+    async () => (await read()) + '\nEnabled: no'), null);
+  assert.equal(await repositoryUpgradeCommand({ kind: 'deb', pkg: 'demo' }, async () => true, read), null);
 });

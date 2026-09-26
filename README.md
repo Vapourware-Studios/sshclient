@@ -54,11 +54,13 @@ Linux — install a native package from the [releases page](https://github.com/V
 
 Older releases use `.pacman` for Arch packages; install those with `sudo pacman -U ./sshclient-*.pacman`.
 
-Repository-based installation is being prepared in
-[linux-packages](https://github.com/Vapourware-Studios/linux-packages);
-`apt install sshclient` and `pacman -S sshclient` require a configured package
-repository and are not yet available from the distributions' default
-repositories. No shell installer is required.
+For installation by package name and normal system updates, follow the
+[one-time repository setup](https://github.com/Vapourware-Studios/linux-packages#one-time-setup).
+Then use `sudo apt install sshclient`, `sudo pacman -Syu sshclient`,
+`sudo dnf install sshclient`, or `sudo zypper install sshclient`.
+The setup page reports publication availability. These packages come from the
+Vapourware-Studios repository, separate from your distribution's default
+repositories. No shell installer or GitHub Pages deployment is used.
 
 Serial devices use normal device permissions: if access is denied the app names
 the device's group (`uucp` on Arch, `dialout` elsewhere) and how to join it.
@@ -91,7 +93,8 @@ out for itself:
 | `.AppImage`, Windows installer | Downloads the new build and swaps it in, then offers a restart |
 | Homebrew cask | Runs `brew upgrade` for you in the background, then offers a restart |
 | AUR (`yay` / `paru` / `pamac`) | Opens an in-app terminal with the helper's upgrade command |
-| `.deb` / `.rpm` / Arch package | Verifies the download checksum and opens the native package-manager command, which resolves dependencies and asks for root |
+| Configured Vapourware-Studios repository | Opens the native package manager to refresh and upgrade the signed package |
+| Direct `.deb` / `.rpm` / Arch package | Verifies the download checksum and opens the native package-manager command, which resolves dependencies and asks for root |
 | Anything else | Opens the release page |
 
 Nothing installs behind your back — every path starts with a prompt you agree
