@@ -71,6 +71,36 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # electron-builder publishes each target (e.g. the macOS zip and dmg)
+      # concurrently, and when no release exists yet every one of them
+      # creates its own draft, splitting the assets across duplicates.
+      # Creating the draft up front gives them all one release to find.
+      - name: Create draft release
+        if: steps.check.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          TAG="v$VERSION"
+          EXISTING=$(
+            gh api "repos/${{ github.repository }}/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$TAG\") | .id"
+          )
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "Release $TAG already exists; reusing it."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --draft \
+            --title "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --notes ""
+
   build:
     name: Build ${{ matrix.name }}
     needs: check-version
@@ -107,7 +137,6 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $component = "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre"
-          $buildToolsProduct = "Microsoft.VisualStudio.Product.BuildTools"
 
           $vswhere = Join-Path `
             ${env:ProgramFiles(x86)} `
@@ -125,26 +154,38 @@ jobs:
             throw "Visual Studio Installer was not found at: $installer"
           }
 
-          $installPath = & $vswhere `
-            -latest `
-            -products $buildToolsProduct `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath
+          # The runner image decides which Visual Studio product and version
+          # ships (Build Tools vs Enterprise, 2022 vs 2026), so accept any
+          # instance with the C++ toolchain and log what is there.
+          Write-Host "Visual Studio instances on this runner:"
+          & $vswhere -all -products * -format text |
+            Select-String -Pattern '^(displayName|installationPath|installationVersion):'
 
-          if (!$installPath) {
-            throw "Visual Studio Build Tools 2022 with the C++ toolchain was not found"
+          $instance = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -format json |
+            ConvertFrom-Json |
+            Select-Object -First 1
+
+          if (!$instance) {
+            throw "No Visual Studio installation with the C++ toolchain was found"
           }
 
-          $installPath = $installPath.Trim()
-          Write-Host "Visual Studio Build Tools location: $installPath"
+          $installPath = $instance.installationPath.Trim()
+          Write-Host "Using $($instance.displayName) at: $installPath"
 
-          $alreadyInstalled = & $vswhere `
-            -latest `
-            -products $buildToolsProduct `
-            -requires $component `
-            -property installationPath
+          function Test-SpectreInstalled {
+            $paths = & $vswhere `
+              -all `
+              -products * `
+              -requires $component `
+              -property installationPath
+            return @($paths | ForEach-Object { $_.Trim() }) -contains $installPath
+          }
 
-          if (!$alreadyInstalled) {
+          if (!(Test-SpectreInstalled)) {
             Write-Host "Installing MSVC Spectre-mitigated libraries..."
 
             $arguments = @(
@@ -175,20 +216,15 @@ jobs:
             Write-Host "MSVC Spectre libraries are already installed."
           }
 
-          $verifiedPath = & $vswhere `
-            -latest `
-            -products $buildToolsProduct `
-            -requires $component `
-            -property installationPath
-
-          if (!$verifiedPath) {
+          if (!(Test-SpectreInstalled)) {
             throw "MSVC Spectre libraries could not be verified after installation"
           }
 
-          Write-Host "MSVC Spectre libraries verified at: $($verifiedPath.Trim())"
+          Write-Host "MSVC Spectre libraries verified at: $installPath"
 
-          # Ensure node-gyp uses Visual Studio 2022.
-          "npm_config_msvs_version=2022" |
+          # Pin node-gyp to the exact instance that has the Spectre libraries
+          # (msvs_version accepts an installation path as well as a year).
+          "npm_config_msvs_version=$installPath" |
             Out-File `
               -FilePath $env:GITHUB_ENV `
               -Encoding utf8 `
@@ -258,6 +294,12 @@ jobs:
           if [[ -z "$RELEASE_ID" ]]; then
             echo "No draft release found for $TAG; nothing to publish."
             exit 0
+          fi
+
+          if [[ $(wc -l <<< "$RELEASE_ID") -gt 1 ]]; then
+            echo "Found several draft releases for $TAG ($(tr '\n' ' ' <<< "$RELEASE_ID"));"
+            echo "merge them into one before publishing."
+            exit 1
           fi
 
           gh api --method PATCH \
