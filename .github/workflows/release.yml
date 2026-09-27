@@ -13,12 +13,6 @@ on:
 permissions:
   contents: write
 
-# Overlapping runs (a push plus a manual run) could each find no draft and
-# create their own, splitting the assets. Queue them instead.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   check-version:
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -91,21 +85,37 @@ jobs:
           set -euo pipefail
 
           TAG="v$VERSION"
-          EXISTING=$(
-            gh api "repos/${{ github.repository }}/releases" --paginate \
-              --jq ".[] | select(.tag_name == \"$TAG\") | .id"
-          )
 
-          if [[ -n "$EXISTING" ]]; then
+          list_releases() {
+            gh api "repos/${{ github.repository }}/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$TAG\") | .id" |
+              sort -n
+          }
+
+          if [[ -n "$(list_releases)" ]]; then
             echo "Release $TAG already exists; reusing it."
             exit 0
           fi
 
-          gh release create "$TAG" \
-            --draft \
-            --title "$VERSION" \
-            --target "$GITHUB_SHA" \
-            --notes ""
+          CREATED=$(
+            gh api --method POST "repos/${{ github.repository }}/releases" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="$VERSION" \
+              -F draft=true \
+              --jq .id
+          )
+
+          # Overlapping runs (a push plus a manual run) can both get here.
+          # Release ids only grow, so every run keeps the oldest draft and
+          # deletes its own if it lost the race.
+          KEEP=$(list_releases | head -n 1)
+
+          if [[ "$CREATED" != "$KEEP" ]]; then
+            gh api --method DELETE \
+              "repos/${{ github.repository }}/releases/$CREATED"
+            echo "Another run created release $KEEP first; removed duplicate $CREATED."
+          fi
 
   build:
     name: Build ${{ matrix.name }}
