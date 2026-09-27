@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   check-version:
@@ -71,6 +72,32 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Overlapping runs (a push plus a manual run) would share one draft,
+      # and the faster one could publish it while the slower one is still
+      # uploading. Each run waits for every older Release run to finish
+      # first; unlike a concurrency group, this never drops a queued run.
+      - name: Wait for earlier release runs
+        if: steps.check.outputs.changed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          while true; do
+            OLDER=$(
+              gh api "repos/${{ github.repository }}/actions/workflows/release.yml/runs?per_page=100" \
+                --jq "[.workflow_runs[] | select(.status != \"completed\" and .id < ${{ github.run_id }}) | .id] | join(\" \")"
+            )
+
+            if [[ -z "$OLDER" ]]; then
+              break
+            fi
+
+            echo "Waiting for earlier release runs to finish: $OLDER"
+            sleep 30
+          done
+
       # electron-builder publishes each target (e.g. the macOS zip and dmg)
       # concurrently, and when no release exists yet every one of them
       # creates its own draft, splitting the assets across duplicates.
@@ -85,37 +112,21 @@ jobs:
           set -euo pipefail
 
           TAG="v$VERSION"
-
-          list_releases() {
+          EXISTING=$(
             gh api "repos/${{ github.repository }}/releases" --paginate \
-              --jq ".[] | select(.tag_name == \"$TAG\") | .id" |
-              sort -n
-          }
+              --jq ".[] | select(.tag_name == \"$TAG\") | .id"
+          )
 
-          if [[ -n "$(list_releases)" ]]; then
+          if [[ -n "$EXISTING" ]]; then
             echo "Release $TAG already exists; reusing it."
             exit 0
           fi
 
-          CREATED=$(
-            gh api --method POST "repos/${{ github.repository }}/releases" \
-              -f tag_name="$TAG" \
-              -f target_commitish="$GITHUB_SHA" \
-              -f name="$VERSION" \
-              -F draft=true \
-              --jq .id
-          )
-
-          # Overlapping runs (a push plus a manual run) can both get here.
-          # Release ids only grow, so every run keeps the oldest draft and
-          # deletes its own if it lost the race.
-          KEEP=$(list_releases | head -n 1)
-
-          if [[ "$CREATED" != "$KEEP" ]]; then
-            gh api --method DELETE \
-              "repos/${{ github.repository }}/releases/$CREATED"
-            echo "Another run created release $KEEP first; removed duplicate $CREATED."
-          fi
+          gh release create "$TAG" \
+            --draft \
+            --title "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --notes ""
 
   build:
     name: Build ${{ matrix.name }}
