@@ -13,6 +13,12 @@ on:
 permissions:
   contents: write
 
+# Overlapping runs (a push plus a manual run) could each find no draft and
+# create their own, splitting the assets. Queue them instead.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   check-version:
     runs-on: blacksmith-4vcpu-ubuntu-2404
