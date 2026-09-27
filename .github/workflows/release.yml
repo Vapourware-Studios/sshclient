@@ -84,10 +84,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Ask only for active runs and read every page, so an older run is
+          # never missed however many runs came after it. Statuses go in
+          # lifecycle order, so a run advancing mid-loop is still caught.
           while true; do
             OLDER=$(
-              gh api "repos/${{ github.repository }}/actions/workflows/release.yml/runs?per_page=100" \
-                --jq "[.workflow_runs[] | select(.status != \"completed\" and .id < ${{ github.run_id }}) | .id] | join(\" \")"
+              for STATUS in requested pending queued waiting in_progress; do
+                gh api --paginate \
+                  "repos/${{ github.repository }}/actions/workflows/release.yml/runs?status=$STATUS&per_page=100" \
+                  --jq ".workflow_runs[] | select(.id < ${{ github.run_id }}) | .id"
+              done | sort -u | xargs
             )
 
             if [[ -z "$OLDER" ]]; then
