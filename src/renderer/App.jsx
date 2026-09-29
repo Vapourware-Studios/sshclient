@@ -10,6 +10,7 @@ import ShareToasts from '@/components/ShareToasts';
 import { SlidePanel } from '@/components/SlidePanel';
 import FeedbackPromptToast from '@/components/FeedbackPromptToast';
 import { useConfirm } from '@/lib/confirm';
+import { deliverSnippetPlaces, placesFor } from '@/lib/snippet-launch.mjs';
 import { useSharing } from '@/lib/sharing.jsx';
 
 const MIN_CONNECTING_MS = 2000;
@@ -386,30 +387,52 @@ export default function App() {
     return result.sessionId;
   }
 
+  function snippetIo(groupId) {
+    return {
+      localConnect: (config) => window.api.localConnect(config),
+      localWrite: (sessionId, data) => window.api.localWrite(sessionId, data),
+      localDisconnect: (sessionId) => window.api.localDisconnect(sessionId),
+      sshConnect: (config) => window.api.sshConnect(config),
+      sshWrite: (sessionId, data) => window.api.sshWrite(sessionId, data),
+      sshDisconnect: (sessionId) => window.api.sshDisconnect(sessionId),
+      isAbandoned: (launch) => abandonedPendingRef.current.delete(launch.placeholderId),
+      // Synchronous on purpose: the id has to be on the tab before input is
+      // sent, and before this call returns to the event loop.
+      claimSession: (launch, sessionId) => {
+        adoptSession(launch.placeholderId, sessionId, groupId, launch.type);
+      },
+      onSshReady: (sessionId, onReady) => {
+        pendingReadyActionRef.current.set(sessionId, { onReady });
+      },
+    };
+  }
+
   /**
-   * Launching a snippet that carries several targets opens one tab, not one
-   * per host: the machines it names belong together, so they get a single
-   * window with a strip down the left to move between them.
+   * A snippet aimed at more than one place opens one tab. This machine and
+   * every saved host it names belong together, so they get a single window
+   * with a strip down the left to move between them.
    *
-   * The group and a slot for every host are on screen in the first render,
-   * before any socket is opened, and the connections then race each other
-   * instead of queueing behind one another. The command is sent to each host
-   * as it comes up.
+   * The group and a slot for every place are on screen in the first render,
+   * before any shell is opened, and the connections then race each other
+   * instead of queueing behind one another. The command is typed into each
+   * one as it comes up. A local shell has no ready event — the pty takes
+   * input the moment it exists — so that command is written as soon as
+   * connect returns. SSH still waits until the session is ready, because
+   * writing earlier would land in the password prompt.
    */
-  async function openSnippetGroup(snippet, targetHosts) {
+  async function openSnippetGroup(snippet, launches) {
     setConnectError(null);
-    if (!targetHosts.length) return;
+    if (launches.length < 2) return;
 
     const groupId = `group:${crypto.randomUUID()}`;
-    const command = snippet.command.endsWith('\n') ? snippet.command : `${snippet.command}\n`;
 
-    const placeholders = targetHosts.map((host) => ({
+    const placeholders = launches.map((launch) => ({
       id: `pending:${crypto.randomUUID()}`,
-      title: host.label || host.host,
-      type: 'ssh',
+      title: launch.title,
+      type: launch.type,
       status: 'connecting',
       stage: 'connecting',
-      connectConfig: { hostId: host.id },
+      connectConfig: launch.connectConfig,
       groupId,
       pending: true,
     }));
@@ -431,42 +454,28 @@ export default function App() {
     ]);
     setActiveTabId(groupId);
 
-    const outcomes = await Promise.all(
-      placeholders.map(async (placeholder) => {
-        let result;
-        try {
-          result = await window.api.sshConnect(placeholder.connectConfig);
-        } catch (err) {
-          result = { error: err.message };
-        }
+    const stamped = launches.map((launch, index) => ({
+      ...launch,
+      placeholderId: placeholders[index].id,
+    }));
+    const outcomes = await deliverSnippetPlaces(snippet, stamped, snippetIo(groupId));
 
-        if (abandonedPendingRef.current.delete(placeholder.id)) {
-          if (result?.sessionId) await window.api.sshDisconnect(result.sessionId);
-          return null;
-        }
-
-        if (result.error) {
-          // The slot stays, holding the error: the host is still named, and
-          // reconnecting it is one click rather than a rerun of the snippet.
-          setTabs((prev) =>
-            prev.map((t) =>
-              t.id === placeholder.id
-                ? { ...t, status: 'error', error: result.error, pending: false }
-                : t
-            )
-          );
-          return `${placeholder.title}: ${result.error}`;
-        }
-
-        pendingReadyActionRef.current.set(result.sessionId, {
-          onReady: () => window.api.sshWrite(result.sessionId, command),
-        });
-        adoptSession(placeholder.id, result.sessionId, groupId, 'ssh');
-        return null;
-      })
-    );
-
-    const problems = outcomes.filter(Boolean);
+    const problems = [];
+    outcomes.forEach((outcome, index) => {
+      const placeholder = placeholders[index];
+      if (outcome.abandoned || !outcome.error) return;
+      // The slot stays, holding the error: the place is still named, and
+      // reconnecting it is one click rather than a rerun of the snippet.
+      // A session that connected was already given its id as it returned.
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === placeholder.id
+            ? { ...t, status: 'error', error: outcome.error, pending: false }
+            : t
+        )
+      );
+      problems.push(`${placeholder.title}: ${outcome.error}`);
+    });
     if (problems.length) setConnectError(problems.join(' · '));
   }
 
@@ -676,6 +685,59 @@ export default function App() {
     } catch {}
   }
 
+  // A new local tab every time. An open local shell has no host id to match
+  // against, so reusing one would type the command into whatever directory
+  // that shell happened to be in.
+  async function runSnippetLocally(snippet, launch) {
+    setConnectError(null);
+    const placeholderId = `pending:${crypto.randomUUID()}`;
+    const tab = {
+      id: placeholderId,
+      title: snippet.name,
+      type: 'local',
+      status: 'connecting',
+      stage: 'connecting',
+      connectConfig: launch.connectConfig,
+      pending: true,
+    };
+    startedAtRef.current.set(placeholderId, Date.now());
+    setTabs((prev) => [...prev, tab]);
+    focusNewSession(tab);
+
+    let outcome;
+    try {
+      [outcome] = await deliverSnippetPlaces(
+        snippet,
+        [{ ...launch, placeholderId }],
+        snippetIo()
+      );
+    } catch (err) {
+      dropPending(placeholderId);
+      setConnectError(err.message);
+      return;
+    }
+
+    if (outcome.abandoned) return;
+    if (outcome.error) {
+      setConnectError(outcome.error);
+      dropPending(placeholderId);
+    }
+  }
+
+  async function launchSnippet(snippet, plan) {
+    const launches = placesFor(plan);
+    if (launches.length === 0) return;
+    if (launches.length === 1 && launches[0].type === 'ssh') {
+      await runOnHost(plan.hosts[0], snippet.command);
+      return;
+    }
+    if (launches.length === 1) {
+      await runSnippetLocally(snippet, launches[0]);
+      return;
+    }
+    await openSnippetGroup(snippet, launches);
+  }
+
   function runSnippetInActiveTab(snippet) {
     const selected = tabs.find((t) => t.id === activeTabId);
     const tab =
@@ -849,7 +911,7 @@ export default function App() {
               onRunOnHost={runOnHost}
               onConnectAndStartForward={connectAndStartForward}
               onHostsChange={setHosts}
-              onRunSnippetOnHosts={openSnippetGroup}
+              onLaunchSnippet={launchSnippet}
               onSelectGroupMember={selectGroupMember}
             />
 

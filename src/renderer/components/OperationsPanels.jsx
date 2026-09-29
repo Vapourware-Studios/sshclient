@@ -15,6 +15,7 @@ import {
 import { GridCard, ViewToggle, GRID_CLASS } from '@/components/GridCard';
 import { ColorPicker } from '@/components/ColorPicker';
 import SelectHostPanel from '@/components/SelectHostPanel';
+import { planSnippetLaunch, snippetRunRefusal } from '@/lib/snippet-launch.mjs';
 import { useViewMode } from '@/lib/view-mode';
 import { toneForId, toneStyle } from '@/lib/tone';
 import { HostIcon } from '@/lib/host-icons.jsx';
@@ -397,13 +398,17 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
   const [name, setName] = useState(editingSnippet?.name ?? '');
   const [command, setCommand] = useState(editingSnippet?.command ?? '');
   const [targets, setTargets] = useState(editingSnippet?.targets ?? []);
+  const [runLocal, setRunLocal] = useState(editingSnippet?.runLocal === true);
   const [color, setColor] = useState(editingSnippet?.color ?? null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const { blurHostIps } = usePrivacySettings();
 
-  const availableHosts = hosts.filter((h) => !targets.includes(h.id));
+  const checkedIds = [
+    ...(runLocal ? ['local:local'] : []),
+    ...targets.map((id) => `host:${id}`),
+  ];
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -422,7 +427,10 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
       id: editingSnippet?.id,
       name: name.trim(),
       command,
-      targets,
+      // A deleted host is not shown in the list. Writing its id back would
+      // leave the snippet unable to run, because a missing target blocks launch.
+      targets: targets.filter((id) => hosts.some((host) => host.id === id)),
+      runLocal,
       color,
     });
     setBusy(false);
@@ -438,8 +446,16 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
       <SelectHostPanel
         title="Add targets"
         subtitle={name || 'New snippet'}
-        hosts={availableHosts}
-        onSelect={(item) => setTargets((t) => [...t, item.id])}
+        hosts={hosts}
+        showLocal
+        checkedIds={checkedIds}
+        onSelect={(item) => {
+          if (item.kind === 'local') {
+            setRunLocal((on) => !on);
+            return;
+          }
+          setTargets((t) => (t.includes(item.id) ? t.filter((id) => id !== item.id) : [...t, item.id]));
+        }}
         onBack={() => setPicking(false)}
         onNewHost={onNewHost}
       />
@@ -479,11 +495,31 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
         <div className="flex flex-col gap-2">
           <Label>Targets for execution</Label>
           <p className="text-xs text-muted-foreground">
-            Attach saved hosts to connect and run this snippet on them in one click.
+            Attach a local terminal or saved hosts to connect and run this snippet on them in one click.
           </p>
 
-          {targets.length > 0 && (
+          {(runLocal || targets.length > 0) && (
             <div className="flex flex-col gap-1">
+              {runLocal && (
+                <div className="flex items-center gap-2 rounded-md bg-foreground/[0.06] px-2.5 py-1.5">
+                  <span
+                    className="flex size-7 shrink-0 items-center justify-center rounded-md"
+                    style={toneStyle(toneForId('local'))}
+                  >
+                    <Terminal className="size-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm">Local terminal</span>
+                  <button
+                    type="button"
+                    onClick={() => setRunLocal(false)}
+                    title="Remove target"
+                    aria-label="Remove target Local terminal"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              )}
               {targets.map((hostId) => {
                 const host = hosts.find((h) => h.id === hostId);
                 if (!host) return null;
@@ -527,21 +563,15 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
             </div>
           )}
 
-          {availableHosts.length > 0 ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="self-start"
-              onClick={() => setPicking(true)}
-            >
-              <Plus className="size-3.5" /> Add target
-            </Button>
-          ) : hosts.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No saved hosts yet — add one under Hosts first.</p>
-          ) : (
-            <p className="text-xs text-muted-foreground">All saved hosts are already targets.</p>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onClick={() => setPicking(true)}
+          >
+            <Plus className="size-3.5" /> Add target
+          </Button>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -557,9 +587,19 @@ function NewSnippetPanel({ hosts, editingSnippet, onSaved, onClose, onNewHost })
 }
 
 function snippetSubtitle(item) {
-  return item.targets?.length
-    ? `${item.command} · ${item.targets.length} target${item.targets.length === 1 ? '' : 's'}`
-    : item.command;
+  const count = item.targets?.length ?? 0;
+  const local = item.runLocal === true;
+  if (local && count === 0) return `${item.command} · Local terminal`;
+  if (local) return `${item.command} · Local terminal · ${count} target${count === 1 ? '' : 's'}`;
+  if (count > 0) return `${item.command} · ${count} target${count === 1 ? '' : 's'}`;
+  return item.command;
+}
+
+function snippetRunTitle(item) {
+  const count = item.targets?.length ?? 0;
+  if (item.runLocal === true && count === 0) return 'Run locally';
+  if (count > 0 || item.runLocal === true) return 'Run on targets';
+  return 'Run snippet';
 }
 
 function SnippetContextMenu({ item, onRun, onEdit, onDuplicate, onDelete, children }) {
@@ -604,7 +644,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
                 e.stopPropagation();
                 onRun(item);
               }}
-              title={item.targets?.length ? 'Run on targets' : 'Run snippet'}
+              title={snippetRunTitle(item)}
               className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <Play className="size-3.5" />
@@ -638,7 +678,7 @@ function SnippetGridCard({ item, onRun, onEdit, onDuplicate, onDelete }) {
   );
 }
 
-export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHosts, onNewHost }) {
+export function SnippetsPanel({ tabs, hosts = [], onLaunchSnippet, onNewHost }) {
   const sessions = sshTabs(tabs);
   const [items, setItems] = useState([]);
   const [query, setQuery] = useState('');
@@ -659,39 +699,33 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHos
     const result = await window.api.snippetsSave({
       name: `${item.name} copy`,
       command: item.command,
-      targets: item.targets ?? [],
+      targets: (item.targets ?? []).filter((id) => hosts.some((host) => host.id === id)),
+      runLocal: item.runLocal === true,
       color: item.color ?? null,
     });
     if (!result.error) setItems(result.snippets);
   }
 
   function run(item) {
-    if (item.targets?.length) {
+    const plan = planSnippetLaunch(item, hosts);
+    if (plan.untargeted) {
+      const id = sessions[0]?.id;
+      if (!id) {
+        setError('Connect to an SSH host before running a snippet, or attach targets to it');
+        return;
+      }
       setError('');
-      const targetHosts = item.targets
-        .map((hostId) => hosts.find((h) => h.id === hostId))
-        .filter(Boolean);
-      if (!targetHosts.length) {
-        setError('None of this snippet\u2019s targets still exist under Hosts');
-        return;
-      }
-      // Several machines named by one snippet belong together, so they open as
-      // a single tab with a strip of them down its side. A lone target has
-      // nothing to sit beside and stays an ordinary tab.
-      if (targetHosts.length > 1 && onRunSnippetOnHosts) {
-        onRunSnippetOnHosts(item, targetHosts);
-        return;
-      }
-      for (const host of targetHosts) onRunOnHost?.(host, item.command);
+      window.api.sshWrite(id, item.command.endsWith('\n') ? item.command : `${item.command}\n`);
       return;
     }
 
-    const id = sessions[0]?.id;
-    if (!id) {
-      setError('Connect to an SSH host before running a snippet, or attach targets to it');
+    const refusal = snippetRunRefusal(plan);
+    if (refusal) {
+      setError(refusal);
       return;
     }
-    window.api.sshWrite(id, item.command.endsWith('\n') ? item.command : `${item.command}\n`);
+    setError('');
+    onLaunchSnippet?.(item, plan);
   }
 
   function handleSaved(nextItems) {
@@ -738,7 +772,7 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHos
             <EmptyState
               Icon={Code2}
               title="No snippets yet"
-              description="Save a command to send it to any connected terminal in one click."
+              description="Save a command to run it on this machine or on a connected terminal."
               action={
                 <Button size="sm" onClick={open}>
                   <Plus className="size-4" /> New Snippet
@@ -782,7 +816,7 @@ export function SnippetsPanel({ tabs, hosts = [], onRunOnHost, onRunSnippetOnHos
                       <>
                         <button
                           onClick={() => run(item)}
-                          title={item.targets?.length ? 'Run on targets' : 'Run snippet'}
+                          title={snippetRunTitle(item)}
                           className={iconButtonClass}>
                           <Play className="size-3.5" />
                         </button>

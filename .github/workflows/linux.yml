@@ -16,9 +16,9 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: ubuntu-22.04
+            runner: blacksmith-4vcpu-ubuntu-2204
           - arch: arm64
-            runner: ubuntu-22.04-arm
+            runner: blacksmith-4vcpu-ubuntu-2204-arm
     runs-on: ${{ matrix.runner }}
     # Compile native modules against the same older glibc on both CPUs.
     container:

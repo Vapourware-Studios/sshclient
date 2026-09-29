@@ -1,4 +1,4 @@
-import { Loader2, Server, Unplug, X } from 'lucide-react';
+import { Loader2, Server, Terminal, Unplug, X } from 'lucide-react';
 import TerminalView from '@/components/TerminalView';
 import {
   ConnectingView,
@@ -30,11 +30,14 @@ function MemberStatus({ status }) {
 
 function MemberButton({ tab, host, active, onSelect, onClose }) {
   const { blurHostIps } = usePrivacySettings();
-  const address = host
-    ? `${host.username ? `${host.username}@` : ''}${host.host}`
-    : tab.connectConfig?.hostId
-      ? ''
-      : tab.title;
+  const isLocal = tab.type === 'local';
+  const address = isLocal
+    ? ''
+    : host
+      ? `${host.username ? `${host.username}@` : ''}${host.host}`
+      : tab.connectConfig?.hostId
+        ? ''
+        : tab.title;
 
   // A blurred title is only hidden on screen. The tooltip and the accessibility
   // name are plain text that hover and a screen reader both read straight out,
@@ -55,9 +58,13 @@ function MemberButton({ tab, host, active, onSelect, onClose }) {
     >
       <span
         className="flex size-7 shrink-0 items-center justify-center rounded-md"
-        style={toneStyle(host?.color || toneForId(host?.id ?? tab.id))}
+        style={toneStyle(isLocal ? toneForId('local') : host?.color || toneForId(host?.id ?? tab.id))}
       >
-        <HostIcon slug={host?.icon} fallback={Server} className="size-3.5" />
+        {isLocal ? (
+          <Terminal className="size-3.5" />
+        ) : (
+          <HostIcon slug={host?.icon} fallback={Server} className="size-3.5" />
+        )}
       </span>
 
       <span className="min-w-0 flex-1">

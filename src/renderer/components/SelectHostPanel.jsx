@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, Plus, Search, Server, Terminal } from 'lucide-react';
+import { ArrowLeft, Check, Plus, Search, Server, Terminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toneForId, toneStyle } from '@/lib/tone';
@@ -22,6 +22,8 @@ export default function SelectHostPanel({
   onSelect,
   onBack,
   onNewHost,
+  showLocal = false,
+  checkedIds,
 }) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -38,6 +40,8 @@ export default function SelectHostPanel({
       ),
     [hosts, q]
   );
+  const isChecked = (key) => Boolean(checkedIds?.includes(key));
+  const localVisible = showLocal && (!q || 'local terminal'.includes(q) || 'this machine'.includes(q));
 
   return (
     <div className="flex h-full flex-col animate-slide-in-right">
@@ -74,10 +78,35 @@ export default function SelectHostPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {filteredSessions.length === 0 && filteredHosts.length === 0 ? (
+        {!localVisible && filteredSessions.length === 0 && filteredHosts.length === 0 ? (
           <p className="px-2 py-8 text-center text-sm text-muted-foreground">No matches</p>
         ) : (
           <>
+            {localVisible && (
+              <div className="flex flex-col gap-0.5 pb-3">
+                <button
+                  type="button"
+                  onClick={() => onSelect({ kind: 'local', id: 'local', label: 'Local terminal' })}
+                  className={`flex items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
+                    selectedId === 'local:local' ? 'bg-accent' : 'hover:bg-accent/50'
+                  }`}
+                  aria-pressed={checkedIds ? isChecked('local:local') : undefined}
+                >
+                  <span
+                    className="flex size-10 shrink-0 items-center justify-center rounded-lg"
+                    style={toneStyle(toneForId('local'))}
+                  >
+                    <Terminal className="size-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">Local terminal</p>
+                    <p className="truncate text-xs text-muted-foreground">This machine</p>
+                  </div>
+                  {isChecked('local:local') && <Check className="size-4 shrink-0 text-primary" />}
+                </button>
+              </div>
+            )}
+
             {filteredSessions.length > 0 && (
               <>
                 <p className="px-2 pb-1.5 text-sm font-semibold">Connected</p>
@@ -121,6 +150,7 @@ export default function SelectHostPanel({
                       className={`flex items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
                         selectedId === `host:${host.id}` ? 'bg-accent' : 'hover:bg-accent/50'
                       }`}
+                      aria-pressed={checkedIds ? isChecked(`host:${host.id}`) : undefined}
                     >
                       <span
                         className="flex size-10 shrink-0 items-center justify-center rounded-lg"
@@ -142,6 +172,7 @@ export default function SelectHostPanel({
                           ssh · {hostAddress(host)}
                         </p>
                       </div>
+                      {isChecked(`host:${host.id}`) && <Check className="size-4 shrink-0 text-primary" />}
                     </button>
                   ))}
                 </div>

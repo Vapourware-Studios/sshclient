@@ -31,7 +31,7 @@ export default function ContentArea({
   onRunOnHost,
   onConnectAndStartForward,
   onHostsChange,
-  onRunSnippetOnHosts,
+  onLaunchSnippet,
   onSelectGroupMember,
 }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
@@ -52,7 +52,7 @@ export default function ContentArea({
         onRunOnHost={onRunOnHost}
         onConnectAndStartForward={onConnectAndStartForward}
         onHostsChange={onHostsChange}
-        onRunSnippetOnHosts={onRunSnippetOnHosts}
+        onLaunchSnippet={onLaunchSnippet}
         tabs={tabs}
         visible={activeTab?.id === 'vault'}
       />

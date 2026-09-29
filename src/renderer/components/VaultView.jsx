@@ -531,7 +531,7 @@ export default function VaultView({
   onRunOnHost,
   onConnectAndStartForward,
   onHostsChange,
-  onRunSnippetOnHosts,
+  onLaunchSnippet,
   tabs,
   visible,
 }) {
@@ -581,8 +581,7 @@ export default function VaultView({
           <SnippetsPanel
             tabs={tabs}
             hosts={hosts}
-            onRunOnHost={onRunOnHost}
-            onRunSnippetOnHosts={onRunSnippetOnHosts}
+            onLaunchSnippet={onLaunchSnippet}
             onNewHost={() => onNewConnection('ssh')}
           />
         ) : section === 'history' ? (
